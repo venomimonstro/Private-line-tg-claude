@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card p-3 stat-card danger"><div class="text-muted small">Заблокированных доменов</div><div class="fs-4 fw-bold">{{ domain_count }}</div></div></div>
+  <div class="col-md-3"><div class="card p-3 stat-card warning"><div class="text-muted small">Заблокированных IP/CIDR</div><div class="fs-4 fw-bold">{{ ip_count }}</div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6 class="fw-bold">Добавить домен</h6>
+      <form method="post" action="/admin/filtering/domains/add">
+        <div class="mb-2"><input type="text" name="domain" class="form-control" placeholder="example.com" required></div>
+        <div class="mb-2">
+          <select name="category" class="form-select">
+            <option value="manual">manual</option><option value="malware">malware</option>
+            <option value="phishing">phishing</option><option value="torrent">torrent</option>
+            <option value="botnet">botnet</option><option value="scam">scam</option>
+          </select>
+        </div>
+        <div class="mb-2"><input type="text" name="comment" class="form-control" placeholder="Комментарий"></div>
+        <button class="btn btn-danger btn-sm">Добавить</button>
+      </form>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6 class="fw-bold">Добавить IP/CIDR</h6>
+      <form method="post" action="/admin/filtering/ips/add">
+        <div class="mb-2"><input type="text" name="ip_or_cidr" class="form-control" placeholder="1.2.3.4 или 1.2.3.0/24" required></div>
+        <div class="mb-2">
+          <select name="category" class="form-select">
+            <option value="manual">manual</option><option value="malware">malware</option><option value="botnet">botnet</option>
+          </select>
+        </div>
+        <div class="mb-2"><input type="text" name="comment" class="form-control" placeholder="Комментарий"></div>
+        <button class="btn btn-warning btn-sm">Добавить</button>
+      </form>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6 class="fw-bold">Импорт blacklist</h6>
+      <form method="post" action="/admin/filtering/import-blacklist" enctype="multipart/form-data">
+        <div class="mb-2"><input type="file" name="file" class="form-control" accept=".txt,.list" required></div>
+        <div class="mb-2">
+          <select name="category" class="form-select">
+            <option value="blacklist">blacklist</option><option value="malware">malware</option><option value="torrent">torrent</option>
+          </select>
+        </div>
+        <div class="form-text mb-2">Текстовый файл, один домен на строке</div>
+        <button class="btn btn-outline-danger btn-sm">Импортировать</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Домены (последние 100)</div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Домен</th><th>Категория</th><th>Статус</th><th></th></tr></thead>
+        <tbody>
+        {% for d in domains %}
+        <tr><td>{{ d.domain }}</td><td><span class="badge bg-secondary">{{ d.category }}</span></td>
+        <td><span class="badge {% if d.status.value == 'active' %}bg-success{% else %}bg-secondary{% endif %}">{{ d.status.value }}</span></td>
+        <td><form method="post" action="/admin/filtering/domains/{{ d.id }}/delete"><button class="btn btn-sm btn-link text-danger p-0">Удалить</button></form></td></tr>
+        {% else %}<tr><td colspan="4" class="text-muted text-center">Список пуст</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">IP/CIDR (последние 100)</div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>IP/CIDR</th><th>Категория</th><th>Статус</th><th></th></tr></thead>
+        <tbody>
+        {% for ip in ips %}
+        <tr><td><code>{{ ip.ip_or_cidr }}</code></td><td><span class="badge bg-secondary">{{ ip.category }}</span></td>
+        <td><span class="badge {% if ip.status.value == 'active' %}bg-success{% else %}bg-secondary{% endif %}">{{ ip.status.value }}</span></td>
+        <td><form method="post" action="/admin/filtering/ips/{{ ip.id }}/delete"><button class="btn btn-sm btn-link text-danger p-0">Удалить</button></form></td></tr>
+        {% else %}<tr><td colspan="4" class="text-muted text-center">Список пуст</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

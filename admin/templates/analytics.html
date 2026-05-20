@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card p-3 stat-card primary"><div class="text-muted small">Всего пользователей</div><div class="fs-4 fw-bold">{{ total_users }}</div></div></div>
+  <div class="col-md-3"><div class="card p-3 stat-card success"><div class="text-muted small">Активных подписок</div><div class="fs-4 fw-bold">{{ active_subs }}</div></div></div>
+  <div class="col-md-3"><div class="card p-3 stat-card warning"><div class="text-muted small">Выручка за 30 дней</div><div class="fs-4 fw-bold">{{ "%.0f"|format(rev_30d) }} ₽</div></div></div>
+  <div class="col-md-3"><div class="card p-3 stat-card danger"><div class="text-muted small">Прогноз MRR</div><div class="fs-4 fw-bold">{{ "%.0f"|format(mrr_forecast) }} ₽</div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Новые пользователи</h6>
+      <table class="table table-sm"><tr><td>Сегодня</td><td class="fw-bold">{{ new_today }}</td></tr><tr><td>За 7 дней</td><td class="fw-bold">{{ new_7d }}</td></tr><tr><td>За 30 дней</td><td class="fw-bold">{{ new_30d }}</td></tr><tr><td>Заблокировано</td><td class="fw-bold text-danger">{{ blocked_users }}</td></tr></table>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Финансы</h6>
+      <table class="table table-sm">
+        <tr><td>Выручка сегодня</td><td class="fw-bold">{{ "%.0f"|format(rev_today) }} ₽</td></tr>
+        <tr><td>Выручка за 7 дней</td><td class="fw-bold">{{ "%.0f"|format(rev_7d) }} ₽</td></tr>
+        <tr><td>Выручка за 30 дней</td><td class="fw-bold">{{ "%.0f"|format(rev_30d) }} ₽</td></tr>
+        <tr><td>Средний чек</td><td class="fw-bold">{{ "%.0f"|format(avg_ticket) }} ₽</td></tr>
+        <tr><td>ARPU</td><td class="fw-bold">{{ "%.2f"|format(arpu) }} ₽</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">По тарифам</h6>
+      <table class="table table-sm">
+        <thead><tr><th>Тариф</th><th>Активных</th><th>Выручка</th></tr></thead>
+        <tbody>
+        {% for stat in tariff_stats %}
+        <tr><td>{{ stat.tariff.name }}</td><td>{{ stat.count }}</td><td>{{ "%.0f"|format(stat.revenue) }} ₽</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Рефералы</h6>
+      <table class="table table-sm">
+        <tr><td>Всего рефералов</td><td class="fw-bold">{{ referral_total }}</td></tr>
+        <tr><td>Активированных</td><td class="fw-bold">{{ referral_activated }}</td></tr>
+        <tr><td>Бонусных дней выдано</td><td class="fw-bold">{{ referral_bonus_days }}</td></tr>
+        <tr><td>Истекает скоро</td><td class="fw-bold text-warning">{{ expiring_soon }}</td></tr>
+        <tr><td>Истёкших подписок</td><td class="fw-bold text-danger">{{ expired_subs }}</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

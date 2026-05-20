@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Установить обновление</h6>
+      <p class="text-muted small">Текущая версия: <b>{{ current_version }}</b></p>
+      <form method="post" action="/admin/updates/upload" enctype="multipart/form-data">
+        <div class="mb-2">
+          <input type="file" name="file" class="form-control" accept=".zip" required>
+          <div class="form-text">Загрузите ZIP-релиз. Перед установкой будет создан бэкап и выполнены preflight-проверки.</div>
+        </div>
+        <button type="submit" class="btn btn-warning" onclick="return confirm('Загрузить и установить обновление? Перед установкой будет создан бэкап.')">📦 Загрузить и установить</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<h6>История обновлений</h6>
+<div class="card">
+  <table class="table table-hover mb-0">
+    <thead class="table-light"><tr><th>#</th><th>С версии</th><th>На версию</th><th>Статус</th><th>Начато</th><th>Завершено</th><th>Ошибка</th></tr></thead>
+    <tbody>
+    {% for u in updates %}
+    <tr>
+      <td>{{ u.id }}</td>
+      <td>{{ u.version_from }}</td>
+      <td>{{ u.version_to }}</td>
+      <td><span class="badge {% if u.status.value == 'success' %}bg-success{% elif u.status.value in ('failed', 'rollback_failed') %}bg-danger{% elif u.status.value == 'rollback_success' %}bg-warning text-dark{% else %}bg-info{% endif %}">{{ u.status.value }}</span></td>
+      <td>{{ u.started_at.strftime('%d.%m.%Y %H:%M') }}</td>
+      <td>{{ u.finished_at.strftime('%d.%m.%Y %H:%M') if u.finished_at else '—' }}</td>
+      <td class="text-danger small">{{ u.error_message[:60] + '…' if u.error_message and u.error_message|length > 60 else u.error_message or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="text-center text-muted py-4">Обновлений не было</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

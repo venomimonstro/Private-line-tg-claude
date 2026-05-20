@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Подписка #{{ sub.id }}</h6>
+      <table class="table table-sm">
+        <tr><td>Пользователь</td><td><a href="/admin/users/{{ sub.user_id }}">{{ sub.user_id }}</a></td></tr>
+        <tr><td>Тариф</td><td>{{ sub.tariff_code }}</td></tr>
+        <tr><td>Статус</td><td><span class="badge bg-secondary">{{ sub.status.value }}</span></td></tr>
+        <tr><td>Начало</td><td>{{ sub.started_at.strftime('%d.%m.%Y') if sub.started_at else '—' }}</td></tr>
+        <tr><td>Истекает</td><td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td></tr>
+        <tr><td>Лимит трафика</td><td>{{ sub.traffic_limit_gb }} ГБ</td></tr>
+        <tr><td>Устройств</td><td>{{ sub.devices_limit }}</td></tr>
+      </table>
+      <div class="border-top pt-3 d-flex gap-2">
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable">
+          <button class="btn btn-sm btn-danger" onclick="return confirm('Отключить подписку?')">Отключить</button>
+        </form>
+      </div>
+      <div class="border-top pt-3 mt-2">
+        <h6>Продлить подписку</h6>
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/extend" class="row g-2">
+          <div class="col-auto"><input type="number" name="days" class="form-control" placeholder="Дней" min="1" max="365"></div>
+          <div class="col-auto"><button type="submit" class="btn btn-success">Продлить</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">VPN-ключи</h6>
+      {% for key in sub.vpn_keys %}
+      <div class="mb-2 p-2 border rounded">
+        <div>ID: {{ key.id }} | Статус: <span class="badge bg-secondary">{{ key.status.value }}</span></div>
+        <div class="text-muted small">Трафик: {{ "%.2f"|format(key.traffic_used_gb) }} ГБ</div>
+      </div>
+      {% else %}
+      <p class="text-muted">VPN-ключей нет</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

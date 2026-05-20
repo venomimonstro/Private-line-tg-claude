@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+{% for server in servers %}
+<div class="col-md-6">
+  <div class="card p-3">
+    <div class="d-flex justify-content-between">
+      <h6 class="fw-bold">{{ server.name }}</h6>
+      <span class="badge {% if server.status.value == 'active' %}bg-success{% else %}bg-secondary{% endif %}">{{ server.status.value }}</span>
+    </div>
+    <p class="text-muted small mb-1">🌍 {{ server.country }} | {{ server.provider }}</p>
+    <p class="text-muted small mb-2">Пользователей: {{ server.current_users }} / {{ server.max_users }}</p>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-primary" onclick="testServer({{ server.id }}, this)">Проверить соединение</button>
+      <form method="post" action="/admin/servers/{{ server.id }}/disable">
+        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Отключить сервер?')">Отключить</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="col-12"><p class="text-muted">Серверы не добавлены.</p></div>
+{% endfor %}
+</div>
+
+<div class="card p-3">
+  <h6 class="fw-bold mb-3">Добавить сервер</h6>
+  <form method="post" action="/admin/servers">
+    <div class="row g-2">
+      <div class="col-md-4"><input type="text" name="name" class="form-control" placeholder="Название (Germany 1)" required></div>
+      <div class="col-md-2"><input type="text" name="country" class="form-control" placeholder="Германия" required></div>
+      <div class="col-md-2"><input type="text" name="provider" class="form-control" placeholder="Hetzner" required></div>
+      <div class="col-md-6"><input type="url" name="api_url" class="form-control" placeholder="https://1.2.3.4:12345/secret" required></div>
+      <div class="col-md-4"><input type="text" name="api_secret" class="form-control" placeholder="API secret (если отдельно)" value="included_in_url"></div>
+      <div class="col-md-2"><input type="number" name="max_users" class="form-control" placeholder="Макс. польз." value="100"></div>
+      <div class="col-12"><button type="submit" class="btn btn-primary">Добавить</button></div>
+    </div>
+  </form>
+</div>
+
+<script>
+async function testServer(id, btn) {
+  btn.disabled = true; btn.textContent = 'Проверяю...';
+  try {
+    const r = await fetch('/admin/servers/' + id + '/test', {method: 'POST'});
+    const d = await r.json();
+    btn.textContent = d.ok ? '✅ Доступен' : '❌ Недоступен';
+  } catch(e) { btn.textContent = '❌ Ошибка'; }
+  setTimeout(() => { btn.disabled=false; btn.textContent='Проверить соединение'; }, 3000);
+}
+</script>
+{% endblock %}

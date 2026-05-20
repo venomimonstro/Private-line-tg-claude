@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card mb-3 p-3">
+  <form method="get" class="row g-2 align-items-center">
+    <div class="col-auto"><input type="text" name="search" class="form-control" placeholder="Telegram ID или username" value="{{ search }}"></div>
+    <div class="col-auto"><button type="submit" class="btn btn-primary">Поиск</button></div>
+    {% if search %}<div class="col-auto"><a href="/admin/users" class="btn btn-outline-secondary">Сбросить</a></div>{% endif %}
+  </form>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light"><tr><th>#</th><th>Telegram ID</th><th>Username</th><th>Имя</th><th>Статус</th><th>Создан</th><th></th></tr></thead>
+      <tbody>
+      {% for user in users %}
+      <tr>
+        <td>{{ user.id }}</td>
+        <td><code>{{ user.telegram_id }}</code></td>
+        <td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td>
+        <td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td>
+        <td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td>
+        <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
+        <td><a href="/admin/users/{{ user.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Пользователи не найдены</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="mt-3 text-muted small">Всего: {{ total }} | Страница {{ page }} из {{ ((total - 1) // page_size + 1) if total > 0 else 1 }}</div>
+{% endblock %}

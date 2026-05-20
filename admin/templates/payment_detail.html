@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold">Платёж #{{ payment.id }}</h6>
+      <table class="table table-sm">
+        <tr><td>Пользователь</td><td><a href="/admin/users/{{ payment.user_id }}">{{ payment.user_id }}</a></td></tr>
+        <tr><td>Тариф</td><td>{{ payment.tariff_code }}</td></tr>
+        <tr><td>Сумма</td><td><b>{{ payment.amount }} {{ payment.currency }}</b></td></tr>
+        <tr><td>Статус</td><td><span class="badge {% if payment.status.value == 'paid' %}bg-success{% elif payment.status.value == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ payment.status.value }}</span></td></tr>
+        <tr><td>Провайдер</td><td>{{ payment.provider }}</td></tr>
+        <tr><td>Создан</td><td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+        {% if payment.confirmed_at %}<tr><td>Подтверждён</td><td>{{ payment.confirmed_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>{% endif %}
+        {% if payment.manual_comment %}<tr><td>Комментарий</td><td>{{ payment.manual_comment }}</td></tr>{% endif %}
+      </table>
+
+      {% if payment.status.value in ('pending', 'manual_review') %}
+      <div class="border-top pt-3 mt-2">
+        <h6>Подтвердить оплату</h6>
+        <form method="post" action="/admin/payments/{{ payment.id }}/confirm">
+          <div class="mb-2">
+            <textarea name="comment" class="form-control" rows="2" placeholder="Комментарий (необязательно)"></textarea>
+          </div>
+          <button type="submit" class="btn btn-success" onclick="return confirm('Подтвердить оплату и активировать подписку?')">✅ Подтвердить</button>
+        </form>
+        <form method="post" action="/admin/payments/{{ payment.id }}/cancel" class="mt-2">
+          <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Отменить платёж?')">Отменить</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

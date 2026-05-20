@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card stat-card primary p-3">
+      <div class="text-muted small">Активных подписок</div>
+      <div class="fs-3 fw-bold text-primary">{{ active_subs }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card success p-3">
+      <div class="text-muted small">Выручка сегодня</div>
+      <div class="fs-3 fw-bold text-success">{{ "%.0f"|format(revenue_today) }} ₽</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card warning p-3">
+      <div class="text-muted small">Новых пользователей</div>
+      <div class="fs-3 fw-bold text-warning">{{ new_users_today }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card danger p-3">
+      <div class="text-muted small">Активных VPN-ключей</div>
+      <div class="fs-3 fw-bold text-danger">{{ active_keys }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Состояние системы</h6>
+      {% if health %}
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span class="badge {% if health.status.value == 'OK' %}bg-success{% elif health.status.value == 'WARNING' %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+          {{ health.status.value }}
+        </span>
+        <span class="text-muted small">Проверено: {{ health.checked_at.strftime('%d.%m.%Y %H:%M') }}</span>
+      </div>
+      <table class="table table-sm">
+        <tr><td>База данных</td><td><span class="badge {% if health.database_status == 'OK' %}bg-success{% else %}bg-danger{% endif %}">{{ health.database_status }}</span></td></tr>
+        <tr><td>Telegram-бот</td><td><span class="badge {% if health.bot_status == 'OK' %}bg-success{% else %}bg-danger{% endif %}">{{ health.bot_status }}</span></td></tr>
+        <tr><td>VPN API</td><td><span class="badge {% if health.vpn_api_status == 'OK' %}bg-success{% elif health.vpn_api_status == 'N/A' %}bg-secondary{% else %}bg-danger{% endif %}">{{ health.vpn_api_status }}</span></td></tr>
+        <tr><td>Бэкап</td><td><span class="badge {% if health.backup_status == 'OK' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ health.backup_status }}</span></td></tr>
+        {% if health.free_disk_space %}<tr><td>Диск свободно</td><td>{{ "%.1f"|format(health.free_disk_space) }} ГБ</td></tr>{% endif %}
+      </table>
+      {% else %}
+      <p class="text-muted">Health-check ещё не выполнялся. <a href="/admin/health">Запустить</a></p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Последний бэкап</h6>
+      {% if last_backup %}
+      <p class="mb-1">Тип: <b>{{ last_backup.type.value }}</b></p>
+      <p class="mb-1">Создан: {{ last_backup.created_at.strftime('%d.%m.%Y %H:%M') }}</p>
+      <p class="mb-1">Размер: {{ "%.1f"|format(last_backup.size_mb or 0) }} МБ</p>
+      <p class="mb-0">Статус: <span class="badge {% if last_backup.status.value == 'success' %}bg-success{% else %}bg-danger{% endif %}">{{ last_backup.status.value }}</span></p>
+      {% else %}
+      <p class="text-muted">Бэкапов ещё нет. <a href="/admin/backups">Создать</a></p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

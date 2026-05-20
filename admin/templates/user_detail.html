@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card p-3">
+      <h6 class="fw-bold">Пользователь #{{ user.id }}</h6>
+      <table class="table table-sm">
+        <tr><td>Telegram ID</td><td><code>{{ user.telegram_id }}</code></td></tr>
+        <tr><td>Username</td><td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td></tr>
+        <tr><td>Имя</td><td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td></tr>
+        <tr><td>Статус</td><td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td></tr>
+        <tr><td>Зарегистрирован</td><td>{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+        <tr><td>Последняя активность</td><td>{{ user.last_activity_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+        <tr><td>Принял правила</td><td>{% if user.rules_accepted_at %}{{ user.rules_accepted_at.strftime('%d.%m.%Y') }}{% else %}&mdash;{% endif %}</td></tr>
+      </table>
+      <div class="d-flex gap-2">
+        {% if user.status.value != 'blocked' %}
+        <form method="post" action="/admin/users/{{ user.id }}/block">
+          <button class="btn btn-sm btn-danger" onclick="return confirm('Заблокировать пользователя?')">Заблокировать</button>
+        </form>
+        {% else %}
+        <form method="post" action="/admin/users/{{ user.id }}/unblock">
+          <button class="btn btn-sm btn-success">Разблокировать</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card p-3 mb-3">
+      <h6 class="fw-bold">Подписки</h6>
+      <table class="table table-sm">
+        <thead><tr><th>#</th><th>Тариф</th><th>Статус</th><th>До</th></tr></thead>
+        <tbody>
+        {% for sub in user.subscriptions %}
+        <tr>
+          <td>{{ sub.id }}</td><td>{{ sub.tariff_code }}</td>
+          <td><span class="badge bg-secondary">{{ sub.status.value }}</span></td>
+          <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
+        </tr>
+        {% else %}<tr><td colspan="4" class="text-muted text-center">Нет подписок</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card p-3 mb-3">
+      <h6 class="fw-bold">Платежи</h6>
+      <table class="table table-sm">
+        <thead><tr><th>#</th><th>Тариф</th><th>Сумма</th><th>Статус</th><th>Создан</th></tr></thead>
+        <tbody>
+        {% for p in user.payments %}
+        <tr>
+          <td><a href="/admin/payments/{{ p.id }}">{{ p.id }}</a></td>
+          <td>{{ p.tariff_code }}</td><td>{{ p.amount }} ₽</td>
+          <td><span class="badge bg-secondary">{{ p.status.value }}</span></td>
+          <td>{{ p.created_at.strftime('%d.%m.%Y') }}</td>
+        </tr>
+        {% else %}<tr><td colspan="5" class="text-muted text-center">Нет платежей</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
