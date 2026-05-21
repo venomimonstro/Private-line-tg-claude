@@ -18,6 +18,7 @@ from admin.routes import (
     logs,
     payments,
     referrals,
+    refund_requests,
     servers,
     subscriptions,
     tariffs,
@@ -41,6 +42,7 @@ app.include_router(vpn_keys.router)
 app.include_router(servers.router)
 app.include_router(tariffs.router)
 app.include_router(referrals.router)
+app.include_router(refund_requests.router)
 app.include_router(analytics.router)
 app.include_router(load_analytics.router)
 app.include_router(health.router)

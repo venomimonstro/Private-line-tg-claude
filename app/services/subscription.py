@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 _EXPIRY_WARNING_DAYS = [3, 1]
 
 
-async def _get_active_server(session: AsyncSession) -> VpnServer | None:
+async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
+    """Return active servers not in circuit-open state, ordered by load."""
+    from app.services.circuit_breaker import get_circuit_breaker
     result = await session.execute(
-        select(VpnServer).where(VpnServer.status == VpnServerStatus.active).order_by(VpnServer.current_users)
+        select(VpnServer)
+        .where(VpnServer.status == VpnServerStatus.active)
+        .order_by(VpnServer.current_users)
     )
-    return result.scalars().first()
+    servers = result.scalars().all()
+    return [s for s in servers if get_circuit_breaker(s.id).is_available()]
 
 
 async def activate_subscription(
@@ -33,45 +38,56 @@ async def activate_subscription(
     session: AsyncSession,
     send_key_callback: object | None = None,
 ) -> VpnKey | None:
-    server = await _get_active_server(session)
-    if server is None:
+    servers = await _get_available_servers(session)
+    if not servers:
         subscription.status = SubscriptionStatus.activation_error
+        subscription.activation_attempts = (subscription.activation_attempts or 0) + 1
+        subscription.last_activation_error = "No available VPN servers"
         await session.flush()
         await notify_admin(
             f"⚠️ Ошибка активации подписки #{subscription.id}: нет доступного VPN-сервера."
         )
         return None
 
-    try:
-        vpn_key = await vpn_key_service.create_vpn_key(
-            user_id=subscription.user_id,
-            subscription_id=subscription.id,
-            server=server,
-            traffic_limit_gb=tariff.traffic_limit_gb,
-            session=session,
-        )
-    except Exception as exc:
-        logger.error("VPN key creation failed for subscription %s: %s", subscription.id, exc)
-        subscription.status = SubscriptionStatus.activation_error
-        await session.flush()
-        await notify_admin(
-            f"⚠️ Ошибка создания VPN-ключа для подписки #{subscription.id}:\n{exc}"
-        )
-        return None
-
-    subscription.status = SubscriptionStatus.active
-    subscription.started_at = datetime.utcnow()
-    subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
-    server.current_users += 1
-    await session.flush()
-
-    if send_key_callback is not None:
+    last_exc: Exception | None = None
+    for server in servers:
         try:
-            await send_key_callback(subscription.user_id, vpn_key)
-        except Exception as exc:
-            logger.error("Failed to send key to user %s: %s", subscription.user_id, exc)
+            vpn_key = await vpn_key_service.create_vpn_key(
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                server=server,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                session=session,
+            )
+            # Success
+            subscription.status = SubscriptionStatus.active
+            subscription.started_at = datetime.utcnow()
+            subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
+            server.current_users += 1
+            await session.flush()
 
-    return vpn_key
+            if send_key_callback is not None:
+                try:
+                    await send_key_callback(subscription.user_id, vpn_key)
+                except Exception as exc:
+                    logger.error("Failed to send key to user %s: %s", subscription.user_id, exc)
+
+            return vpn_key
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Server %d failed for subscription %d: %s", server.id, subscription.id, exc)
+            continue  # Try next server
+
+    # All servers failed
+    subscription.status = SubscriptionStatus.activation_error
+    subscription.activation_attempts = (subscription.activation_attempts or 0) + 1
+    subscription.last_activation_error = str(last_exc)[:500] if last_exc else "All servers failed"
+    await session.flush()
+    await notify_admin(
+        f"⚠️ Subscription #{subscription.id}: all {len(servers)} server(s) failed. "
+        f"Last error: {last_exc}"
+    )
+    return None
 
 
 async def expire_subscriptions(session: AsyncSession, notify_user_callback: object | None = None) -> None:

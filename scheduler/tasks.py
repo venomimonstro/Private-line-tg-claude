@@ -64,6 +64,45 @@ async def _job_collect_analytics() -> None:
         await collect_daily_analytics(session)
 
 
+async def _job_retry_failed_activations() -> None:
+    logger.info("Running: retry_failed_activations")
+    from app.services.key_delivery import retry_failed_activations
+    async with async_session_maker() as session:
+        await retry_failed_activations(session)
+
+
+async def _job_check_server_health() -> None:
+    """Mark servers as unreachable if circuit breaker has been open too long."""
+    logger.info("Running: check_server_health")
+    from app.services.circuit_breaker import get_circuit_breaker, CircuitState
+    from app.models.vpn_server import VpnServer
+    from app.enums import VpnServerStatus
+    from sqlalchemy import select
+    from app.services.notification import notify_admin
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+        )
+        servers = result.scalars().all()
+        for server in servers:
+            cb = get_circuit_breaker(server.id)
+            if cb.state == CircuitState.OPEN and (server.failure_count or 0) >= 10:
+                server.status = VpnServerStatus.unreachable
+                await notify_admin(
+                    f"🔴 Сервер '{server.name}' (#{server.id}) переведён в UNREACHABLE "
+                    f"после {server.failure_count} ошибок."
+                )
+        await session.commit()
+
+
+async def _job_speed_limit_check() -> None:
+    """Soft speed limit enforcement: disable keys exceeding speed quota."""
+    logger.info("Running: speed_limit_check")
+    from app.services.speed_monitor import check_speed_limits
+    async with async_session_maker() as session:
+        await check_speed_limits(session)
+
+
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
@@ -72,4 +111,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_daily_backup, "cron", hour=4, minute=0)
     scheduler.add_job(_job_health_check, "interval", hours=1)
     scheduler.add_job(_job_collect_analytics, "cron", hour=23, minute=55)
+    scheduler.add_job(_job_retry_failed_activations, "interval", minutes=15)
+    scheduler.add_job(_job_check_server_health, "interval", hours=1, jitter=120)
+    scheduler.add_job(_job_speed_limit_check, "interval", hours=1, jitter=60)
     return scheduler

@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     # Optional IP allowlist for admin panel
     ADMIN_ALLOWED_IPS: list[str] = []
 
+    # Backup bot for notifications when main bot is blocked
+    BACKUP_BOT_TOKEN: str = ""
+    # Custom Telegram API URL (for anti-blocking proxy)
+    TELEGRAM_API_URL: str = ""
+
+    # Refund settings
+    REFUND_WINDOW_DAYS: int = 7
+    REFUND_MAX_TRAFFIC_MB: float = 100.0
+
     @field_validator("ADMIN_ALLOWED_IPS", mode="before")
     @classmethod
     def parse_allowed_ips(cls, v: object) -> list[str]:

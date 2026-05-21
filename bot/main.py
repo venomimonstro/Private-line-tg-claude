@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot_instance import set_bot
 from app.config import settings
-from bot.handlers import access, help, payment, plans, referral, start
+from bot.handlers import access, help, payment, plans, referral, refund, start
 from bot.handlers import stars_payment
 from bot.middleware.user_activity import UserActivityMiddleware
 
@@ -36,6 +36,7 @@ async def main() -> None:
     dp.include_router(access.router)
     dp.include_router(payment.router)
     dp.include_router(referral.router)
+    dp.include_router(refund.router)
     dp.include_router(help.router)
     dp.include_router(stars_payment.router)
 

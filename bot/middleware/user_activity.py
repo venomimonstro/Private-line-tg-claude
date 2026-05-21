@@ -45,6 +45,12 @@ class UserActivityMiddleware(BaseMiddleware):
         if telegram_user is None:
             return await handler(event, data)
 
+        # Rate limit: 20 requests per 10 seconds
+        from app.services.rate_limiter import is_rate_limited
+        if is_rate_limited(telegram_user.id, max_requests=20, window_seconds=10.0):
+            # Silently drop to avoid flooding
+            return None
+
         async with async_session_maker() as session:
             result = await session.execute(
                 select(User).where(User.telegram_id == telegram_user.id)

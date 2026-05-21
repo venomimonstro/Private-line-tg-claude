@@ -13,6 +13,7 @@ from app.models.blocked_domain import BlockedDomain
 from app.models.blocked_ip import BlockedIp
 from app.models.abuse_event import AbuseEvent
 from app.models.analytics_daily import AnalyticsDaily
+from app.models.refund_request import RefundRequest
 
 __all__ = [
     "User",
@@ -30,4 +31,5 @@ __all__ = [
     "BlockedIp",
     "AbuseEvent",
     "AnalyticsDaily",
+    "RefundRequest",
 ]
