@@ -107,3 +107,10 @@ class AdminRole(str, Enum):
     super_admin = "super_admin"
     support_admin = "support_admin"
     finance_admin = "finance_admin"
+
+
+class RefundStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    denied = "denied"
+    auto_approved = "auto_approved"

@@ -10,13 +10,13 @@ T = TypeVar("T")
 
 
 class CircuitState(str, Enum):
-    CLOSED = "closed"      # Normal — calls pass through
-    OPEN = "open"          # Failing — calls rejected immediately
-    HALF_OPEN = "half_open"  # Probing — one call allowed through
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 class CircuitOpenError(RuntimeError):
-    """Raised when a circuit breaker is OPEN."""
+    """Raised when a circuit breaker is OPEN or a probe is already in flight."""
 
 
 class CircuitBreaker:
@@ -28,6 +28,7 @@ class CircuitBreaker:
         self._threshold = failure_threshold
         self._timeout = recovery_timeout
         self._lock = asyncio.Lock()
+        self._probe_in_flight = False
 
     @property
     def state(self) -> CircuitState:
@@ -42,11 +43,15 @@ class CircuitBreaker:
             if current == CircuitState.OPEN:
                 raise CircuitOpenError(f"Circuit '{self.name}' is OPEN — server unavailable")
             if current == CircuitState.HALF_OPEN:
-                self._state = CircuitState.HALF_OPEN  # Allow one probe
+                if self._probe_in_flight:
+                    raise CircuitOpenError(f"Circuit '{self.name}' probe already in flight")
+                self._probe_in_flight = True
+                self._state = CircuitState.HALF_OPEN
 
         try:
             result = await coro
             async with self._lock:
+                self._probe_in_flight = False
                 if self._failure_count > 0:
                     logger.info("Circuit '%s' recovered (was %d failures)", self.name, self._failure_count)
                 self._failure_count = 0
@@ -54,6 +59,7 @@ class CircuitBreaker:
             return result
         except Exception:
             async with self._lock:
+                self._probe_in_flight = False
                 self._failure_count += 1
                 self._last_failure_time = time.monotonic()
                 if self._failure_count >= self._threshold:
@@ -68,9 +74,9 @@ class CircuitBreaker:
     def reset(self) -> None:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
+        self._probe_in_flight = False
 
 
-# Global registry: server_id → CircuitBreaker
 _registry: dict[int, CircuitBreaker] = {}
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
+from app.enums import RefundStatus
 from app.models.admin_log import AdminLog
 from app.models.refund_request import RefundRequest
 from app.models.user import User
@@ -26,7 +27,10 @@ async def list_refunds(
 ) -> HTMLResponse:
     query = select(RefundRequest)
     if status_filter:
-        query = query.where(RefundRequest.status == status_filter)
+        try:
+            query = query.where(RefundRequest.status == RefundStatus(status_filter))
+        except ValueError:
+            pass
 
     total = (await session.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
     offset = (page - 1) * _PAGE_SIZE
@@ -37,6 +41,7 @@ async def list_refunds(
         "refunds": rows, "page": page,
         "total_pages": (total + _PAGE_SIZE - 1) // _PAGE_SIZE,
         "status_filter": status_filter,
+        "statuses": list(RefundStatus),
         "page_title": "Заявки на возврат",
     })
 
@@ -49,10 +54,10 @@ async def approve_refund(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    req = await session.get(RefundRequest, refund_id)
-    if req is None:
-        raise HTTPException(404)
-    await process_refund(refund_id, admin.id, approve=True, admin_comment=comment, session=session)
+    try:
+        await process_refund(refund_id, admin.id, approve=True, admin_comment=comment, session=session)
+    except ValueError:
+        raise HTTPException(status_code=404)
     log = AdminLog(admin_user_id=admin.id, action="approve_refund",
                    target_entity="refund_request", target_entity_id=refund_id,
                    ip_address=request.client.host if request.client else None)
@@ -69,10 +74,10 @@ async def deny_refund(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    req = await session.get(RefundRequest, refund_id)
-    if req is None:
-        raise HTTPException(404)
-    await process_refund(refund_id, admin.id, approve=False, admin_comment=comment, session=session)
+    try:
+        await process_refund(refund_id, admin.id, approve=False, admin_comment=comment, session=session)
+    except ValueError:
+        raise HTTPException(status_code=404)
     log = AdminLog(admin_user_id=admin.id, action="deny_refund",
                    target_entity="refund_request", target_entity_id=refund_id,
                    ip_address=request.client.host if request.client else None)

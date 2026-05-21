@@ -45,10 +45,8 @@ class UserActivityMiddleware(BaseMiddleware):
         if telegram_user is None:
             return await handler(event, data)
 
-        # Rate limit: 20 requests per 10 seconds
         from app.services.rate_limiter import is_rate_limited
         if is_rate_limited(telegram_user.id, max_requests=20, window_seconds=10.0):
-            # Silently drop to avoid flooding
             return None
 
         async with async_session_maker() as session:
@@ -59,7 +57,8 @@ class UserActivityMiddleware(BaseMiddleware):
 
             if user is None:
                 referrer_id: int | None = None
-                start_args = data.get("command") and data["command"].args
+                cmd = data.get("command")
+                start_args = cmd.args if cmd else None
                 if start_args and start_args.startswith("ref_"):
                     try:
                         ref_telegram_id = int(start_args[4:])
@@ -77,7 +76,7 @@ class UserActivityMiddleware(BaseMiddleware):
                     username=telegram_user.username,
                     first_name=telegram_user.first_name,
                     last_name=telegram_user.last_name,
-                    language_code=telegram_user.language_code if hasattr(telegram_user, "language_code") else None,
+                    language_code=telegram_user.language_code,
                     status=UserStatus.new,
                     referrer_id=referrer_id,
                 )
@@ -91,7 +90,7 @@ class UserActivityMiddleware(BaseMiddleware):
                 if telegram_user.first_name:
                     user.first_name = telegram_user.first_name
                 user.last_name = telegram_user.last_name
-                if hasattr(telegram_user, "language_code") and telegram_user.language_code:
+                if telegram_user.language_code:
                     user.language_code = telegram_user.language_code
                 await session.commit()
 

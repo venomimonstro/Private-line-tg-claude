@@ -9,11 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
-from app.enums import SubscriptionStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.admin_log import AdminLog
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
 from app.models.user import User
+from app.models.vpn_server import VpnServer
+from app.services import vpn_key as vpn_key_service
 from app.services.subscription import extend_subscription
 
 router = APIRouter(prefix="/subscriptions")
@@ -113,15 +115,13 @@ async def disable_subscription(
     if sub is None:
         raise HTTPException(status_code=404)
 
-    from app.enums import VpnKeyStatus
-    from app.models.vpn_server import VpnServer
-    from app.services import vpn_key as vpn_key_service
     for key in sub.vpn_keys:
         if key.status == VpnKeyStatus.active:
             server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
             server = server_result.scalar_one_or_none()
             if server:
                 await vpn_key_service.disable_vpn_key(key, server, session)
+                server.current_users = max(0, server.current_users - 1)
 
     sub.status = SubscriptionStatus.disabled
     log = AdminLog(

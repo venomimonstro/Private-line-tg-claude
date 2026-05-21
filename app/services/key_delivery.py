@@ -1,8 +1,10 @@
 from __future__ import annotations
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.bot_instance import get_bot
 from app.enums import SubscriptionStatus
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
@@ -11,13 +13,15 @@ from app.services.notification import notify_admin
 logger = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 5
-_RETRY_INTERVAL_MINUTES = 15
+RETRY_INTERVAL_MINUTES = 15
 
 
 async def retry_failed_activations(session: AsyncSession) -> None:
     """Retry subscriptions that failed to activate. Called by scheduler."""
     result = await session.execute(
-        select(Subscription).where(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff))
+        .where(
             Subscription.status == SubscriptionStatus.activation_error,
             Subscription.activation_attempts < _MAX_ATTEMPTS,
         )
@@ -25,23 +29,21 @@ async def retry_failed_activations(session: AsyncSession) -> None:
     subscriptions = result.scalars().all()
 
     for sub in subscriptions:
-        tariff = await session.get(Tariff, sub.tariff_id)
+        tariff: Tariff | None = sub.tariff
         if tariff is None:
             logger.error("Tariff %d not found for subscription %d", sub.tariff_id, sub.id)
             continue
 
         from app.services.subscription import activate_subscription
-        sub.activation_attempts += 1
         logger.info(
             "Retrying activation for subscription %d (attempt %d/%d)",
-            sub.id, sub.activation_attempts, _MAX_ATTEMPTS,
+            sub.id, sub.activation_attempts + 1, _MAX_ATTEMPTS,
         )
 
         vpn_key = await activate_subscription(sub, tariff, session)
         if vpn_key is not None:
-            logger.info("Subscription %d activated successfully on retry %d", sub.id, sub.activation_attempts)
-            # Notify user
-            bot = _get_bot()
+            logger.info("Subscription %d activated on retry %d", sub.id, sub.activation_attempts)
+            bot = get_bot()
             if bot is not None:
                 try:
                     from app.services.vpn_key import get_access_url
@@ -67,11 +69,3 @@ async def retry_failed_activations(session: AsyncSession) -> None:
                 )
 
     await session.commit()
-
-
-def _get_bot():
-    try:
-        from app.bot_instance import get_bot
-        return get_bot()
-    except Exception:
-        return None

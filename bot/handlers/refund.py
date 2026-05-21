@@ -4,10 +4,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
 from app.database import async_session_maker
-from app.enums import PaymentStatus
-from app.models.payment import Payment
 from app.models.user import User
 from app.services.refund import check_refund_eligibility, create_refund_request
 

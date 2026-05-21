@@ -76,7 +76,6 @@ async def activate_subscription(
         except Exception as exc:
             last_exc = exc
             logger.warning("Server %d failed for subscription %d: %s", server.id, subscription.id, exc)
-            continue  # Try next server
 
     # All servers failed
     subscription.status = SubscriptionStatus.activation_error
@@ -94,7 +93,7 @@ async def expire_subscriptions(session: AsyncSession, notify_user_callback: obje
     now = datetime.utcnow()
     result = await session.execute(
         select(Subscription)
-        .options(selectinload(Subscription.vpn_keys))
+        .options(selectinload(Subscription.vpn_keys).selectinload(VpnKey.server))
         .where(
             Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
             Subscription.expires_at <= now,
@@ -106,10 +105,7 @@ async def expire_subscriptions(session: AsyncSession, notify_user_callback: obje
         sub.status = SubscriptionStatus.expired
         for key in sub.vpn_keys:
             if key.status == VpnKeyStatus.active:
-                result2 = await session.execute(
-                    select(VpnServer).where(VpnServer.id == key.server_id)
-                )
-                server = result2.scalar_one_or_none()
+                server = key.server
                 if server is not None:
                     await vpn_key_service.disable_vpn_key(key, server, session)
                     server.current_users = max(0, server.current_users - 1)

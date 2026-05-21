@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.encryption import decrypt, encrypt
-from app.enums import VpnKeyStatus
+from app.enums import VpnKeyStatus, VpnServerStatus
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.circuit_breaker import get_circuit_breaker, CircuitOpenError
@@ -109,7 +109,7 @@ async def reissue_vpn_key(
 
 async def sync_traffic_stats(session: AsyncSession) -> None:
     result = await session.execute(
-        select(VpnServer).where(VpnServer.status == "active")
+        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
     )
     servers = result.scalars().all()
 
@@ -134,15 +134,17 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
         finally:
             await client.aclose()
 
-        for outline_key_id, bytes_used in stats.items():
-            key_result = await session.execute(
-                select(VpnKey).where(
-                    VpnKey.server_id == server.id,
-                    VpnKey.outline_key_id == outline_key_id,
-                    VpnKey.status == VpnKeyStatus.active,
-                )
+        # Batch-load all active keys for this server to avoid N+1 queries
+        keys_result = await session.execute(
+            select(VpnKey).where(
+                VpnKey.server_id == server.id,
+                VpnKey.status == VpnKeyStatus.active,
             )
-            key = key_result.scalar_one_or_none()
+        )
+        key_map: dict[str, VpnKey] = {k.outline_key_id: k for k in keys_result.scalars().all()}
+
+        for outline_key_id, bytes_used in stats.items():
+            key = key_map.get(outline_key_id)
             if key is not None:
                 key.traffic_used_gb = bytes_used / (1024 ** 3)
                 key.last_checked_at = datetime.utcnow()

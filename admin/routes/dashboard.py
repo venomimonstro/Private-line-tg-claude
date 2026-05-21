@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
-from app.enums import BackupStatus, HealthStatus, PaymentStatus, SubscriptionStatus
+from app.enums import BackupStatus, HealthStatus, PaymentStatus, SubscriptionStatus, VpnKeyStatus
 from app.models.backup import Backup
 from app.models.health_check import SystemHealthCheck
 from app.models.payment import Payment
@@ -51,7 +51,7 @@ async def dashboard(
     revenue_today = float(revenue_today_result.scalar_one() or 0)
 
     active_keys_result = await session.execute(
-        select(func.count(VpnKey.id)).where(VpnKey.status == "active")
+        select(func.count(VpnKey.id)).where(VpnKey.status == VpnKeyStatus.active)
     )
     active_keys = active_keys_result.scalar_one() or 0
 
