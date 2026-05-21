@@ -39,8 +39,13 @@ async def create_manual_backup(
 ) -> RedirectResponse:
     try:
         backup = await create_backup(BackupType.manual, session, created_by=f"admin:{admin.id}")
-        log = AdminLog(admin_id=admin.id, action="create_backup", target_type="backup", target_id=backup.id,
-                       ip_address=request.client.host if request.client else None)
+        log = AdminLog(
+            admin_user_id=admin.id,
+            action="create_backup",
+            target_entity="backup",
+            target_entity_id=backup.id,
+            ip_address=request.client.host if request.client else None,
+        )
         session.add(log)
         await session.commit()
     except Exception as exc:
@@ -57,8 +62,13 @@ async def restore_backup_route(
 ) -> RedirectResponse:
     try:
         await restore_backup(backup_id, session)
-        log = AdminLog(admin_id=admin.id, action="restore_backup", target_type="backup", target_id=backup_id,
-                       ip_address=request.client.host if request.client else None)
+        log = AdminLog(
+            admin_user_id=admin.id,
+            action="restore_backup",
+            target_entity="backup",
+            target_entity_id=backup_id,
+            ip_address=request.client.host if request.client else None,
+        )
         session.add(log)
         await session.commit()
     except Exception as exc:

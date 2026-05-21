@@ -11,6 +11,7 @@ from app.database import get_async_session
 from app.enums import VpnKeyStatus
 from app.models.admin_log import AdminLog
 from app.models.subscription import Subscription
+from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
@@ -62,8 +63,13 @@ async def disable_key(
     if server:
         await vpn_key_service.disable_vpn_key(key, server, session)
 
-    log = AdminLog(admin_id=admin.id, action="disable_vpn_key", target_type="vpn_key", target_id=key_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="disable_vpn_key",
+        target_entity="vpn_key",
+        target_entity_id=key_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/vpn-keys", status_code=303)
@@ -86,18 +92,27 @@ async def reissue_key(
     if sub is None:
         raise HTTPException(status_code=404)
 
+    tariff = await session.get(Tariff, sub.tariff_id)
+    if tariff is None:
+        raise HTTPException(status_code=404, detail="Tariff not found")
+
     server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
     server = server_result.scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404)
 
     try:
-        await vpn_key_service.reissue_vpn_key(key, server, sub.tariff_code, sub.traffic_limit_gb, session)
+        await vpn_key_service.reissue_vpn_key(key, server, tariff.slug, tariff.traffic_limit_gb, session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    log = AdminLog(admin_id=admin.id, action="reissue_vpn_key", target_type="vpn_key", target_id=key_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="reissue_vpn_key",
+        target_entity="vpn_key",
+        target_entity_id=key_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/vpn-keys", status_code=303)

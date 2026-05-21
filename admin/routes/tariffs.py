@@ -41,8 +41,14 @@ async def toggle_visible(
     if tariff is None:
         raise HTTPException(status_code=404)
     tariff.is_visible = not tariff.is_visible
-    log = AdminLog(admin_id=admin.id, action="toggle_tariff_visible", target_type="tariff", target_id=tariff_id,
-                   details={"is_visible": tariff.is_visible}, ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="toggle_tariff_visible",
+        target_entity="tariff",
+        target_entity_id=tariff_id,
+        details={"is_visible": tariff.is_visible},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/tariffs", status_code=303)
@@ -60,8 +66,14 @@ async def toggle_active(
     if tariff is None:
         raise HTTPException(status_code=404)
     tariff.is_active = not tariff.is_active
-    log = AdminLog(admin_id=admin.id, action="toggle_tariff_active", target_type="tariff", target_id=tariff_id,
-                   details={"is_active": tariff.is_active}, ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="toggle_tariff_active",
+        target_entity="tariff",
+        target_entity_id=tariff_id,
+        details={"is_active": tariff.is_active},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/tariffs", status_code=303)

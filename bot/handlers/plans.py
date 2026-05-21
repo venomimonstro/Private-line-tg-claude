@@ -4,14 +4,13 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.tariff import Tariff
 from app.models.user import User
-from app.payments.manual import ManualPaymentProvider
 from app.payments.services import create_payment
 from bot.keyboards.main_menu import accept_rules_keyboard, tariff_selection_keyboard
 
@@ -58,11 +57,11 @@ async def show_plans(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("tariff:"))
 async def on_tariff_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    tariff_code = callback.data.split(":", 1)[1]
+    tariff_slug = callback.data.split(":", 1)[1]
 
     async with async_session_maker() as session:
         result = await session.execute(
-            select(Tariff).where(Tariff.code == tariff_code, Tariff.is_active == True)  # noqa: E712
+            select(Tariff).where(Tariff.slug == tariff_slug, Tariff.is_active == True)  # noqa: E712
         )
         tariff = result.scalar_one_or_none()
 
@@ -70,17 +69,19 @@ async def on_tariff_selected(callback: CallbackQuery, state: FSMContext) -> None
         await callback.answer("Тариф недоступен.", show_alert=True)
         return
 
-    await state.update_data(tariff_code=tariff_code)
+    await state.update_data(tariff_slug=tariff_slug)
     await state.set_state(PurchaseStates.accepting_rules)
+
+    traffic_str = f"{tariff.traffic_limit_gb} ГБ/мес" if tariff.traffic_limit_gb else "Без ограничений"
 
     await callback.message.edit_text(  # type: ignore[union-attr]
         f"<b>Тариф «{tariff.name}»</b>\n\n"
-        f"💰 Стоимость: {int(tariff.price)} ₽/мес\n"
-        f"📦 Трафик: {tariff.traffic_limit_gb} ГБ/мес\n"
-        f"📱 Устройств: {tariff.devices_limit}\n\n"
+        f"💰 Стоимость: {int(tariff.price_monthly)} ₽/мес\n"
+        f"📦 Трафик: {traffic_str}\n"
+        f"📱 Устройств: {tariff.max_keys}\n\n"
         + _RULES_TEXT,
         parse_mode="HTML",
-        reply_markup=accept_rules_keyboard(tariff_code),
+        reply_markup=accept_rules_keyboard(tariff_slug),
     )
     await callback.answer()
 
@@ -105,11 +106,11 @@ async def back_to_plans(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("accept_rules:"))
 async def on_accept_rules(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
     from datetime import datetime
-    tariff_code = callback.data.split(":", 1)[1]
+    tariff_slug = callback.data.split(":", 1)[1]
 
     async with async_session_maker() as session:
         result = await session.execute(
-            select(Tariff).where(Tariff.code == tariff_code)
+            select(Tariff).where(Tariff.slug == tariff_slug)
         )
         tariff = result.scalar_one_or_none()
         if tariff is None:
@@ -123,21 +124,54 @@ async def on_accept_rules(callback: CallbackQuery, state: FSMContext, db_user: U
         user.rules_accepted_at = datetime.utcnow()
         await session.flush()
 
-        payment = await create_payment(db_user.id, tariff_code, session)
+        payment, payment_result = await create_payment(db_user.id, tariff_slug, session)
         await session.commit()
 
-    provider = ManualPaymentProvider()
-    instructions = provider.get_payment_instructions()
+    from app.payments.registry import get_provider
+    provider = get_provider()
 
-    await callback.message.edit_text(  # type: ignore[union-attr]
-        f"✅ Правила приняты.\n\n"
-        f"<b>Заявка #{payment.id} создана.</b>\n"
-        f"Тариф: {tariff.name}\n"
-        f"Сумма к оплате: <b>{int(payment.amount)} {payment.currency}</b>\n\n"
-        f"📋 <b>Инструкция по оплате:</b>\n{instructions}\n\n"
-        f"В комментарии к переводу укажите: <code>#{payment.id}</code>\n\n"
-        f"После поступления оплаты вы получите персональный ключ доступа.",
-        parse_mode="HTML",
-    )
+    if payment_result.payment_url:
+        # URL-based provider — show inline button
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)
+        ]])
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            f"✅ Правила приняты.\n\n"
+            f"<b>Заявка #{payment.id}</b>\n"
+            f"Тариф: {tariff.name}\n"
+            f"Сумма: <b>{int(payment.amount)} RUB</b>\n\n"
+            f"Нажмите кнопку ниже для оплаты:",
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+    elif payment_result.display_data.get("stars_flow"):
+        # Telegram Stars — send invoice
+        from bot.handlers.stars_payment import send_stars_invoice
+        await callback.message.delete()  # type: ignore[union-attr]
+        await send_stars_invoice(
+            callback.bot,
+            db_user.telegram_id,
+            payment.id,
+            float(payment.amount),
+            f"Private Line — {tariff.name}",
+        )
+    else:
+        # Manual payment — show instructions
+        instructions = (
+            provider.get_instructions()  # type: ignore[attr-defined]
+            if hasattr(provider, "get_instructions")
+            else payment_result.display_data.get("instructions", "")
+        )
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            f"✅ Правила приняты.\n\n"
+            f"<b>Заявка #{payment.id} создана.</b>\n"
+            f"Тариф: {tariff.name}\n"
+            f"Сумма к оплате: <b>{int(payment.amount)} RUB</b>\n\n"
+            f"📋 <b>Инструкция по оплате:</b>\n{instructions}\n\n"
+            f"В комментарии к переводу укажите: <code>#{payment.id}</code>\n\n"
+            f"После поступления оплаты вы получите персональный ключ доступа.",
+            parse_mode="HTML",
+        )
+
     await state.clear()
     await callback.answer()

@@ -58,8 +58,12 @@ async def add_domain(
         raise HTTPException(status_code=400, detail="Домен уже в списке")
     record = BlockedDomain(domain=domain, category=category, source="manual", comment=comment or None)
     session.add(record)
-    log = AdminLog(admin_id=admin.id, action="add_blocked_domain", details={"domain": domain},
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="add_blocked_domain",
+        details={"domain": domain},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/filtering", status_code=303)
@@ -96,8 +100,12 @@ async def add_ip(
         raise HTTPException(status_code=400, detail="IP/CIDR уже в списке")
     record = BlockedIp(ip_or_cidr=ip_or_cidr, category=category, source="manual", comment=comment or None)
     session.add(record)
-    log = AdminLog(admin_id=admin.id, action="add_blocked_ip", details={"ip": ip_or_cidr},
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="add_blocked_ip",
+        details={"ip": ip_or_cidr},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/filtering", status_code=303)
@@ -139,8 +147,12 @@ async def import_blacklist(
             session.add(BlockedDomain(domain=domain, category=category, source="import"))
             added += 1
 
-    log = AdminLog(admin_id=admin.id, action="import_blacklist", details={"added": added, "category": category},
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="import_blacklist",
+        details={"added": added, "category": category},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/filtering", status_code=303)

@@ -29,6 +29,7 @@ async def _get_active_server(session: AsyncSession) -> VpnServer | None:
 
 async def activate_subscription(
     subscription: Subscription,
+    tariff: Tariff,
     session: AsyncSession,
     send_key_callback: object | None = None,
 ) -> VpnKey | None:
@@ -46,7 +47,7 @@ async def activate_subscription(
             user_id=subscription.user_id,
             subscription_id=subscription.id,
             server=server,
-            traffic_limit_gb=subscription.traffic_limit_gb,
+            traffic_limit_gb=tariff.traffic_limit_gb,
             session=session,
         )
     except Exception as exc:
@@ -60,7 +61,7 @@ async def activate_subscription(
 
     subscription.status = SubscriptionStatus.active
     subscription.started_at = datetime.utcnow()
-    subscription.expires_at = datetime.utcnow() + timedelta(days=30)
+    subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
     server.current_users += 1
     await session.flush()
 

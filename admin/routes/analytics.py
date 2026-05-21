@@ -69,18 +69,18 @@ async def analytics_page(
     tariff_stats = []
     for tariff in tariffs:
         count_r = await session.execute(select(func.count(Subscription.id)).where(
-            Subscription.tariff_code == tariff.code, Subscription.status.in_(
+            Subscription.tariff_id == tariff.id, Subscription.status.in_(
                 [SubscriptionStatus.active, SubscriptionStatus.expires_soon])))
         count = count_r.scalar_one() or 0
         rev_r = await session.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
-            Payment.tariff_code == tariff.code, Payment.status == PaymentStatus.paid))
+            Payment.tariff_id == tariff.id, Payment.status == PaymentStatus.paid))
         rev = float(rev_r.scalar_one() or 0)
         tariff_stats.append({"tariff": tariff, "count": count, "revenue": rev})
 
     referral_total = (await session.execute(select(func.count(Referral.id)))).scalar_one() or 0
     referral_activated = (await session.execute(select(func.count(Referral.id)).where(
         Referral.status == ReferralStatus.activated))).scalar_one() or 0
-    referral_bonus_days = (await session.execute(select(func.coalesce(func.sum(Referral.reward_days), 0)).where(
+    referral_bonus_days = (await session.execute(select(func.coalesce(func.sum(Referral.bonus_days_awarded), 0)).where(
         Referral.status == ReferralStatus.activated))).scalar_one() or 0
 
     expiring_soon = (await session.execute(select(func.count(Subscription.id)).where(

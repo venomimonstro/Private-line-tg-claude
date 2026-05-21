@@ -27,6 +27,7 @@ from admin.routes import (
 )
 from app.database import get_async_session
 from app.models.user import User
+from app.payments.webhook import router as webhook_router
 from sqlalchemy.ext.asyncio import AsyncSession
 
 app = FastAPI(title="Private Line Admin", docs_url=None, redoc_url=None)
@@ -48,6 +49,7 @@ app.include_router(updates.router)
 app.include_router(filtering.router)
 app.include_router(abuse.router)
 app.include_router(logs.router)
+app.include_router(webhook_router)
 
 
 @app.get("/login", response_class=HTMLResponse)

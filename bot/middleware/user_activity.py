@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from app.database import async_session_maker
 from app.enums import UserStatus
@@ -25,6 +25,11 @@ _MAINTENANCE_BLOCKED_ACTIONS = {
     "💳 Купить доступ",
     "🔄 Продлить",
 }
+
+_MAINTENANCE_BLOCKED_CALLBACK_PREFIXES = (
+    "tariff:",
+    "accept_rules:",
+)
 
 
 class UserActivityMiddleware(BaseMiddleware):
@@ -66,6 +71,7 @@ class UserActivityMiddleware(BaseMiddleware):
                     username=telegram_user.username,
                     first_name=telegram_user.first_name,
                     last_name=telegram_user.last_name,
+                    language_code=telegram_user.language_code if hasattr(telegram_user, "language_code") else None,
                     status=UserStatus.new,
                     referrer_id=referrer_id,
                 )
@@ -79,17 +85,25 @@ class UserActivityMiddleware(BaseMiddleware):
                 if telegram_user.first_name:
                     user.first_name = telegram_user.first_name
                 user.last_name = telegram_user.last_name
+                if hasattr(telegram_user, "language_code") and telegram_user.language_code:
+                    user.language_code = telegram_user.language_code
                 await session.commit()
 
             if user.status == UserStatus.blocked:
                 if isinstance(event, Message):
                     await event.answer("🚫 Ваш доступ заблокирован. Обратитесь в поддержку.")
+                elif isinstance(event, CallbackQuery):
+                    await event.answer("🚫 Ваш доступ заблокирован. Обратитесь в поддержку.", show_alert=True)
                 return None
 
-            if settings.MAINTENANCE_MODE and isinstance(event, Message):
-                if event.text in _MAINTENANCE_BLOCKED_ACTIONS:
+            if settings.MAINTENANCE_MODE:
+                if isinstance(event, Message) and event.text in _MAINTENANCE_BLOCKED_ACTIONS:
                     await event.answer(_MAINTENANCE_MSG)
                     return None
+                if isinstance(event, CallbackQuery) and event.data:
+                    if any(event.data.startswith(prefix) for prefix in _MAINTENANCE_BLOCKED_CALLBACK_PREFIXES):
+                        await event.answer(_MAINTENANCE_MSG, show_alert=True)
+                        return None
 
             data["db_user"] = user
             data["db_session"] = session

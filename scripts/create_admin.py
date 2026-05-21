@@ -50,7 +50,7 @@ async def create_admin() -> None:
         if user is None:
             user = User(
                 telegram_id=telegram_id,
-                status=UserStatus.active,
+                status=UserStatus.new,
                 admin_role=role,
                 admin_password_hash=password_hash,
                 admin_login_attempts=0,

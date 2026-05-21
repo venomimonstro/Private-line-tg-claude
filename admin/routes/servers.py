@@ -54,8 +54,13 @@ async def add_server(
         status=VpnServerStatus.active,
     )
     session.add(server)
-    log = AdminLog(admin_id=admin.id, action="add_server", target_type="server",
-                   details={"name": name, "country": country}, ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="add_server",
+        target_entity="server",
+        details={"name": name, "country": country},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/servers", status_code=303)
@@ -91,8 +96,13 @@ async def disable_server(
     if server is None:
         raise HTTPException(status_code=404)
     server.status = VpnServerStatus.disabled
-    log = AdminLog(admin_id=admin.id, action="disable_server", target_type="server", target_id=server_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="disable_server",
+        target_entity="server",
+        target_entity_id=server_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/servers", status_code=303)

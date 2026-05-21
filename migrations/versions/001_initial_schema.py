@@ -23,40 +23,35 @@ def upgrade() -> None:
         "users",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("telegram_id", sa.BigInteger(), nullable=False),
-        sa.Column("username", sa.String(length=64), nullable=True),
-        sa.Column("first_name", sa.String(length=128), nullable=True),
-        sa.Column("last_name", sa.String(length=128), nullable=True),
+        sa.Column("username", sa.String(length=255), nullable=True),
+        sa.Column("first_name", sa.String(length=255), nullable=True),
+        sa.Column("last_name", sa.String(length=255), nullable=True),
         sa.Column("language_code", sa.String(length=8), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="new"),
-        sa.Column("is_blocked", sa.Boolean(), nullable=False, server_default="0"),
-        sa.Column("block_reason", sa.Text(), nullable=True),
-        sa.Column("referral_code", sa.String(length=32), nullable=True),
-        sa.Column("referred_by_id", sa.Integer(), nullable=True),
-        sa.Column("balance", sa.Numeric(precision=10, scale=2), nullable=False, server_default="0"),
+        sa.Column("referrer_id", sa.Integer(), nullable=True),
         sa.Column("rules_accepted_at", sa.DateTime(), nullable=True),
         sa.Column("admin_role", sa.String(length=32), nullable=True),
-        sa.Column("admin_password_hash", sa.String(length=256), nullable=True),
+        sa.Column("admin_password_hash", sa.String(length=255), nullable=True),
         sa.Column("admin_login_attempts", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("admin_locked_until", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.Column("last_activity_at", sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(["referred_by_id"], ["users.id"], ondelete="SET NULL"),
+        sa.Column("last_activity_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["referrer_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("telegram_id"),
-        sa.UniqueConstraint("referral_code"),
     )
     op.create_index("ix_users_telegram_id", "users", ["telegram_id"])
-    op.create_index("ix_users_referral_code", "users", ["referral_code"])
 
     op.create_table(
         "tariffs",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("name", sa.String(length=64), nullable=False),
-        sa.Column("slug", sa.String(length=32), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("slug", sa.String(length=64), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("price_monthly", sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column("price_first_month", sa.Numeric(precision=10, scale=2), nullable=True),
+        sa.Column("currency", sa.String(length=8), nullable=False, server_default="RUB"),
         sa.Column("duration_days", sa.Integer(), nullable=False),
         sa.Column("traffic_limit_gb", sa.Integer(), nullable=True),
         sa.Column("max_keys", sa.Integer(), nullable=False, server_default="1"),
@@ -68,19 +63,19 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("slug"),
     )
+    op.create_index("ix_tariffs_slug", "tariffs", ["slug"])
 
     op.create_table(
         "vpn_servers",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("country", sa.String(length=64), nullable=False),
-        sa.Column("city", sa.String(length=64), nullable=True),
+        sa.Column("provider", sa.String(length=128), nullable=False),
         sa.Column("api_url", sa.String(length=512), nullable=False),
         sa.Column("api_secret_encrypted", sa.String(length=1024), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
         sa.Column("max_users", sa.Integer(), nullable=False, server_default="100"),
         sa.Column("current_users", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("is_default", sa.Boolean(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -112,9 +107,9 @@ def upgrade() -> None:
         sa.Column("tariff_id", sa.Integer(), nullable=False),
         sa.Column("amount", sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column("currency", sa.String(length=8), nullable=False, server_default="RUB"),
-        sa.Column("status", sa.String(length=32), nullable=False, server_default="created"),
-        sa.Column("provider", sa.String(length=32), nullable=False, server_default="manual"),
-        sa.Column("provider_payment_id", sa.String(length=256), nullable=True),
+        sa.Column("status", sa.String(length=32), nullable=False, server_default="pending"),
+        sa.Column("provider", sa.String(length=64), nullable=False, server_default="manual"),
+        sa.Column("provider_payment_id", sa.String(length=255), nullable=True),
         sa.Column("confirmed_by_id", sa.Integer(), nullable=True),
         sa.Column("confirmed_at", sa.DateTime(), nullable=True),
         sa.Column("comment", sa.Text(), nullable=True),
@@ -135,14 +130,15 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("subscription_id", sa.Integer(), nullable=False),
         sa.Column("server_id", sa.Integer(), nullable=False),
-        sa.Column("outline_key_id", sa.String(length=64), nullable=False),
+        sa.Column("outline_key_id", sa.String(length=255), nullable=False),
         sa.Column("access_url_encrypted", sa.String(length=2048), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
-        sa.Column("traffic_used_gb", sa.Numeric(precision=12, scale=4), nullable=False, server_default="0"),
+        sa.Column("traffic_used_gb", sa.Float(), nullable=False, server_default="0"),
         sa.Column("traffic_limit_gb", sa.Integer(), nullable=True),
-        sa.Column("last_reissued_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.Column("disabled_at", sa.DateTime(), nullable=True),
+        sa.Column("last_checked_at", sa.DateTime(), nullable=True),
+        sa.Column("last_reissued_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["subscription_id"], ["subscriptions.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["server_id"], ["vpn_servers.id"], ondelete="RESTRICT"),
@@ -150,38 +146,41 @@ def upgrade() -> None:
     )
     op.create_index("ix_vpn_keys_user_id", "vpn_keys", ["user_id"])
     op.create_index("ix_vpn_keys_status", "vpn_keys", ["status"])
+    op.create_index("ix_vpn_keys_subscription_id", "vpn_keys", ["subscription_id"])
 
     op.create_table(
         "referrals",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("referrer_id", sa.Integer(), nullable=False),
         sa.Column("invited_user_id", sa.Integer(), nullable=False),
+        sa.Column("bonus_days_awarded", sa.Integer(), nullable=False, server_default="14"),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="pending"),
-        sa.Column("bonus_days_awarded", sa.Integer(), nullable=True),
-        sa.Column("activated_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("activated_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(["referrer_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["invited_user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("invited_user_id"),
     )
+    op.create_index("ix_referrals_referrer_id", "referrals", ["referrer_id"])
+    op.create_index("ix_referrals_invited_user_id", "referrals", ["invited_user_id"])
 
     op.create_table(
         "admin_logs",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("admin_user_id", sa.Integer(), nullable=False),
-        sa.Column("action", sa.String(length=128), nullable=False),
+        sa.Column("admin_user_id", sa.Integer(), nullable=True),
+        sa.Column("action", sa.String(length=255), nullable=False),
         sa.Column("target_user_id", sa.Integer(), nullable=True),
         sa.Column("target_entity", sa.String(length=64), nullable=True),
         sa.Column("target_entity_id", sa.Integer(), nullable=True),
-        sa.Column("ip_address", sa.String(length=45), nullable=True),
         sa.Column("details", sa.JSON(), nullable=True),
+        sa.Column("ip_address", sa.String(length=45), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["admin_user_id"], ["users.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(["admin_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["target_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_admin_logs_admin_user_id", "admin_logs", ["admin_user_id"])
+    op.create_index("ix_admin_logs_action", "admin_logs", ["action"])
     op.create_index("ix_admin_logs_created_at", "admin_logs", ["created_at"])
 
     op.create_table(

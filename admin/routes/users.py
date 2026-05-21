@@ -101,8 +101,12 @@ async def block_user(
         if server:
             await vpn_key_service.disable_vpn_key(key, server, session)
 
-    log = AdminLog(admin_id=admin.id, action="block_user", target_type="user", target_id=user_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="block_user",
+        target_user_id=user_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
@@ -121,8 +125,12 @@ async def unblock_user(
         raise HTTPException(status_code=404)
 
     user.status = UserStatus.active
-    log = AdminLog(admin_id=admin.id, action="unblock_user", target_type="user", target_id=user_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="unblock_user",
+        target_user_id=user_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/users/{user_id}", status_code=303)

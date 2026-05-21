@@ -18,16 +18,16 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 
 def tariff_selection_keyboard(tariffs: list) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text=f"{t.name} — {int(t.price)} ₽/мес", callback_data=f"tariff:{t.code}")]
+        [InlineKeyboardButton(text=f"{t.name} — {int(t.price_monthly)} ₽/мес", callback_data=f"tariff:{t.slug}")]
         for t in tariffs
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def accept_rules_keyboard(tariff_code: str) -> InlineKeyboardMarkup:
+def accept_rules_keyboard(tariff_slug: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я принимаю правила сервиса", callback_data=f"accept_rules:{tariff_code}")],
+            [InlineKeyboardButton(text="✅ Я принимаю правила сервиса", callback_data=f"accept_rules:{tariff_slug}")],
             [InlineKeyboardButton(text="← Назад", callback_data="back_to_plans")],
         ]
     )

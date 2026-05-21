@@ -86,12 +86,18 @@ async def confirm_payment_route(
         raise HTTPException(status_code=400, detail="Payment cannot be confirmed in current state")
 
     if comment:
-        payment.manual_comment = comment
+        payment.comment = comment
 
     await confirm_payment(payment, admin.id, session)
 
-    log = AdminLog(admin_id=admin.id, action="confirm_payment", target_type="payment", target_id=payment_id,
-                   details={"comment": comment}, ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="confirm_payment",
+        target_entity="payment",
+        target_entity_id=payment_id,
+        details={"comment": comment},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
 
@@ -112,8 +118,13 @@ async def cancel_payment_route(
 
     await cancel_payment(payment, admin.id, session)
 
-    log = AdminLog(admin_id=admin.id, action="cancel_payment", target_type="payment", target_id=payment_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="cancel_payment",
+        target_entity="payment",
+        target_entity_id=payment_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/payments/{payment_id}", status_code=303)

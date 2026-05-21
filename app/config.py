@@ -29,8 +29,41 @@ class Settings(BaseSettings):
     MAX_LOGIN_ATTEMPTS: int = 5
     LOGIN_LOCKOUT_MINUTES: int = 30
 
-    # Payment
+    # Payment (general)
     PAYMENT_INSTRUCTIONS: str = "Свяжитесь с поддержкой для получения реквизитов оплаты."
+    PAYMENT_PROVIDER: str = "manual"
+    BOT_USERNAME: str = ""
+    WEBHOOK_BASE_URL: str = ""
+    STARS_PER_RUB: float = 0.5
+
+    # YooMoney
+    YOOMONEY_WALLET: str = ""
+    YOOMONEY_NOTIFICATION_SECRET: str = ""
+
+    # FreeKassa
+    FREEKASSA_MERCHANT_ID: str = ""
+    FREEKASSA_SECRET_1: str = ""
+    FREEKASSA_SECRET_2: str = ""
+
+    # LAVA
+    LAVA_PROJECT_ID: str = ""
+    LAVA_SECRET_KEY: str = ""
+
+    # YooKassa
+    YOOKASSA_SHOP_ID: str = ""
+    YOOKASSA_SECRET_KEY: str = ""
+
+    # Robokassa
+    ROBOKASSA_MERCHANT_LOGIN: str = ""
+    ROBOKASSA_PASSWORD_1: str = ""
+    ROBOKASSA_PASSWORD_2: str = ""
+
+    # Prodamus
+    PRODAMUS_API_URL: str = ""
+    PRODAMUS_WEBHOOK_SECRET: str = ""
+
+    # CryptoBot
+    CRYPTO_BOT_TOKEN: str = ""
 
     # Optional IP allowlist for admin panel
     ADMIN_ALLOWED_IPS: list[str] = []

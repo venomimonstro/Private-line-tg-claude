@@ -30,7 +30,7 @@ async def get_current_admin(
         raise _redirect_to_login()
 
     result = await session.execute(
-        select(User).where(User.id == user_id, User.is_admin == True)  # noqa: E712
+        select(User).where(User.id == user_id, User.admin_role.isnot(None))
     )
     user = result.scalar_one_or_none()
     if user is None:

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.database import async_session_maker
 from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.subscription import Subscription
+from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.services.vpn_key import get_access_url
@@ -62,7 +63,9 @@ _CONNECTION_INSTRUCTIONS = {
 }
 
 
-async def _get_active_subscription(user_id: int) -> tuple[Subscription | None, VpnKey | None]:
+async def _get_active_subscription(
+    user_id: int,
+) -> tuple[Subscription | None, VpnKey | None, Tariff | None]:
     async with async_session_maker() as session:
         sub_result = await session.execute(
             select(Subscription)
@@ -79,19 +82,21 @@ async def _get_active_subscription(user_id: int) -> tuple[Subscription | None, V
         )
         sub = sub_result.scalars().first()
         if sub is None:
-            return None, None
+            return None, None, None
 
         active_key = next(
             (k for k in sub.vpn_keys if k.status == VpnKeyStatus.active),
             None,
         )
-        return sub, active_key
+
+        tariff = await session.get(Tariff, sub.tariff_id)
+        return sub, active_key, tariff
 
 
 @router.message(F.text == "🔑 Мой доступ")
 @router.message(Command("my_access"))
 async def show_my_access(message: Message, db_user: User) -> None:
-    sub, active_key = await _get_active_subscription(db_user.id)
+    sub, active_key, tariff = await _get_active_subscription(db_user.id)
 
     if sub is None:
         await message.answer(
@@ -103,14 +108,16 @@ async def show_my_access(message: Message, db_user: User) -> None:
     status_label = _STATUS_LABELS.get(sub.status, sub.status)
     expires_str = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
     traffic_used = f"{active_key.traffic_used_gb:.1f}" if active_key else "—"
+    tariff_name = tariff.name if tariff else "—"
+    traffic_limit_str = f"{tariff.traffic_limit_gb} ГБ/мес" if (tariff and tariff.traffic_limit_gb) else "Без ограничений"
 
     text = (
         f"<b>Ваш доступ</b>\n\n"
-        f"📋 Тариф: <b>{sub.tariff_code.capitalize()}</b>\n"
+        f"📋 Тариф: <b>{tariff_name}</b>\n"
         f"📊 Статус: {status_label}\n"
         f"📅 Действует до: <b>{expires_str}</b>\n"
         f"🌍 Сервер: Германия\n"
-        f"📦 Лимит трафика: <b>{sub.traffic_limit_gb} ГБ/мес</b>\n"
+        f"📦 Лимит трафика: <b>{traffic_limit_str}</b>\n"
         f"📈 Использовано: {traffic_used} ГБ"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=my_access_keyboard())
@@ -118,7 +125,7 @@ async def show_my_access(message: Message, db_user: User) -> None:
 
 @router.callback_query(F.data == "get_key")
 async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
-    sub, active_key = await _get_active_subscription(db_user.id)
+    sub, active_key, tariff = await _get_active_subscription(db_user.id)
 
     if sub is None or active_key is None:
         await callback.answer("Активный ключ не найден. Обратитесь в поддержку.", show_alert=True)
@@ -161,20 +168,27 @@ async def on_platform_instructions(callback: CallbackQuery) -> None:
 
 @router.message(F.text == "📊 Проверить лимит")
 async def check_limit(message: Message, db_user: User) -> None:
-    sub, active_key = await _get_active_subscription(db_user.id)
+    sub, active_key, tariff = await _get_active_subscription(db_user.id)
 
     if sub is None or active_key is None:
         await message.answer("У вас нет активной подписки.")
         return
 
     used = active_key.traffic_used_gb
-    limit = sub.traffic_limit_gb
-    percent = (used / limit * 100) if limit > 0 else 0
+    limit = tariff.traffic_limit_gb if tariff else None
 
-    text = (
-        f"📊 <b>Использование трафика</b>\n\n"
-        f"Использовано: <b>{used:.2f} ГБ</b> из {limit} ГБ\n"
-        f"Осталось: <b>{max(0.0, limit - used):.2f} ГБ</b>\n"
-        f"{'▓' * int(percent // 10)}{'░' * (10 - int(percent // 10))} {percent:.1f}%"
-    )
+    if limit and limit > 0:
+        percent = (used / limit * 100)
+        text = (
+            f"📊 <b>Использование трафика</b>\n\n"
+            f"Использовано: <b>{used:.2f} ГБ</b> из {limit} ГБ\n"
+            f"Осталось: <b>{max(0.0, limit - used):.2f} ГБ</b>\n"
+            f"{'▓' * int(percent // 10)}{'░' * (10 - int(percent // 10))} {percent:.1f}%"
+        )
+    else:
+        text = (
+            f"📊 <b>Использование трафика</b>\n\n"
+            f"Использовано: <b>{used:.2f} ГБ</b>\n"
+            f"Лимит: Без ограничений"
+        )
     await message.answer(text, parse_mode="HTML")

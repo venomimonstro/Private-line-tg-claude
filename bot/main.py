@@ -8,8 +8,10 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from app.bot_instance import set_bot
 from app.config import settings
 from bot.handlers import access, help, payment, plans, referral, start
+from bot.handlers import stars_payment
 from bot.middleware.user_activity import UserActivityMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -21,6 +23,8 @@ async def main() -> None:
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    set_bot(bot)
+
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
@@ -33,6 +37,7 @@ async def main() -> None:
     dp.include_router(payment.router)
     dp.include_router(referral.router)
     dp.include_router(help.router)
+    dp.include_router(stars_payment.router)
 
     logger.info("Starting Private Line bot...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())

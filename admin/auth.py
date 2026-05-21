@@ -5,11 +5,10 @@ from datetime import datetime, timedelta
 
 import bcrypt
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.enums import UserStatus
 from app.models.admin_log import AdminLog
 from app.models.user import User
 
@@ -50,13 +49,19 @@ async def authenticate_admin(
     ip: str,
     session: AsyncSession,
 ) -> User | None:
+    # Support login by username or by numeric telegram_id
+    if login.isdigit():
+        cond = or_(User.username == login, User.telegram_id == int(login))
+    else:
+        cond = User.username == login
+
     result = await session.execute(
-        select(User).where(User.username == login, User.is_admin == True)  # noqa: E712
+        select(User).where(cond, User.admin_role.isnot(None))
     )
     user = result.scalar_one_or_none()
 
     log_entry = AdminLog(
-        admin_id=user.id if user else None,
+        admin_user_id=user.id if user else None,
         action="login_attempt",
         details={"login": login, "success": False},
         ip_address=ip,

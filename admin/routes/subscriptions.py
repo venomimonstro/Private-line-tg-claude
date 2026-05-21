@@ -12,6 +12,7 @@ from app.database import get_async_session
 from app.enums import SubscriptionStatus
 from app.models.admin_log import AdminLog
 from app.models.subscription import Subscription
+from app.models.tariff import Tariff
 from app.models.user import User
 from app.services.subscription import extend_subscription
 
@@ -85,8 +86,14 @@ async def extend_subscription_route(
         raise HTTPException(status_code=404)
 
     await extend_subscription(sub, days, session)
-    log = AdminLog(admin_id=admin.id, action="extend_subscription", target_type="subscription", target_id=sub_id,
-                   details={"days": days}, ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="extend_subscription",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        details={"days": days},
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
@@ -117,8 +124,13 @@ async def disable_subscription(
                 await vpn_key_service.disable_vpn_key(key, server, session)
 
     sub.status = SubscriptionStatus.disabled
-    log = AdminLog(admin_id=admin.id, action="disable_subscription", target_type="subscription", target_id=sub_id,
-                   ip_address=request.client.host if request.client else None)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="disable_subscription",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        ip_address=request.client.host if request.client else None,
+    )
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
