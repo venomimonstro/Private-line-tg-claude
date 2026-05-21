@@ -13,7 +13,7 @@
         <tr><td>Последняя активность</td><td>{{ user.last_activity_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
         <tr><td>Принял правила</td><td>{% if user.rules_accepted_at %}{{ user.rules_accepted_at.strftime('%d.%m.%Y') }}{% else %}&mdash;{% endif %}</td></tr>
       </table>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 flex-wrap">
         {% if user.status.value != 'blocked' %}
         <form method="post" action="/admin/users/{{ user.id }}/block">
           <button class="btn btn-sm btn-danger" onclick="return confirm('Заблокировать пользователя?')">Заблокировать</button>
@@ -23,6 +23,9 @@
           <button class="btn btn-sm btn-success">Разблокировать</button>
         </form>
         {% endif %}
+        <a href="/admin/export/users" class="btn btn-sm btn-outline-success">
+          <i class="bi bi-download"></i> CSV
+        </a>
       </div>
     </div>
   </div>
@@ -60,4 +63,26 @@
     </div>
   </div>
 </div>
+
+{% if timeline %}
+<div class="card p-3 mt-2">
+  <h6 class="fw-bold mb-3">📅 История событий</h6>
+  <div class="timeline">
+    {% for event in timeline %}
+    <div class="d-flex gap-3 mb-3">
+      <div class="text-muted small" style="min-width:140px;">{{ event.date.strftime('%d.%m.%Y %H:%M') }}</div>
+      <div>
+        <span class="badge
+          {% if event.type == 'subscription' %}bg-primary
+          {% elif event.type == 'payment' %}bg-success
+          {% elif event.type == 'admin_log' %}bg-warning text-dark
+          {% else %}bg-secondary{% endif %}
+          me-2">{{ event.type }}</span>
+        {{ event.description }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}

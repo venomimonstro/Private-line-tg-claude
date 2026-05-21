@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 
 from admin.auth import authenticate_admin, create_session_token
 from admin.dependencies import get_current_admin
@@ -11,12 +15,14 @@ from admin.routes import (
     abuse,
     analytics,
     backups,
+    bulk_actions,
     dashboard,
     filtering,
     health,
     load_analytics,
     logs,
     payments,
+    promo_codes,
     referrals,
     refund_requests,
     servers,
@@ -54,6 +60,8 @@ app.include_router(updates.router)
 app.include_router(filtering.router)
 app.include_router(abuse.router)
 app.include_router(logs.router)
+app.include_router(promo_codes.router)
+app.include_router(bulk_actions.router)
 app.include_router(webhook_router)
 
 
@@ -101,4 +109,52 @@ async def logout() -> RedirectResponse:
 
 @app.get("/health")
 async def health_check() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/admin/export/users")
+async def export_users_csv(
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> StreamingResponse:
+    result = await session.execute(select(User).order_by(User.created_at.desc()))
+    users = result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Telegram ID", "Username", "Name", "Status", "Created"])
+    for u in users:
+        writer.writerow([
+            u.id,
+            u.telegram_id,
+            u.username or "",
+            f"{u.first_name or ''} {u.last_name or ''}".strip(),
+            u.status.value,
+            u.created_at.strftime("%Y-%m-%d %H:%M"),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=users.csv"},
+    )
+
+
+@app.post("/admin/alertmanager-webhook")
+async def alertmanager_webhook(request: Request) -> dict:
+    """Receive Alertmanager alerts and forward to admin Telegram chat."""
+    from app.services.notification import notify_admin
+
+    try:
+        data = await request.json()
+        alerts = data.get("alerts", [])
+        for alert in alerts:
+            alert_status = alert.get("status", "firing")
+            name = alert.get("labels", {}).get("alertname", "Unknown")
+            summary = alert.get("annotations", {}).get("summary", "")
+            emoji = "🔴" if alert_status == "firing" else "✅"
+            await notify_admin(f"{emoji} Alert {alert_status.upper()}: {name}\n{summary}")
+    except Exception:
+        pass
     return {"status": "ok"}

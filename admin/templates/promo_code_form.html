@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8">
+    <div class="card p-4">
+      <form method="post" action="{{ '/admin/promo-codes/' ~ promo.id if promo else '/admin/promo-codes/new' }}">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Код промокода <span class="text-danger">*</span></label>
+            <input type="text" name="code" class="form-control text-uppercase"
+                   value="{{ promo.code if promo else '' }}"
+                   placeholder="PROMO2024" required
+                   {% if promo %}readonly{% endif %}>
+            <div class="form-text">Только латинские буквы, цифры и дефис. Будет переведён в верхний регистр.</div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Описание</label>
+            <input type="text" name="description" class="form-control"
+                   value="{{ promo.description or '' }}"
+                   placeholder="Акция для новых пользователей">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Скидка %</label>
+            <input type="number" name="discount_percent" class="form-control"
+                   value="{{ promo.discount_percent or '' }}"
+                   min="0" max="100" step="0.01" placeholder="0">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Скидка ₽ (фикс.)</label>
+            <input type="number" name="discount_fixed" class="form-control"
+                   value="{{ promo.discount_fixed or '' }}"
+                   min="0" step="0.01" placeholder="0">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Макс. использований</label>
+            <input type="number" name="uses_max" class="form-control"
+                   value="{{ promo.uses_max or '' }}"
+                   min="0" placeholder="0 = без лимита">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Тариф (slug)</label>
+            <input type="text" name="tariff_slug" class="form-control"
+                   value="{{ promo.tariff_slug or '' }}"
+                   placeholder="basic_30 (оставить пустым = любой)">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Действует до</label>
+            <input type="datetime-local" name="expires_at" class="form-control"
+                   value="{{ promo.expires_at.strftime('%Y-%m-%dT%H:%M') if promo and promo.expires_at else '' }}">
+          </div>
+
+          <div class="col-12"><hr class="my-1"><h6 class="text-muted">Пробный период (Trial)</h6></div>
+
+          <div class="col-md-4">
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" name="is_trial" id="is_trial"
+                     {% if promo and promo.is_trial %}checked{% endif %}>
+              <label class="form-check-label" for="is_trial">Это trial-промокод</label>
+            </div>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Дней пробного периода</label>
+            <input type="number" name="trial_days" class="form-control"
+                   value="{{ promo.trial_days or '' }}"
+                   min="0" placeholder="0">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Трафик пробного (ГБ)</label>
+            <input type="number" name="trial_traffic_gb" class="form-control"
+                   value="{{ promo.trial_traffic_gb or '' }}"
+                   min="0" step="0.1" placeholder="0">
+          </div>
+
+          {% if promo %}
+          <div class="col-12">
+            <div class="alert alert-secondary py-2 small mb-0">
+              Использований: <strong>{{ promo.uses_count }}</strong>
+              {% if promo.uses_max %} / {{ promo.uses_max }}{% endif %} &nbsp;|&nbsp;
+              Создан: {{ promo.created_at.strftime('%d.%m.%Y %H:%M') }}
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="col-12 d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              {{ 'Сохранить' if promo else 'Создать' }}
+            </button>
+            <a href="/admin/promo-codes" class="btn btn-outline-secondary">Отмена</a>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

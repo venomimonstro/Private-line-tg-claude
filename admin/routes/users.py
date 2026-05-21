@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, or_, select
+from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,7 @@ from admin.dependencies import get_current_admin
 from app.database import get_async_session
 from app.enums import UserStatus, VpnKeyStatus
 from app.models.admin_log import AdminLog
+from app.models.payment import Payment
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.vpn_key import VpnKey
@@ -29,19 +30,23 @@ _PAGE_SIZE = 25
 async def list_users(
     request: Request,
     page: int = 1,
-    search: str = "",
+    q: str = "",
+    search: str = "",  # legacy alias kept for backward compat
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
+    # Support both q= (new) and search= (old) parameter names
+    effective_q = q or search
+
     query = select(User)
-    if search:
-        try:
-            tg_id = int(search)
-            query = query.where(User.telegram_id == tg_id)
-        except ValueError:
-            query = query.where(
-                or_(User.username.ilike(f"%{search}%"), User.first_name.ilike(f"%{search}%"))
+    if effective_q:
+        query = query.where(
+            or_(
+                User.username.ilike(f"%{effective_q}%"),
+                User.first_name.ilike(f"%{effective_q}%"),
+                cast(User.telegram_id, String).contains(effective_q),
             )
+        )
 
     total_result = await session.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar_one() or 0
@@ -53,7 +58,8 @@ async def list_users(
     return templates.TemplateResponse("users_list.html", {
         "request": request, "admin": admin, "users": users,
         "page": page, "total": total, "page_size": _PAGE_SIZE,
-        "search": search, "page_title": "Пользователи",
+        "q": effective_q, "search": effective_q,  # pass both for templates
+        "page_title": "Пользователи",
     })
 
 
@@ -73,8 +79,64 @@ async def user_detail(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Build events timeline (last 30 events across subscriptions, payments and admin logs)
+    timeline: list[dict] = []
+
+    # Subscriptions
+    sub_result = await session.execute(
+        select(Subscription)
+        .where(Subscription.user_id == user_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(20)
+    )
+    for sub in sub_result.scalars().all():
+        timeline.append({
+            "date": sub.created_at,
+            "type": "subscription",
+            "description": f"Подписка #{sub.id} создана — {sub.status.value}",
+        })
+        if sub.expires_at:
+            timeline.append({
+                "date": sub.expires_at,
+                "type": "subscription",
+                "description": f"Подписка #{sub.id} истекает",
+            })
+
+    # Payments
+    pay_result = await session.execute(
+        select(Payment)
+        .where(Payment.user_id == user_id)
+        .order_by(Payment.created_at.desc())
+        .limit(20)
+    )
+    for pay in pay_result.scalars().all():
+        timeline.append({
+            "date": pay.created_at,
+            "type": "payment",
+            "description": f"Платёж #{pay.id} — {pay.amount} ₽ ({pay.status.value})",
+        })
+
+    # Admin log entries
+    log_result = await session.execute(
+        select(AdminLog)
+        .where(AdminLog.target_user_id == user_id)
+        .order_by(AdminLog.created_at.desc())
+        .limit(20)
+    )
+    for log_entry in log_result.scalars().all():
+        timeline.append({
+            "date": log_entry.created_at,
+            "type": "admin_log",
+            "description": f"Действие администратора: {log_entry.action}",
+        })
+
+    timeline.sort(key=lambda e: e["date"], reverse=True)
+    timeline = timeline[:30]
+
     return templates.TemplateResponse("user_detail.html", {
-        "request": request, "admin": admin, "user": user, "page_title": f"Пользователь #{user_id}",
+        "request": request, "admin": admin, "user": user,
+        "page_title": f"Пользователь #{user_id}",
+        "timeline": timeline,
     })
 
 

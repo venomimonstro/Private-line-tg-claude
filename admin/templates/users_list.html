@@ -1,33 +1,95 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card mb-3 p-3">
-  <form method="get" class="row g-2 align-items-center">
-    <div class="col-auto"><input type="text" name="search" class="form-control" placeholder="Telegram ID или username" value="{{ search }}"></div>
+  <form method="get" class="row g-2 align-items-center" id="search-form">
+    <div class="col-auto flex-grow-1">
+      <input type="text" name="q" class="form-control"
+             placeholder="Поиск по username, telegram_id, имени..."
+             value="{{ q }}">
+    </div>
     <div class="col-auto"><button type="submit" class="btn btn-primary">Поиск</button></div>
-    {% if search %}<div class="col-auto"><a href="/admin/users" class="btn btn-outline-secondary">Сбросить</a></div>{% endif %}
+    {% if q %}<div class="col-auto"><a href="/admin/users" class="btn btn-outline-secondary">Сбросить</a></div>{% endif %}
+    <div class="col-auto ms-auto">
+      <a href="/admin/export/users" class="btn btn-outline-success">
+        <i class="bi bi-download"></i> Экспорт CSV
+      </a>
+    </div>
   </form>
 </div>
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-hover mb-0">
-      <thead class="table-light"><tr><th>#</th><th>Telegram ID</th><th>Username</th><th>Имя</th><th>Статус</th><th>Создан</th><th></th></tr></thead>
-      <tbody>
-      {% for user in users %}
-      <tr>
-        <td>{{ user.id }}</td>
-        <td><code>{{ user.telegram_id }}</code></td>
-        <td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td>
-        <td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td>
-        <td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td>
-        <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
-        <td><a href="/admin/users/{{ user.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="7" class="text-center text-muted py-4">Пользователи не найдены</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+
+<form id="bulk-form" method="get" action="/admin/bulk">
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th><input type="checkbox" id="select-all" title="Выбрать все"></th>
+            <th>#</th>
+            <th>Telegram ID</th>
+            <th>Username</th>
+            <th>Имя</th>
+            <th>Статус</th>
+            <th>Создан</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for user in users %}
+        <tr>
+          <td><input type="checkbox" name="user_ids" value="{{ user.id }}" class="row-checkbox"></td>
+          <td>{{ user.id }}</td>
+          <td><code>{{ user.telegram_id }}</code></td>
+          <td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td>
+          <td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td>
+          <td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td>
+          <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
+          <td><a href="/admin/users/{{ user.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">Пользователи не найдены</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
-</div>
-<div class="mt-3 text-muted small">Всего: {{ total }} | Страница {{ page }} из {{ ((total - 1) // page_size + 1) if total > 0 else 1 }}</div>
+
+  <div class="mt-3 d-flex align-items-center gap-3">
+    <div class="text-muted small">Всего: {{ total }} | Страница {{ page }} из {{ ((total - 1) // page_size + 1) if total > 0 else 1 }}</div>
+    <button type="submit" class="btn btn-outline-secondary btn-sm" id="bulk-btn" disabled>
+      <i class="bi bi-lightning"></i> Массовые действия с выбранными
+    </button>
+    <input type="hidden" name="selected_ids" id="selected-ids-hidden" value="">
+  </div>
+</form>
+
+<script>
+(function () {
+  const selectAll = document.getElementById('select-all');
+  const checkboxes = document.querySelectorAll('.row-checkbox');
+  const bulkBtn = document.getElementById('bulk-btn');
+  const hiddenInput = document.getElementById('selected-ids-hidden');
+
+  function updateState() {
+    const checked = [...checkboxes].filter(c => c.checked);
+    bulkBtn.disabled = checked.length === 0;
+    hiddenInput.value = checked.map(c => c.value).join(',');
+  }
+
+  selectAll.addEventListener('change', function () {
+    checkboxes.forEach(c => c.checked = this.checked);
+    updateState();
+  });
+
+  checkboxes.forEach(c => c.addEventListener('change', function () {
+    selectAll.checked = [...checkboxes].every(c => c.checked);
+    updateState();
+  }));
+
+  document.getElementById('bulk-form').addEventListener('submit', function (e) {
+    const ids = hiddenInput.value;
+    if (!ids) { e.preventDefault(); return; }
+    this.action = '/admin/bulk?selected_ids=' + encodeURIComponent(ids);
+  });
+})();
+</script>
 {% endblock %}

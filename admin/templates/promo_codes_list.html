@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+{% if content_override %}
+  {{ content_override | safe }}
+{% else %}
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card stat-card primary p-3">
+      <div class="text-muted small">Всего промокодов</div>
+      <div class="fs-4 fw-bold">{{ total }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card success p-3">
+      <div class="text-muted small">Активных</div>
+      <div class="fs-4 fw-bold">{{ active_count }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card warning p-3">
+      <div class="text-muted small">Всего использований</div>
+      <div class="fs-4 fw-bold">{{ total_uses }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 d-flex align-items-center">
+    <a href="/admin/promo-codes/new" class="btn btn-primary w-100">
+      <i class="bi bi-plus-circle"></i> Новый промокод
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>Код</th>
+          <th>Скидка</th>
+          <th>Использований</th>
+          <th>Тариф</th>
+          <th>Trial</th>
+          <th>Активен</th>
+          <th>Истекает</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for promo in promo_codes %}
+      <tr>
+        <td>{{ promo.id }}</td>
+        <td><code>{{ promo.code }}</code></td>
+        <td>
+          {% if promo.discount_percent %}
+            {{ promo.discount_percent }}%
+          {% elif promo.discount_fixed %}
+            {{ promo.discount_fixed }} ₽
+          {% else %}
+            &mdash;
+          {% endif %}
+        </td>
+        <td>
+          {{ promo.uses_count }}
+          {% if promo.uses_max %} / {{ promo.uses_max }}{% endif %}
+        </td>
+        <td>{{ promo.tariff_slug or '&mdash;' | safe }}</td>
+        <td>
+          {% if promo.is_trial %}
+            <span class="badge bg-info">{{ promo.trial_days }} дн.</span>
+          {% else %}
+            <span class="text-muted">&mdash;</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge {% if promo.is_active %}bg-success{% else %}bg-secondary{% endif %}">
+            {{ 'Да' if promo.is_active else 'Нет' }}
+          </span>
+        </td>
+        <td>{{ promo.expires_at.strftime('%d.%m.%Y') if promo.expires_at else '&mdash;' | safe }}</td>
+        <td class="d-flex gap-1">
+          <a href="/admin/promo-codes/{{ promo.id }}" class="btn btn-sm btn-outline-primary">Изменить</a>
+          <form method="post" action="/admin/promo-codes/{{ promo.id }}/toggle" class="d-inline">
+            <button class="btn btn-sm {% if promo.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+              {{ 'Выкл' if promo.is_active else 'Вкл' }}
+            </button>
+          </form>
+          {% if not promo.uses_count or promo.uses_count == 0 %}
+          <form method="post" action="/admin/promo-codes/{{ promo.id }}/delete" class="d-inline">
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick="return confirm('Удалить промокод {{ promo.code }}?')">Удалить</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-center text-muted py-4">Промокоды не найдены</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="mt-3 text-muted small">
+  Всего: {{ total }} | Страница {{ page }} из {{ ((total - 1) // page_size + 1) if total > 0 else 1 }}
+</div>
+{% endif %}
+{% endblock %}
