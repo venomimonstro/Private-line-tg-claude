@@ -29,12 +29,34 @@ async def create_vpn_key(
     server: VpnServer,
     traffic_limit_gb: int | None,
     session: AsyncSession,
+    label: str | None = None,
 ) -> VpnKey:
+    # Idempotency: return existing active key with same subscription + label if present
+    existing_result = await session.execute(
+        select(VpnKey).where(
+            VpnKey.subscription_id == subscription_id,
+            VpnKey.status == VpnKeyStatus.active,
+            VpnKey.label == label,
+        )
+    )
+    existing_key = existing_result.scalars().first()
+    if existing_key is not None:
+        logger.info(
+            "Returning existing active key %d for subscription %d (label=%s)",
+            existing_key.id,
+            subscription_id,
+            label,
+        )
+        return existing_key
+
     client = _make_client(server)
     cb = get_circuit_breaker(server.id)
     try:
         async def _create():
-            outline_key = await client.create_key(name=f"user_{user_id}_sub_{subscription_id}")
+            key_name = f"user_{user_id}_sub_{subscription_id}"
+            if label:
+                key_name = f"{key_name}_{label}"
+            outline_key = await client.create_key(name=key_name)
             if traffic_limit_gb is not None and traffic_limit_gb > 0:
                 limit_bytes = traffic_limit_gb * 1024 * 1024 * 1024
                 await client.set_data_limit(outline_key.id, limit_bytes)
@@ -46,6 +68,26 @@ async def create_vpn_key(
             server.failure_count += 1
             server.last_error = str(exc)[:500]
             server.last_error_at = datetime.utcnow()
+        # Enqueue for retry via pending operations
+        try:
+            from app.services.outline_queue import enqueue_create_key
+            await enqueue_create_key(
+                subscription_id=subscription_id,
+                server_id=server.id,
+                payload={
+                    "user_id": user_id,
+                    "traffic_limit_gb": traffic_limit_gb,
+                    "label": label,
+                },
+                session=session,
+            )
+            logger.warning(
+                "Outline API failed for sub %d, enqueued pending operation. Error: %s",
+                subscription_id,
+                exc,
+            )
+        except Exception as enqueue_exc:
+            logger.error("Failed to enqueue pending operation: %s", enqueue_exc)
         raise
     finally:
         await client.aclose()
@@ -59,6 +101,7 @@ async def create_vpn_key(
         status=VpnKeyStatus.active,
         traffic_used_gb=0.0,
         traffic_limit_gb=traffic_limit_gb,
+        label=label,
     )
     session.add(vpn_key)
     await session.flush()
@@ -71,6 +114,21 @@ async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSess
         await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
         logger.error("Failed to delete Outline key %s: %s", vpn_key.outline_key_id, exc)
+        # Enqueue for retry
+        try:
+            from app.models.pending_operation import PendingOperation, PendingOperationType
+            from datetime import datetime
+            op = PendingOperation(
+                operation_type=PendingOperationType.disable_key.value,
+                vpn_key_id=vpn_key.id,
+                server_id=server.id,
+                payload={},
+                attempts=0,
+                next_retry_at=datetime.utcnow(),
+            )
+            session.add(op)
+        except Exception as enqueue_exc:
+            logger.error("Failed to enqueue disable_key operation: %s", enqueue_exc)
     finally:
         await client.aclose()
 
@@ -93,6 +151,7 @@ async def reissue_vpn_key(
                 f"Перевыпуск ключа для тарифа «Старт» доступен раз в {_KEY_REISSUE_COOLDOWN_DAYS} дней."
             )
 
+    old_label = vpn_key.label
     await disable_vpn_key(vpn_key, server, session)
     vpn_key.status = VpnKeyStatus.reissued
 
@@ -101,6 +160,7 @@ async def reissue_vpn_key(
         subscription_id=vpn_key.subscription_id,
         server=server,
         traffic_limit_gb=traffic_limit_gb,
+        label=old_label,
         session=session,
     )
     new_key.last_reissued_at = datetime.utcnow()

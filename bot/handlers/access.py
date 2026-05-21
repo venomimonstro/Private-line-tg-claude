@@ -65,7 +65,7 @@ _CONNECTION_INSTRUCTIONS = {
 
 async def _get_active_subscription(
     user_id: int,
-) -> tuple[Subscription | None, VpnKey | None, Tariff | None]:
+) -> tuple[Subscription | None, list[VpnKey], Tariff | None]:
     async with async_session_maker() as session:
         sub_result = await session.execute(
             select(Subscription)
@@ -82,21 +82,18 @@ async def _get_active_subscription(
         )
         sub = sub_result.scalars().first()
         if sub is None:
-            return None, None, None
+            return None, [], None
 
-        active_key = next(
-            (k for k in sub.vpn_keys if k.status == VpnKeyStatus.active),
-            None,
-        )
+        active_keys = [k for k in sub.vpn_keys if k.status == VpnKeyStatus.active]
 
         tariff = await session.get(Tariff, sub.tariff_id)
-        return sub, active_key, tariff
+        return sub, active_keys, tariff
 
 
 @router.message(F.text == "🔑 Мой доступ")
 @router.message(Command("my_access"))
 async def show_my_access(message: Message, db_user: User) -> None:
-    sub, active_key, tariff = await _get_active_subscription(db_user.id)
+    sub, active_keys, tariff = await _get_active_subscription(db_user.id)
 
     if sub is None:
         await message.answer(
@@ -105,6 +102,7 @@ async def show_my_access(message: Message, db_user: User) -> None:
         )
         return
 
+    active_key = active_keys[0] if active_keys else None
     status_label = _STATUS_LABELS.get(sub.status, sub.status)
     expires_str = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
     traffic_used = f"{active_key.traffic_used_gb:.1f}" if active_key else "—"
@@ -120,25 +118,69 @@ async def show_my_access(message: Message, db_user: User) -> None:
         f"📦 Лимит трафика: <b>{traffic_limit_str}</b>\n"
         f"📈 Использовано: {traffic_used} ГБ"
     )
-    await message.answer(text, parse_mode="HTML", reply_markup=my_access_keyboard())
+
+    key_ids = [k.id for k in active_keys] if len(active_keys) > 1 else None
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=my_access_keyboard(active_key_ids=key_ids),
+    )
 
 
 @router.callback_query(F.data == "get_key")
 async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
-    sub, active_key, tariff = await _get_active_subscription(db_user.id)
+    sub, active_keys, tariff = await _get_active_subscription(db_user.id)
 
-    if sub is None or active_key is None:
+    if sub is None or not active_keys:
         await callback.answer("Активный ключ не найден. Обратитесь в поддержку.", show_alert=True)
         return
 
+    active_key = active_keys[0]
     try:
         access_url = get_access_url(active_key)
     except Exception:
         await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
         return
 
+    label_part = f" ({active_key.label})" if active_key.label else ""
     await callback.message.answer(  # type: ignore[union-attr]
-        f"🔑 <b>Ваш персональный ключ доступа:</b>\n\n"
+        f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
+        f"<code>{access_url}</code>\n\n"
+        f"Скопируйте ключ и добавьте его в приложение Outline.\n"
+        f"Нажмите «📱 Как подключиться» для инструкции.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("get_key:"))
+async def on_get_key_by_id(callback: CallbackQuery, db_user: User) -> None:
+    try:
+        key_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return
+
+    sub, active_keys, tariff = await _get_active_subscription(db_user.id)
+
+    if sub is None:
+        await callback.answer("Активный ключ не найден. Обратитесь в поддержку.", show_alert=True)
+        return
+
+    target_key = next((k for k in active_keys if k.id == key_id), None)
+    if target_key is None:
+        await callback.answer("Ключ не найден или не принадлежит вам.", show_alert=True)
+        return
+
+    try:
+        access_url = get_access_url(target_key)
+    except Exception:
+        await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
+        return
+
+    label_part = f" ({target_key.label})" if target_key.label else ""
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
         f"<code>{access_url}</code>\n\n"
         f"Скопируйте ключ и добавьте его в приложение Outline.\n"
         f"Нажмите «📱 Как подключиться» для инструкции.",
@@ -168,12 +210,13 @@ async def on_platform_instructions(callback: CallbackQuery) -> None:
 
 @router.message(F.text == "📊 Проверить лимит")
 async def check_limit(message: Message, db_user: User) -> None:
-    sub, active_key, tariff = await _get_active_subscription(db_user.id)
+    sub, active_keys, tariff = await _get_active_subscription(db_user.id)
 
-    if sub is None or active_key is None:
+    if sub is None or not active_keys:
         await message.answer("У вас нет активной подписки.")
         return
 
+    active_key = active_keys[0]
     used = active_key.traffic_used_gb
     limit = tariff.traffic_limit_gb if tariff else None
 

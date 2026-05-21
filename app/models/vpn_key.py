@@ -36,6 +36,7 @@ class VpnKey(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_reissued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    label: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="vpn_keys")
     subscription: Mapped[Subscription] = relationship("Subscription", back_populates="vpn_keys")

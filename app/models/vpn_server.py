@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SAEnum, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -30,6 +30,9 @@ class VpnServer(Base):
     last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     city: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    flag_emoji: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_selectable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

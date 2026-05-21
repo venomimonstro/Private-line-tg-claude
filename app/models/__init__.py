@@ -14,6 +14,8 @@ from app.models.blocked_ip import BlockedIp
 from app.models.abuse_event import AbuseEvent
 from app.models.analytics_daily import AnalyticsDaily
 from app.models.refund_request import RefundRequest
+from app.models.key_delivery_log import KeyDeliveryLog
+from app.models.pending_operation import PendingOperation, PendingOperationType
 
 __all__ = [
     "User",
@@ -32,4 +34,7 @@ __all__ = [
     "AbuseEvent",
     "AnalyticsDaily",
     "RefundRequest",
+    "KeyDeliveryLog",
+    "PendingOperation",
+    "PendingOperationType",
 ]

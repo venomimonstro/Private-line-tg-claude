@@ -1,19 +1,49 @@
 from __future__ import annotations
+
 import logging
 from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.bot_instance import get_bot
 from app.enums import SubscriptionStatus
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
+from app.models.key_delivery_log import KeyDeliveryLog
 from app.services.notification import notify_admin
 
 logger = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 5
 RETRY_INTERVAL_MINUTES = 15
+
+
+async def _log_delivery(
+    session: AsyncSession,
+    user_id: int,
+    subscription_id: int,
+    vpn_key_id: int | None,
+    attempt_number: int,
+    delivered_at: datetime | None,
+    error_msg: str | None = None,
+) -> None:
+    """Create a KeyDeliveryLog entry for tracking delivery attempts."""
+    log = KeyDeliveryLog(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        vpn_key_id=vpn_key_id,
+        delivered_at=delivered_at,
+        attempt_number=attempt_number,
+        error_msg=error_msg,
+        created_at=datetime.utcnow(),
+    )
+    session.add(log)
+    try:
+        await session.flush()
+    except Exception as exc:
+        logger.error("Failed to save KeyDeliveryLog: %s", exc)
 
 
 async def retry_failed_activations(
@@ -46,23 +76,39 @@ async def retry_failed_activations(
         vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_callback)
         if vpn_key is not None:
             logger.info("Subscription %d activated on retry %d", sub.id, sub.activation_attempts)
-            if send_key_callback is None:
-                bot = get_bot()
-                if bot is not None:
-                    try:
-                        from app.services.vpn_key import get_access_url
-                        url = get_access_url(vpn_key)
-                        await bot.send_message(
-                            chat_id=sub.user_id,
-                            text=(
-                                "✅ Ваш персональный ключ доступа готов!\n\n"
-                                f"<code>{url}</code>\n\n"
-                                "Скопируйте ключ и добавьте его в приложение."
-                            ),
-                            parse_mode="HTML",
-                        )
-                    except Exception as exc:
-                        logger.error("Failed to send key to user %s: %s", sub.user_id, exc)
+            bot = get_bot()
+            if send_key_callback is None and bot is not None:
+                try:
+                    from app.services.vpn_key import get_access_url
+                    url = get_access_url(vpn_key)
+                    await bot.send_message(
+                        chat_id=sub.user_id,
+                        text=(
+                            "✅ Ваш персональный ключ доступа готов!\n\n"
+                            f"<code>{url}</code>\n\n"
+                            "Скопируйте ключ и добавьте его в приложение."
+                        ),
+                        parse_mode="HTML",
+                    )
+                    await _log_delivery(
+                        session=session,
+                        user_id=sub.user_id,
+                        subscription_id=sub.id,
+                        vpn_key_id=vpn_key.id,
+                        attempt_number=sub.activation_attempts,
+                        delivered_at=datetime.utcnow(),
+                    )
+                except Exception as exc:
+                    logger.error("Failed to send key to user %s: %s", sub.user_id, exc)
+                    await _log_delivery(
+                        session=session,
+                        user_id=sub.user_id,
+                        subscription_id=sub.id,
+                        vpn_key_id=vpn_key.id,
+                        attempt_number=sub.activation_attempts,
+                        delivered_at=None,
+                        error_msg=str(exc)[:500],
+                    )
         else:
             sub.last_activation_error = f"Retry {sub.activation_attempts} failed at {datetime.utcnow().isoformat()}"
             if sub.activation_attempts >= _MAX_ATTEMPTS:
@@ -71,5 +117,14 @@ async def retry_failed_activations(
                     f"не активирована после {_MAX_ATTEMPTS} попыток. "
                     f"Требуется ручное вмешательство."
                 )
+            await _log_delivery(
+                session=session,
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                vpn_key_id=None,
+                attempt_number=sub.activation_attempts,
+                delivered_at=None,
+                error_msg=sub.last_activation_error,
+            )
 
     await session.commit()
