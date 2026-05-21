@@ -1,11 +1,8 @@
 """Promo codes, trial subscriptions, traffic notification flags
 
 Revision ID: 004_promo_trial
-Revises: 002_stability_features
+Revises: 003
 Create Date: 2024-01-04 00:00:00.000000
-
-Note: down_revision is set to 002_stability_features for now.
-This will be chained after 003 once that migration is merged.
 """
 from __future__ import annotations
 
@@ -15,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "004_promo_trial"
-down_revision: Union[str, None] = "002_stability_features"
+down_revision: Union[str, None] = "003"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
