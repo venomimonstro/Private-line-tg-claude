@@ -1,0 +1,77 @@
+groups:
+  - name: privateline_alerts
+    rules:
+      - alert: PrivateLineAdminDown
+        expr: up{job="privateline-admin"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Private Line admin service is down"
+          description: "The admin service has been unreachable for more than 2 minutes."
+
+      - alert: PrivateLineHighPaymentErrors
+        expr: rate(privateline_payments_total{status="error"}[1m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High payment error rate"
+          description: "Payment errors are occurring at {{ $value | humanize }} per minute (threshold: 5/min)."
+
+      - alert: PrivateLineActiveSubsDrop
+        expr: |
+          (
+            privateline_active_subscriptions
+            / privateline_active_subscriptions offset 10m
+          ) < 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Active subscriptions dropped by more than 20%"
+          description: "Active subscriptions have dropped by more than 20% in the last 10 minutes."
+
+      - alert: PrivateLineVpnKeyActivationFailures
+        expr: rate(privateline_vpn_key_activations_total{result="error"}[10m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High VPN key activation failure rate"
+          description: "VPN key activation errors are occurring at {{ $value | humanize }} per second (threshold: 5 per 10m)."
+
+      - alert: PrivateLineDiskSpaceWarning
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs"}
+          ) < 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space usage above 80%"
+          description: "Filesystem {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} free (less than 20% remaining)."
+
+      - alert: PrivateLineBackupFailed
+        expr: |
+          (time() - privateline_last_successful_backup_timestamp) > 93600
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful backup in the last 26 hours"
+          description: "The last successful backup was {{ $value | humanizeDuration }} ago. Expected at least one backup per 24 hours."
+
+      - alert: PrivateLineHighWebhookLatency
+        expr: |
+          histogram_quantile(0.99,
+            rate(privateline_webhook_processing_seconds_bucket[5m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook processing p99 latency is above 5 seconds"
+          description: "Webhook p99 latency is {{ $value | humanizeDuration }} (threshold: 5s)."
