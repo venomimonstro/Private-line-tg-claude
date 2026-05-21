@@ -15,7 +15,7 @@ from app.vpn.outline import OutlineClient
 logger = logging.getLogger(__name__)
 
 _KEY_REISSUE_COOLDOWN_DAYS = 7
-_START_TARIFF_CODE = "start"
+_START_TARIFF_SLUG = "start"
 
 
 def _make_client(server: VpnServer) -> OutlineClient:
@@ -26,14 +26,15 @@ async def create_vpn_key(
     user_id: int,
     subscription_id: int,
     server: VpnServer,
-    traffic_limit_gb: int,
+    traffic_limit_gb: int | None,
     session: AsyncSession,
 ) -> VpnKey:
     client = _make_client(server)
     try:
         outline_key = await client.create_key(name=f"user_{user_id}_sub_{subscription_id}")
-        limit_bytes = traffic_limit_gb * 1024 * 1024 * 1024
-        await client.set_data_limit(outline_key.id, limit_bytes)
+        if traffic_limit_gb is not None and traffic_limit_gb > 0:
+            limit_bytes = traffic_limit_gb * 1024 * 1024 * 1024
+            await client.set_data_limit(outline_key.id, limit_bytes)
     finally:
         await client.aclose()
 
@@ -41,10 +42,11 @@ async def create_vpn_key(
         user_id=user_id,
         subscription_id=subscription_id,
         server_id=server.id,
-        external_key_id=outline_key.id,
+        outline_key_id=outline_key.id,
         access_url_encrypted=encrypt(outline_key.access_url),
         status=VpnKeyStatus.active,
         traffic_used_gb=0.0,
+        traffic_limit_gb=traffic_limit_gb,
     )
     session.add(vpn_key)
     await session.flush()
@@ -54,9 +56,9 @@ async def create_vpn_key(
 async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSession) -> None:
     client = _make_client(server)
     try:
-        await client.delete_key(vpn_key.external_key_id)
+        await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
-        logger.error("Failed to delete Outline key %s: %s", vpn_key.external_key_id, exc)
+        logger.error("Failed to delete Outline key %s: %s", vpn_key.outline_key_id, exc)
     finally:
         await client.aclose()
 
@@ -68,11 +70,11 @@ async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSess
 async def reissue_vpn_key(
     vpn_key: VpnKey,
     server: VpnServer,
-    tariff_code: str,
-    traffic_limit_gb: int,
+    tariff_slug: str,
+    traffic_limit_gb: int | None,
     session: AsyncSession,
 ) -> VpnKey:
-    if tariff_code == _START_TARIFF_CODE and vpn_key.created_at:
+    if tariff_slug == _START_TARIFF_SLUG and vpn_key.created_at:
         cooldown_until = vpn_key.created_at + timedelta(days=_KEY_REISSUE_COOLDOWN_DAYS)
         if datetime.utcnow() < cooldown_until:
             raise ValueError(
@@ -89,6 +91,7 @@ async def reissue_vpn_key(
         traffic_limit_gb=traffic_limit_gb,
         session=session,
     )
+    new_key.last_reissued_at = datetime.utcnow()
     return new_key
 
 
@@ -108,15 +111,15 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
         finally:
             await client.aclose()
 
-        for external_key_id, bytes_used in stats.items():
-            result = await session.execute(
+        for outline_key_id, bytes_used in stats.items():
+            key_result = await session.execute(
                 select(VpnKey).where(
                     VpnKey.server_id == server.id,
-                    VpnKey.external_key_id == external_key_id,
+                    VpnKey.outline_key_id == outline_key_id,
                     VpnKey.status == VpnKeyStatus.active,
                 )
             )
-            key = result.scalar_one_or_none()
+            key = key_result.scalar_one_or_none()
             if key is not None:
                 key.traffic_used_gb = bytes_used / (1024 ** 3)
                 key.last_checked_at = datetime.utcnow()
