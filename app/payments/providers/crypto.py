@@ -19,6 +19,10 @@ class CryptoBotProvider(PaymentProviderBase):
 
     def __init__(self, token: str) -> None:
         self._token = token
+        self._http = httpx.AsyncClient(timeout=15.0)
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     def _sign(self, body: bytes) -> str:
         return hmac.new(self._token.encode(), body, hashlib.sha256).hexdigest()
@@ -41,14 +45,13 @@ class CryptoBotProvider(PaymentProviderBase):
             "allow_comments": False,
             "allow_anonymous": False,
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self._API_URL}/createInvoice",
-                json=body,
-                headers={"Crypto-Pay-API-Token": self._token},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._http.post(
+            f"{self._API_URL}/createInvoice",
+            json=body,
+            headers={"Crypto-Pay-API-Token": self._token},
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         if not data.get("ok"):
             raise RuntimeError(f"CryptoBot error: {data}")

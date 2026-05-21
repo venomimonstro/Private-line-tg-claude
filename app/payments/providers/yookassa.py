@@ -19,6 +19,10 @@ class YooKassaProvider(PaymentProviderBase):
     def __init__(self, shop_id: str, secret_key: str) -> None:
         self._shop_id = shop_id
         self._secret = secret_key
+        self._http = httpx.AsyncClient(timeout=15.0)
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     async def create_payment(
         self,
@@ -40,18 +44,17 @@ class YooKassaProvider(PaymentProviderBase):
             "metadata": {"order_id": str(our_payment_id)},
             "capture": True,
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self._API_URL}/payments",
-                json=payload,
-                auth=(self._shop_id, self._secret),
-                headers={
-                    "Idempotence-Key": str(uuid.uuid4()),
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._http.post(
+            f"{self._API_URL}/payments",
+            json=payload,
+            auth=(self._shop_id, self._secret),
+            headers={
+                "Idempotence-Key": str(uuid.uuid4()),
+                "Content-Type": "application/json",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         pay_id = data["id"]
         confirm_url = data["confirmation"]["confirmation_url"]
@@ -72,13 +75,12 @@ class YooKassaProvider(PaymentProviderBase):
             if not order_id:
                 return None
             # Re-verify with YooKassa API
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
-                    f"{self._API_URL}/payments/{pay_id}",
-                    auth=(self._shop_id, self._secret),
-                )
-                resp.raise_for_status()
-                verified = resp.json()
+            resp2 = await self._http.get(
+                f"{self._API_URL}/payments/{pay_id}",
+                auth=(self._shop_id, self._secret),
+            )
+            resp2.raise_for_status()
+            verified = resp2.json()
             if verified.get("status") != "succeeded":
                 return None
             amount_val = float(verified["amount"]["value"])

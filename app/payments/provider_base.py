@@ -40,3 +40,6 @@ class PaymentProviderBase(ABC):
         headers: dict[str, str],
     ) -> IncomingPayment | None:
         """Verify an incoming webhook. Returns IncomingPayment or None if invalid."""
+
+    async def aclose(self) -> None:
+        """Close any persistent resources (e.g., HTTP clients). No-op by default."""

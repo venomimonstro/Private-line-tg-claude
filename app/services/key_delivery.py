@@ -16,7 +16,10 @@ _MAX_ATTEMPTS = 5
 RETRY_INTERVAL_MINUTES = 15
 
 
-async def retry_failed_activations(session: AsyncSession) -> None:
+async def retry_failed_activations(
+    session: AsyncSession,
+    send_key_callback: object | None = None,
+) -> None:
     """Retry subscriptions that failed to activate. Called by scheduler."""
     result = await session.execute(
         select(Subscription)
@@ -40,25 +43,26 @@ async def retry_failed_activations(session: AsyncSession) -> None:
             sub.id, sub.activation_attempts + 1, _MAX_ATTEMPTS,
         )
 
-        vpn_key = await activate_subscription(sub, tariff, session)
+        vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_callback)
         if vpn_key is not None:
             logger.info("Subscription %d activated on retry %d", sub.id, sub.activation_attempts)
-            bot = get_bot()
-            if bot is not None:
-                try:
-                    from app.services.vpn_key import get_access_url
-                    url = get_access_url(vpn_key)
-                    await bot.send_message(
-                        chat_id=sub.user_id,
-                        text=(
-                            "✅ Ваш персональный ключ доступа готов!\n\n"
-                            f"<code>{url}</code>\n\n"
-                            "Скопируйте ключ и добавьте его в приложение."
-                        ),
-                        parse_mode="HTML",
-                    )
-                except Exception as exc:
-                    logger.error("Failed to send key to user %s: %s", sub.user_id, exc)
+            if send_key_callback is None:
+                bot = get_bot()
+                if bot is not None:
+                    try:
+                        from app.services.vpn_key import get_access_url
+                        url = get_access_url(vpn_key)
+                        await bot.send_message(
+                            chat_id=sub.user_id,
+                            text=(
+                                "✅ Ваш персональный ключ доступа готов!\n\n"
+                                f"<code>{url}</code>\n\n"
+                                "Скопируйте ключ и добавьте его в приложение."
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to send key to user %s: %s", sub.user_id, exc)
         else:
             sub.last_activation_error = f"Retry {sub.activation_attempts} failed at {datetime.utcnow().isoformat()}"
             if sub.activation_attempts >= _MAX_ATTEMPTS:

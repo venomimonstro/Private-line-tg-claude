@@ -14,15 +14,17 @@ logger = logging.getLogger(__name__)
 async def _job_expire_subscriptions() -> None:
     logger.info("Running: expire_subscriptions")
     from app.services.subscription import expire_subscriptions
+    from app.services.user_notifications import notify_expiry
     async with async_session_maker() as session:
-        await expire_subscriptions(session)
+        await expire_subscriptions(session, notify_user_callback=notify_expiry)
 
 
 async def _job_check_expiring_soon() -> None:
     logger.info("Running: check_expiring_soon")
     from app.services.subscription import check_expiring_soon
+    from app.services.user_notifications import notify_expiring_soon
     async with async_session_maker() as session:
-        await check_expiring_soon(session)
+        await check_expiring_soon(session, notify_user_callback=notify_expiring_soon)
 
 
 async def _job_sync_traffic() -> None:
@@ -62,8 +64,17 @@ async def _job_collect_analytics() -> None:
 async def _job_retry_failed_activations() -> None:
     logger.info("Running: retry_failed_activations")
     from app.services.key_delivery import retry_failed_activations
+    from app.services.user_notifications import send_key_to_user
     async with async_session_maker() as session:
-        await retry_failed_activations(session)
+        await retry_failed_activations(session, send_key_callback=send_key_to_user)
+
+
+async def _job_auto_renew_subscriptions() -> None:
+    """Auto-renew subscriptions with auto_renew=True that expire in < 24h."""
+    logger.info("Running: auto_renew_subscriptions")
+    from app.services.subscription_renewal import auto_renew_subscriptions
+    async with async_session_maker() as session:
+        await auto_renew_subscriptions(session)
 
 
 async def _job_check_server_health() -> None:
@@ -101,6 +112,22 @@ async def _job_speed_limit_check() -> None:
         await check_speed_limits(session)
 
 
+async def _job_update_metrics() -> None:
+    logger.info("Running: update_metrics")
+    from app.metrics import active_subscriptions
+    from app.enums import SubscriptionStatus
+    from app.models.subscription import Subscription
+    from sqlalchemy import func, select
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon])
+            )
+        )
+        count = result.scalar_one() or 0
+        active_subscriptions.set(count)
+
+
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
@@ -110,6 +137,8 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_health_check, "interval", hours=1)
     scheduler.add_job(_job_collect_analytics, "cron", hour=23, minute=55)
     scheduler.add_job(_job_retry_failed_activations, "interval", minutes=RETRY_INTERVAL_MINUTES)
+    scheduler.add_job(_job_auto_renew_subscriptions, "cron", hour=1, minute=30)
     scheduler.add_job(_job_check_server_health, "interval", hours=1, jitter=120)
     scheduler.add_job(_job_speed_limit_check, "interval", hours=1, jitter=60)
+    scheduler.add_job(_job_update_metrics, "interval", minutes=5)
     return scheduler

@@ -15,3 +15,8 @@ python-multipart==0.0.12
 itsdangerous==2.2.0
 packaging==24.2
 python-dotenv==1.0.1
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+prometheus-fastapi-instrumentator>=6.1.0
+prometheus-client>=0.20.0
+qrcode[pil]>=7.4.2

@@ -31,7 +31,10 @@ from app.models.user import User
 from app.payments.webhook import router as webhook_router
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 app = FastAPI(title="Private Line Admin", docs_url=None, redoc_url=None)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 templates = Jinja2Templates(directory="admin/templates")
 
 app.include_router(dashboard.router)
@@ -94,3 +97,8 @@ async def logout() -> RedirectResponse:
     response = RedirectResponse("/admin/login", status_code=303)
     response.delete_cookie("admin_session")
     return response
+
+
+@app.get("/health")
+async def health_check() -> dict:
+    return {"status": "ok"}

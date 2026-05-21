@@ -20,6 +20,10 @@ class LavaProvider(PaymentProviderBase):
     def __init__(self, project_id: str, secret_key: str) -> None:
         self._project_id = project_id
         self._secret = secret_key
+        self._http = httpx.AsyncClient(timeout=15.0)
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     def _sign(self, data: dict) -> str:
         body = json.dumps(data, sort_keys=True, ensure_ascii=False)
@@ -40,14 +44,13 @@ class LavaProvider(PaymentProviderBase):
             "sum": round(amount, 2),
         }
         sign = self._sign(payload)
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                self._API_URL,
-                json=payload,
-                headers={"Signature": sign, "Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._http.post(
+            self._API_URL,
+            json=payload,
+            headers={"Signature": sign, "Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         inv_id = data["data"]["id"]
         inv_url = data["data"]["url"]

@@ -10,8 +10,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot_instance import set_bot
 from app.config import settings
-from bot.handlers import access, help, payment, plans, referral, refund, start
-from bot.handlers import stars_payment
+from bot.handlers import access, help, payment, plans, referral, refund, rules, start, support
+from bot.handlers import qr_key, stars_payment
 from bot.middleware.user_activity import UserActivityMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,11 +32,14 @@ async def main() -> None:
     dp.callback_query.middleware(UserActivityMiddleware())
 
     dp.include_router(start.router)
+    dp.include_router(rules.router)
     dp.include_router(plans.router)
     dp.include_router(access.router)
     dp.include_router(payment.router)
     dp.include_router(referral.router)
     dp.include_router(refund.router)
+    dp.include_router(support.router)
+    dp.include_router(qr_key.router)
     dp.include_router(help.router)
     dp.include_router(stars_payment.router)
 
