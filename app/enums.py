@@ -114,3 +114,14 @@ class RefundStatus(str, Enum):
     approved = "approved"
     denied = "denied"
     auto_approved = "auto_approved"
+
+
+class AdminAction(str, Enum):
+    bulk_extend_subscriptions = "bulk_extend_subscriptions"
+    bulk_disable_subscriptions = "bulk_disable_subscriptions"
+    bulk_notify_users = "bulk_notify_users"
+    block_user = "block_user"
+    unblock_user = "unblock_user"
+    create_promo_code = "create_promo_code"
+    toggle_promo_code = "toggle_promo_code"
+    delete_promo_code = "delete_promo_code"

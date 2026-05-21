@@ -13,7 +13,6 @@ _THRESHOLDS = [80, 95]  # percent
 
 
 async def check_traffic_limits(session: AsyncSession) -> None:
-    """Check all active keys for traffic usage >= thresholds. Send notifications."""
     from app.models.vpn_key import VpnKey
 
     result = await session.execute(
@@ -32,13 +31,13 @@ async def check_traffic_limits(session: AsyncSession) -> None:
         percent = (key.traffic_used_gb / key.traffic_limit_gb) * 100.0
         gb_remaining = key.traffic_limit_gb - key.traffic_used_gb
 
-        if percent >= 95 and not getattr(key, "notified_95pct", False):
+        if percent >= 95 and not key.notified_95pct:
             await notify_traffic_threshold(key.user_id, 95, max(0.0, gb_remaining))
-            key.notified_95pct = True  # type: ignore[attr-defined]
+            key.notified_95pct = True
             notifications_sent += 1
-        elif percent >= 80 and not getattr(key, "notified_80pct", False):
+        elif percent >= 80 and not key.notified_80pct:
             await notify_traffic_threshold(key.user_id, 80, max(0.0, gb_remaining))
-            key.notified_80pct = True  # type: ignore[attr-defined]
+            key.notified_80pct = True
             notifications_sent += 1
 
     if notifications_sent > 0:

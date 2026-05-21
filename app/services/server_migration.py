@@ -13,16 +13,15 @@ from app.services import vpn_key as vpn_key_service
 
 logger = logging.getLogger(__name__)
 
-_MAX_MIGRATIONS_PER_30_DAYS = 2
-_MIGRATION_WINDOW_DAYS = 30
+MAX_MIGRATIONS_PER_30_DAYS = 2
+MIGRATION_WINDOW_DAYS = 30
 
 
 async def count_recent_migrations(
     subscription_id: int,
     session: AsyncSession,
 ) -> int:
-    """Count how many server migrations occurred in the last 30 days for a subscription."""
-    cutoff = datetime.utcnow() - timedelta(days=_MIGRATION_WINDOW_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=MIGRATION_WINDOW_DAYS)
     result = await session.execute(
         select(func.count(VpnKey.id)).where(
             VpnKey.subscription_id == subscription_id,
@@ -39,35 +38,27 @@ async def migrate_key_to_server(
     new_server: VpnServer,
     session: AsyncSession,
 ) -> VpnKey | None:
-    """
-    Creates new key on new_server, disables old key on old server.
-    Returns new VpnKey or None on failure.
-    Respects switch_limit: max 2 server migrations per 30 days per subscription.
-    """
-    # Check migration limit
     migration_count = await count_recent_migrations(vpn_key.subscription_id, session)
-    if migration_count >= _MAX_MIGRATIONS_PER_30_DAYS:
+    if migration_count >= MAX_MIGRATIONS_PER_30_DAYS:
         logger.warning(
             "Migration limit reached for subscription %d (%d migrations in last %d days)",
             vpn_key.subscription_id,
             migration_count,
-            _MIGRATION_WINDOW_DAYS,
+            MIGRATION_WINDOW_DAYS,
         )
         raise ValueError(
-            f"Достигнут лимит смены сервера: максимум {_MAX_MIGRATIONS_PER_30_DAYS} раза за {_MIGRATION_WINDOW_DAYS} дней."
+            f"Достигнут лимит смены сервера: максимум {MAX_MIGRATIONS_PER_30_DAYS} раза за {MIGRATION_WINDOW_DAYS} дней."
         )
 
     if new_server.id == vpn_key.server_id:
         raise ValueError("Новый сервер совпадает с текущим.")
 
-    old_server_result = await session.get(VpnServer, vpn_key.server_id)
-    if old_server_result is None:
+    old_server = await session.get(VpnServer, vpn_key.server_id)
+    if old_server is None:
         raise ValueError(f"Current server {vpn_key.server_id} not found.")
 
-    old_server = old_server_result
     old_label = vpn_key.label
 
-    # Create new key on new server first
     try:
         new_key = await vpn_key_service.create_vpn_key(
             user_id=vpn_key.user_id,
@@ -86,7 +77,6 @@ async def migrate_key_to_server(
         )
         return None
 
-    # Disable old key
     try:
         await vpn_key_service.disable_vpn_key(vpn_key, old_server, session)
         old_server.current_users = max(0, old_server.current_users - 1)
@@ -96,7 +86,6 @@ async def migrate_key_to_server(
             vpn_key.id,
             exc,
         )
-        # New key is already created, old key will be cleaned up by pending operations
 
     new_server.current_users += 1
     new_key.last_reissued_at = datetime.utcnow()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -35,11 +37,18 @@ from admin.routes import (
 from app.database import get_async_session
 from app.models.user import User
 from app.payments.webhook import router as webhook_router
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from prometheus_fastapi_instrumentator import Instrumentator
 
-app = FastAPI(title="Private Line Admin", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    from app.payments.registry import close_all
+    await close_all()
+
+
+app = FastAPI(title="Private Line Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 templates = Jinja2Templates(directory="admin/templates")
 

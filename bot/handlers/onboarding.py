@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="onboarding")
 
-_PLATFORM_STEPS: dict[str, str] = {
+CONNECTION_INSTRUCTIONS: dict[str, str] = {
     "android": (
         "📱 <b>Подключение на Android</b>\n\n"
         "1️⃣ Установите приложение <b>Outline</b> из Google Play.\n"
@@ -30,7 +30,7 @@ _PLATFORM_STEPS: dict[str, str] = {
     ),
     "windows": (
         "🖥 <b>Подключение на Windows</b>\n\n"
-        "1️⃣ Скачайте приложение <b>Outline</b> с официального сайта.\n"
+        "1️⃣ Скачайте приложение <b>Outline</b> с официального сайта getoutline.org.\n"
         "2️⃣ Запустите установщик и дождитесь завершения.\n"
         "3️⃣ Нажмите <b>+</b> и вставьте ключ доступа.\n"
         "4️⃣ Нажмите <b>«Подключиться»</b>.\n\n"
@@ -104,7 +104,7 @@ async def send_onboarding_message(
 @router.callback_query(F.data.startswith("onboard_platform:"))
 async def on_platform_select(callback: CallbackQuery) -> None:
     platform = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
-    steps_text = _PLATFORM_STEPS.get(platform)
+    steps_text = CONNECTION_INSTRUCTIONS.get(platform)
 
     if steps_text is None:
         await callback.answer("Неизвестная платформа.", show_alert=True)

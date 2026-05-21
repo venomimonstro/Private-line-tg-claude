@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -37,6 +37,8 @@ class VpnKey(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_reissued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notified_80pct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    notified_95pct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
 
     user: Mapped[User] = relationship("User", back_populates="vpn_keys")
     subscription: Mapped[Subscription] = relationship("Subscription", back_populates="vpn_keys")

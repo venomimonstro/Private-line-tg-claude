@@ -338,28 +338,21 @@ async def _process_payment(
             await callback.answer("Тариф не найден.", show_alert=True)
             return
 
-        from sqlalchemy import select as sa_select
-        from app.models.user import User as UserModel
-        user_result = await session.execute(sa_select(UserModel).where(UserModel.id == db_user.id))
-        user = user_result.scalar_one()
-        user.rules_accepted_at = datetime.utcnow()
+        from app.services.promo import apply_promo, validate_promo
+        from decimal import Decimal
+
+        merged_user = await session.get(User, db_user.id)
+        if merged_user is not None:
+            merged_user.rules_accepted_at = datetime.utcnow()
         await session.flush()
 
-        # Apply promo code if provided
         promo_obj = None
         if promo_code:
-            from app.services.promo import apply_promo, validate_promo
-            promo_obj, error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
-            if promo_obj is None:
-                # Promo invalid now — proceed without discount
-                promo_obj = None
+            promo_obj, _error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
 
         payment, payment_result = await create_payment(db_user.id, tariff_slug, session)
 
-        # Apply discount to already-created payment if promo is valid
         if promo_obj is not None:
-            from decimal import Decimal
-            from app.services.promo import apply_promo
             discounted_amount = await apply_promo(promo_obj, float(payment.amount), session)
             payment.amount = Decimal(str(discounted_amount))
             await session.flush()

@@ -63,3 +63,9 @@ def _build(name: str) -> PaymentProviderBase:
         return CryptoBotProvider(settings.CRYPTO_BOT_TOKEN)
 
     raise ValueError(f"Unknown payment provider: {name}")
+
+
+async def close_all() -> None:
+    for provider in list(_cache.values()):
+        await provider.aclose()
+    _cache.clear()

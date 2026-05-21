@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
-from app.enums import SubscriptionStatus
+from app.enums import AdminAction, SubscriptionStatus
 from app.models.admin_log import AdminLog
 from app.models.subscription import Subscription
 from app.models.user import User
@@ -19,6 +19,9 @@ router = APIRouter(prefix="/bulk")
 templates = Jinja2Templates(directory="admin/templates")
 
 logger = logging.getLogger(__name__)
+
+_TG_MESSAGE_MAX_LEN = 4096
+_MESSAGE_PREVIEW_LEN = 100
 
 
 def _parse_user_ids(raw: str) -> list[int]:
@@ -83,7 +86,7 @@ async def bulk_extend(
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="bulk_extend_subscriptions",
+        action=AdminAction.bulk_extend_subscriptions,
         details={"days": days, "user_ids": parsed_ids or "all_active", "count": count},
         ip_address=request.client.host if request.client else None,
     )
@@ -105,46 +108,33 @@ async def bulk_disable(
     if not parsed_ids:
         return RedirectResponse("/admin/bulk?flash=Не указаны пользователи", status_code=303)
 
+    from app.enums import VpnKeyStatus
+    from app.models.vpn_key import VpnKey
+    from app.services import vpn_key as vpn_key_service
+    from sqlalchemy.orm import selectinload
+
     result = await session.execute(
-        select(Subscription).where(
+        select(Subscription)
+        .options(selectinload(Subscription.vpn_keys).selectinload(VpnKey.server))
+        .where(
             Subscription.user_id.in_(parsed_ids),
             Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
         )
     )
     subscriptions = result.scalars().all()
 
-    from app.enums import VpnKeyStatus
-    from app.models.vpn_key import VpnKey
-    from app.models.vpn_server import VpnServer
-    from app.services import vpn_key as vpn_key_service
-    from sqlalchemy.orm import selectinload
-
     count = 0
     for sub in subscriptions:
-        # Reload with vpn_keys
-        sub_result = await session.execute(
-            select(Subscription)
-            .options(selectinload(Subscription.vpn_keys))
-            .where(Subscription.id == sub.id)
-        )
-        sub_loaded = sub_result.scalar_one_or_none()
-        if sub_loaded is None:
-            continue
-        for key in sub_loaded.vpn_keys:
-            if key.status == VpnKeyStatus.active:
-                server_result = await session.execute(
-                    select(VpnServer).where(VpnServer.id == key.server_id)
-                )
-                server = server_result.scalar_one_or_none()
-                if server:
-                    await vpn_key_service.disable_vpn_key(key, server, session)
-                    server.current_users = max(0, server.current_users - 1)
-        sub_loaded.status = SubscriptionStatus.disabled
+        for key in sub.vpn_keys:
+            if key.status == VpnKeyStatus.active and key.server:
+                await vpn_key_service.disable_vpn_key(key, key.server, session)
+                key.server.current_users = max(0, key.server.current_users - 1)
+        sub.status = SubscriptionStatus.disabled
         count += 1
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="bulk_disable_subscriptions",
+        action=AdminAction.bulk_disable_subscriptions,
         details={"user_ids": parsed_ids, "count": count},
         ip_address=request.client.host if request.client else None,
     )
@@ -193,7 +183,7 @@ async def bulk_notify(
             try:
                 await bot.send_message(
                     chat_id=user.telegram_id,
-                    text=message_text[:4096],
+                    text=message_text[:_TG_MESSAGE_MAX_LEN],
                 )
                 sent += 1
             except Exception as exc:
@@ -205,12 +195,12 @@ async def bulk_notify(
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="bulk_notify_users",
+        action=AdminAction.bulk_notify_users,
         details={
             "user_ids": parsed_ids or "all_active",
             "sent": sent,
             "failed": failed,
-            "message_preview": message_text[:100],
+            "message_preview": message_text[:_MESSAGE_PREVIEW_LEN],
         },
         ip_address=request.client.host if request.client else None,
     )

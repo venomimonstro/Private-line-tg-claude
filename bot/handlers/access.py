@@ -13,6 +13,7 @@ from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.services.vpn_key import get_access_url
+from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard
 
 router = Router(name="access")
@@ -25,41 +26,6 @@ _STATUS_LABELS: dict[str, str] = {
     SubscriptionStatus.disabled: "🔒 Отключена",
     SubscriptionStatus.blocked: "🚫 Заблокирована",
     SubscriptionStatus.activation_error: "⚠️ Ошибка активации",
-}
-
-_CONNECTION_INSTRUCTIONS = {
-    "android": (
-        "📱 <b>Android — инструкция подключения</b>\n\n"
-        "1. Установите приложение <b>Outline</b> из Google Play\n"
-        "2. Скопируйте ваш персональный ключ (кнопка «Получить ключ»)\n"
-        "3. В приложении Outline нажмите «+» и вставьте ключ\n"
-        "4. Нажмите «Подключиться»\n\n"
-        "Готово! Соединение защищено."
-    ),
-    "iphone": (
-        "🍎 <b>iPhone — инструкция подключения</b>\n\n"
-        "1. Установите приложение <b>Outline</b> из App Store\n"
-        "2. Скопируйте ваш персональный ключ (кнопка «Получить ключ»)\n"
-        "3. В приложении Outline нажмите «+» и вставьте ключ\n"
-        "4. Нажмите «Подключиться»\n\n"
-        "Готово! Соединение защищено."
-    ),
-    "windows": (
-        "🖥 <b>Windows — инструкция подключения</b>\n\n"
-        "1. Скачайте приложение <b>Outline</b> с официального сайта getoutline.org\n"
-        "2. Скопируйте ваш персональный ключ (кнопка «Получить ключ»)\n"
-        "3. В приложении Outline нажмите «+» и вставьте ключ\n"
-        "4. Нажмите «Подключиться»\n\n"
-        "Готово! Соединение защищено."
-    ),
-    "macos": (
-        "🍏 <b>macOS — инструкция подключения</b>\n\n"
-        "1. Скачайте приложение <b>Outline</b> из Mac App Store\n"
-        "2. Скопируйте ваш персональный ключ (кнопка «Получить ключ»)\n"
-        "3. В приложении Outline нажмите «+» и вставьте ключ\n"
-        "4. Нажмите «Подключиться»\n\n"
-        "Готово! Соединение защищено."
-    ),
 }
 
 
@@ -200,7 +166,7 @@ async def show_connection_guide(message: Message) -> None:
 @router.callback_query(F.data.startswith("instructions:"))
 async def on_platform_instructions(callback: CallbackQuery) -> None:
     platform = callback.data.split(":", 1)[1]
-    text = _CONNECTION_INSTRUCTIONS.get(platform)
+    text = CONNECTION_INSTRUCTIONS.get(platform)
     if text is None:
         await callback.answer("Инструкция не найдена.", show_alert=True)
         return

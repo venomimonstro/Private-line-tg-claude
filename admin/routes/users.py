@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
-from app.enums import UserStatus, VpnKeyStatus
+from app.enums import AdminAction, UserStatus, VpnKeyStatus
 from app.models.admin_log import AdminLog
 from app.models.payment import Payment
 from app.models.subscription import Subscription
@@ -155,17 +155,18 @@ async def block_user(
     user.status = UserStatus.blocked
 
     keys_result = await session.execute(
-        select(VpnKey).where(VpnKey.user_id == user_id, VpnKey.status == VpnKeyStatus.active)
+        select(VpnKey)
+        .options(selectinload(VpnKey.server))
+        .where(VpnKey.user_id == user_id, VpnKey.status == VpnKeyStatus.active)
     )
     for key in keys_result.scalars().all():
-        server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
-        server = server_result.scalar_one_or_none()
-        if server:
-            await vpn_key_service.disable_vpn_key(key, server, session)
+        if key.server:
+            await vpn_key_service.disable_vpn_key(key, key.server, session)
+            key.server.current_users = max(0, key.server.current_users - 1)
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="block_user",
+        action=AdminAction.block_user,
         target_user_id=user_id,
         ip_address=request.client.host if request.client else None,
     )
@@ -189,7 +190,7 @@ async def unblock_user(
     user.status = UserStatus.active
     log = AdminLog(
         admin_user_id=admin.id,
-        action="unblock_user",
+        action=AdminAction.unblock_user,
         target_user_id=user_id,
         ip_address=request.client.host if request.client else None,
     )

@@ -50,6 +50,8 @@ async def main() -> None:
     async def shutdown(bot: Bot) -> None:
         logger.info("Shutting down...")
         await bot.session.close()
+        from app.payments.registry import close_all
+        await close_all()
 
     logger.info("Starting Private Line bot...")
     try:

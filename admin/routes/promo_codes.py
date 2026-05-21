@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -8,36 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
+from app.enums import AdminAction
 from app.models.admin_log import AdminLog
+from app.models.promo_code import PromoCode
 from app.models.user import User
 
 router = APIRouter(prefix="/promo-codes")
 templates = Jinja2Templates(directory="admin/templates")
 
 _PAGE_SIZE = 25
-
-try:
-    from app.models.promo_code import PromoCode
-    _PROMO_CODE_AVAILABLE = True
-except ImportError:
-    PromoCode = None  # type: ignore[assignment,misc]
-    _PROMO_CODE_AVAILABLE = False
-
-
-def _coming_soon(request: Request, admin: User) -> HTMLResponse:
-    return templates.TemplateResponse(
-        "base.html",
-        {
-            "request": request,
-            "admin": admin,
-            "page_title": "Промокоды",
-            "content_override": (
-                '<div class="alert alert-info mt-3">'
-                "Модуль промокодов ещё не готов — модель будет добавлена в ближайшей миграции."
-                "</div>"
-            ),
-        },
-    )
 
 
 @router.get("", response_class=HTMLResponse)
@@ -47,9 +28,6 @@ async def list_promo_codes(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return _coming_soon(request, admin)
-
     total_result = await session.execute(select(func.count()).select_from(PromoCode))
     total = total_result.scalar_one() or 0
 
@@ -89,9 +67,6 @@ async def new_promo_code_form(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return _coming_soon(request, admin)
-
     return templates.TemplateResponse(
         "promo_code_form.html",
         {
@@ -106,7 +81,7 @@ async def new_promo_code_form(
 @router.post("/new")
 async def create_promo_code(
     request: Request,
-    code: str = Form(...),
+    code: str = Form(..., min_length=1, max_length=32),
     description: str = Form(default=""),
     discount_percent: float = Form(default=0.0),
     discount_fixed: float = Form(default=0.0),
@@ -119,11 +94,6 @@ async def create_promo_code(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return RedirectResponse("/admin/promo-codes", status_code=303)
-
-    from datetime import datetime
-
     expires_dt = None
     if expires_at:
         try:
@@ -149,7 +119,7 @@ async def create_promo_code(
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="create_promo_code",
+        action=AdminAction.create_promo_code,
         target_entity="promo_code",
         details={"code": code},
         ip_address=request.client.host if request.client else None,
@@ -166,9 +136,6 @@ async def promo_code_detail(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return _coming_soon(request, admin)
-
     result = await session.execute(select(PromoCode).where(PromoCode.id == promo_id))
     promo = result.scalar_one_or_none()
     if promo is None:
@@ -192,9 +159,6 @@ async def toggle_promo_code(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return RedirectResponse("/admin/promo-codes", status_code=303)
-
     result = await session.execute(select(PromoCode).where(PromoCode.id == promo_id))
     promo = result.scalar_one_or_none()
     if promo is None:
@@ -203,7 +167,7 @@ async def toggle_promo_code(
     promo.is_active = not promo.is_active
     log = AdminLog(
         admin_user_id=admin.id,
-        action="toggle_promo_code",
+        action=AdminAction.toggle_promo_code,
         target_entity="promo_code",
         target_entity_id=promo_id,
         details={"is_active": promo.is_active},
@@ -221,9 +185,6 @@ async def delete_promo_code(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    if not _PROMO_CODE_AVAILABLE:
-        return RedirectResponse("/admin/promo-codes", status_code=303)
-
     result = await session.execute(select(PromoCode).where(PromoCode.id == promo_id))
     promo = result.scalar_one_or_none()
     if promo is None:
@@ -237,7 +198,7 @@ async def delete_promo_code(
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="delete_promo_code",
+        action=AdminAction.delete_promo_code,
         target_entity="promo_code",
         target_entity_id=promo_id,
         details={"code": promo.code},
