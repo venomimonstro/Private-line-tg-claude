@@ -128,6 +128,30 @@ async def _job_update_metrics() -> None:
         active_subscriptions.set(count)
 
 
+async def _job_check_traffic_limits() -> None:
+    logger.info("Running: check_traffic_limits")
+    from app.services.traffic_notifications import check_traffic_limits
+    async with async_session_maker() as session:
+        await check_traffic_limits(session)
+
+
+async def _job_verify_pending_payments() -> None:
+    logger.info("Running: verify_pending_payments")
+    from app.services.payment_verification import verify_pending_payments
+    async with async_session_maker() as session:
+        await verify_pending_payments(session)
+
+
+async def _job_process_pending_operations() -> None:
+    logger.info("Running: process_pending_operations")
+    try:
+        from app.services.outline_queue import process_pending_operations
+        async with async_session_maker() as session:
+            await process_pending_operations(session)
+    except ImportError:
+        logger.debug("outline_queue module not available, skipping")
+
+
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
@@ -141,4 +165,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_check_server_health, "interval", hours=1, jitter=120)
     scheduler.add_job(_job_speed_limit_check, "interval", hours=1, jitter=60)
     scheduler.add_job(_job_update_metrics, "interval", minutes=5)
+    scheduler.add_job(_job_check_traffic_limits, "interval", hours=4)
+    scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
+    scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
     return scheduler

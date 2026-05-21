@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.bot_instance import set_bot
 from app.config import settings
 from bot.handlers import access, help, payment, plans, referral, refund, rules, start, support
-from bot.handlers import qr_key, stars_payment
+from bot.handlers import onboarding, payment_status, qr_key, stars_payment
 from bot.middleware.user_activity import UserActivityMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,9 +42,18 @@ async def main() -> None:
     dp.include_router(qr_key.router)
     dp.include_router(help.router)
     dp.include_router(stars_payment.router)
+    dp.include_router(onboarding.router)
+    dp.include_router(payment_status.router)
+
+    async def shutdown(bot: Bot) -> None:
+        logger.info("Shutting down...")
+        await bot.session.close()
 
     logger.info("Starting Private Line bot...")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        await shutdown(bot)
 
 
 if __name__ == "__main__":

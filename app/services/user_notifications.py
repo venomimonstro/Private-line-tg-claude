@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 async def send_key_to_user(user_id: int, vpn_key: object) -> None:
-    """Send access key to user after activation."""
+    """Send access key to user after activation, then send onboarding."""
     from app.bot_instance import get_bot
     from app.services.vpn_key import get_access_url
 
@@ -24,6 +24,12 @@ async def send_key_to_user(user_id: int, vpn_key: object) -> None:
             ),
             parse_mode="HTML",
         )
+        # Send onboarding instructions as follow-up
+        try:
+            from bot.handlers.onboarding import send_onboarding_message
+            await send_onboarding_message(user_id, url)
+        except Exception as onboard_exc:
+            logger.error("send_onboarding_message failed for user %d: %s", user_id, onboard_exc)
     except Exception as exc:
         logger.error("send_key_to_user failed for user %d: %s", user_id, exc)
 
