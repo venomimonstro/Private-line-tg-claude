@@ -10,5 +10,5 @@ route:
 receivers:
   - name: 'telegram-webhook'
     webhook_configs:
-      - url: 'http://admin:8000/admin/alertmanager-webhook'
+      - url: 'http://admin:8000/alertmanager-webhook'
         send_resolved: true

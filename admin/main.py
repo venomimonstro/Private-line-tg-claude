@@ -116,12 +116,12 @@ async def logout() -> RedirectResponse:
     return response
 
 
-@app.get("/health")
+@app.get("/_health")
 async def health_check() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/admin/export/users")
+@app.get("/export/users")
 async def export_users_csv(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
@@ -150,7 +150,7 @@ async def export_users_csv(
     )
 
 
-@app.post("/admin/alertmanager-webhook")
+@app.post("/alertmanager-webhook")
 async def alertmanager_webhook(request: Request) -> dict:
     """Receive Alertmanager alerts and forward to admin Telegram chat."""
     from app.services.notification import notify_admin

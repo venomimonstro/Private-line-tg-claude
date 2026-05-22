@@ -9,7 +9,7 @@ import httpx
 
 def main() -> None:
     try:
-        resp = httpx.get("http://localhost:8000/health", timeout=5.0)
+        resp = httpx.get("http://localhost:8000/_health", timeout=5.0)
         if resp.status_code == 200:
             sys.exit(0)
         print(f"Health check returned {resp.status_code}", file=sys.stderr)
