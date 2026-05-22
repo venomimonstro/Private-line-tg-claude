@@ -17,6 +17,7 @@ from app.models.refund_request import RefundRequest
 from app.models.key_delivery_log import KeyDeliveryLog
 from app.models.pending_operation import PendingOperation, PendingOperationType
 from app.models.promo_code import PromoCode
+from app.models.app_setting import AppSetting
 
 __all__ = [
     "User",
@@ -39,4 +40,5 @@ __all__ = [
     "PendingOperation",
     "PendingOperationType",
     "PromoCode",
+    "AppSetting",
 ]

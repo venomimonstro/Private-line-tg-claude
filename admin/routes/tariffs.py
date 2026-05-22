@@ -66,7 +66,7 @@ def _parse_int_field(value: str, field_name: str) -> int:
         raise ValueError(f"Поле «{field_name}» должно быть целым числом")
 
 
-@router.post("/new")
+@router.post("/new", response_model=None)
 async def create_tariff(
     request: Request,
     slug: str = Form(...),
@@ -148,7 +148,7 @@ async def edit_tariff_form(
     })
 
 
-@router.post("/{tariff_id}/edit")
+@router.post("/{tariff_id}/edit", response_model=None)
 async def update_tariff(
     tariff_id: int,
     request: Request,
