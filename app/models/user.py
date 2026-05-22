@@ -49,7 +49,7 @@ class User(Base):
         "Subscription", back_populates="user", lazy="select"
     )
     payments: Mapped[list[Payment]] = relationship(
-        "Payment", back_populates="user", lazy="select"
+        "Payment", foreign_keys="[Payment.user_id]", back_populates="user", lazy="select"
     )
     vpn_keys: Mapped[list[VpnKey]] = relationship(
         "VpnKey", back_populates="user", lazy="select"
