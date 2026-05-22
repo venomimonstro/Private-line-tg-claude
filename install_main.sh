@@ -277,7 +277,7 @@ if [[ "$USE_DOMAIN" == "true" ]]; then
         warn "Не удалось получить Let's Encrypt. Генерирую самоподписанный..."
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
             -keyout nginx/ssl/key.pem -out nginx/ssl/cert.pem \
-            -subj "/CN=${DOMAIN}" -quiet 2>/dev/null
+            -subj "/CN=${DOMAIN}" 2>/dev/null
         warn "Используется самоподписанный сертификат. Браузер покажет предупреждение."
     fi
 else
@@ -285,7 +285,7 @@ else
     SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "localhost")
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout nginx/ssl/key.pem -out nginx/ssl/cert.pem \
-        -subj "/CN=${SERVER_IP}" -quiet 2>/dev/null
+        -subj "/CN=${SERVER_IP}" 2>/dev/null
     success "Самоподписанный сертификат создан (CN=${SERVER_IP})"
 fi
 chmod 600 nginx/ssl/key.pem
