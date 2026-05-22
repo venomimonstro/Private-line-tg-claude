@@ -6,13 +6,24 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.tariff import Tariff
 from app.models.user import User
-from app.payments.services import create_payment
+from app.payments.services import create_payment, get_enabled_providers
 from bot.keyboards.main_menu import accept_rules_keyboard, tariff_selection_keyboard
+
+_PROVIDER_LABELS: dict[str, str] = {
+    "yookassa":  "💳 ЮKassa (карта / СБП)",
+    "yoomoney":  "💛 ЮMoney",
+    "freekassa": "💳 FreeKassa",
+    "lava":      "🌋 LAVA",
+    "robokassa": "🤖 Robokassa",
+    "prodamus":  "💳 Prodamus",
+    "crypto":    "🪙 Крипта (TON / USDT / BTC)",
+    "stars":     "⭐ Telegram Stars",
+    "manual":    "🏦 Ручная оплата",
+}
 
 router = Router(name="plans")
 
@@ -33,6 +44,21 @@ class PurchaseStates(StatesGroup):
     accepting_rules = State()
     waiting_promo_code = State()
     confirming_purchase = State()
+
+
+def _provider_selection_keyboard(
+    providers: list[str], tariff_slug: str, promo_code: str | None
+) -> InlineKeyboardMarkup:
+    promo_part = promo_code or ""
+    buttons = [
+        [InlineKeyboardButton(
+            text=_PROVIDER_LABELS.get(p, p),
+            callback_data=f"pay_via:{p}:{tariff_slug}:{promo_part}",
+        )]
+        for p in providers
+    ]
+    buttons.append([InlineKeyboardButton(text="← Назад", callback_data="back_to_plans")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def _promo_prompt_keyboard(tariff_slug: str) -> InlineKeyboardMarkup:
@@ -326,13 +352,52 @@ async def _process_payment(
     tariff_slug: str,
     promo_code: str | None,
 ) -> None:
-    """Shared logic: mark rules accepted, apply promo if any, create payment."""
+    """Mark rules accepted, then show provider selection or go straight to payment."""
     from datetime import datetime
 
     async with async_session_maker() as session:
-        result = await session.execute(
-            select(Tariff).where(Tariff.slug == tariff_slug)
+        merged_user = await session.get(User, db_user.id)
+        if merged_user is not None:
+            merged_user.rules_accepted_at = datetime.utcnow()
+            await session.flush()
+        await session.commit()
+
+        providers = await get_enabled_providers(session)
+
+    if len(providers) == 1:
+        await _do_create_payment(callback, state, db_user, tariff_slug, promo_code, providers[0])
+    else:
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            "✅ Правила приняты.\n\n<b>Выберите способ оплаты:</b>",
+            parse_mode="HTML",
+            reply_markup=_provider_selection_keyboard(providers, tariff_slug, promo_code),
         )
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pay_via:"))
+async def on_pay_via_selected(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    parts = callback.data.split(":", 3)  # type: ignore[union-attr]
+    if len(parts) < 3:
+        await callback.answer("Ошибка данных.", show_alert=True)
+        return
+    provider_name = parts[1]
+    tariff_slug = parts[2]
+    promo_code = parts[3] if len(parts) > 3 and parts[3] else None
+    await _do_create_payment(callback, state, db_user, tariff_slug, promo_code, provider_name)
+
+
+async def _do_create_payment(
+    callback: CallbackQuery,
+    state: FSMContext,
+    db_user: User,
+    tariff_slug: str,
+    promo_code: str | None,
+    provider_name: str,
+) -> None:
+    """Create payment with a specific provider and send result to user."""
+    async with async_session_maker() as session:
+        result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
         tariff = result.scalar_one_or_none()
         if tariff is None:
             await callback.answer("Тариф не найден.", show_alert=True)
@@ -341,16 +406,13 @@ async def _process_payment(
         from app.services.promo import apply_promo, validate_promo
         from decimal import Decimal
 
-        merged_user = await session.get(User, db_user.id)
-        if merged_user is not None:
-            merged_user.rules_accepted_at = datetime.utcnow()
-        await session.flush()
-
         promo_obj = None
         if promo_code:
             promo_obj, _error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
 
-        payment, payment_result = await create_payment(db_user.id, tariff_slug, session)
+        payment, payment_result = await create_payment(
+            db_user.id, tariff_slug, session, provider_name=provider_name
+        )
 
         if promo_obj is not None:
             discounted_amount = await apply_promo(promo_obj, float(payment.amount), session)
@@ -359,20 +421,17 @@ async def _process_payment(
 
         await session.commit()
 
-    from app.payments.registry import get_provider
-    provider = get_provider()
+    promo_line = "\n🎟 Промокод применён! Скидка учтена." if promo_obj else ""
 
     if payment_result.payment_url:
         markup = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)
         ]])
-        promo_line = f"\n🎟 Промокод применён! Скидка учтена." if promo_obj else ""
         await callback.message.edit_text(  # type: ignore[union-attr]
-            f"✅ Правила приняты.\n\n"
             f"<b>Заявка #{payment.id}</b>\n"
             f"Тариф: {tariff.name}\n"
             f"Сумма: <b>{int(payment.amount)} RUB</b>{promo_line}\n\n"
-            f"Нажмите кнопку ниже для оплаты:",
+            "Нажмите кнопку ниже для оплаты:",
             parse_mode="HTML",
             reply_markup=markup,
         )
@@ -387,20 +446,20 @@ async def _process_payment(
             f"Private Line — {tariff.name}",
         )
     else:
+        from app.payments.registry import get_provider
+        provider = get_provider(provider_name)
         instructions = (
             provider.get_instructions()  # type: ignore[attr-defined]
             if hasattr(provider, "get_instructions")
-            else payment_result.display_data.get("instructions", "")
+            else payment_result.display_data.get("instructions", "Ожидайте инструкций от поддержки.")
         )
-        promo_line = f"\n🎟 Промокод применён! Скидка учтена." if promo_obj else ""
         await callback.message.edit_text(  # type: ignore[union-attr]
-            f"✅ Правила приняты.\n\n"
             f"<b>Заявка #{payment.id} создана.</b>\n"
             f"Тариф: {tariff.name}\n"
             f"Сумма к оплате: <b>{int(payment.amount)} RUB</b>{promo_line}\n\n"
             f"📋 <b>Инструкция по оплате:</b>\n{instructions}\n\n"
-            f"В комментарии к переводу укажите: <code>#{payment.id}</code>\n\n"
-            f"После поступления оплаты вы получите персональный ключ доступа.",
+            f"В комментарии укажите: <code>#{payment.id}</code>\n\n"
+            "После поступления оплаты вы получите ключ доступа.",
             parse_mode="HTML",
         )
 

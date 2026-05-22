@@ -15,44 +15,60 @@ def get_provider(name: str | None = None) -> PaymentProviderBase:
     return provider
 
 
-def _build(name: str) -> PaymentProviderBase:
+async def get_provider_db(name: str, session) -> PaymentProviderBase:
+    """Build provider using credentials from AppSetting DB first, env var fallback."""
     from app.config import settings
+    from app.models.app_setting import AppSetting
+    from sqlalchemy import select
 
+    cred_keys = [
+        "YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY",
+        "YOOMONEY_WALLET", "YOOMONEY_NOTIFICATION_SECRET",
+        "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_1", "FREEKASSA_SECRET_2",
+        "LAVA_PROJECT_ID", "LAVA_SECRET_KEY",
+        "ROBOKASSA_MERCHANT_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2",
+        "PRODAMUS_API_URL", "PRODAMUS_WEBHOOK_SECRET",
+        "CRYPTO_BOT_TOKEN",
+    ]
+    result = await session.execute(
+        select(AppSetting).where(AppSetting.key.in_(cred_keys))
+    )
+    db_vals = {row.key: (row.value or "") for row in result.scalars().all()}
+
+    def g(key: str) -> str:
+        return db_vals.get(key) or getattr(settings, key, "")
+
+    return _build_with_creds(name, g)
+
+
+def _build_with_creds(name: str, g) -> PaymentProviderBase:
     if name == "manual":
         from app.payments.manual import ManualPaymentProvider
         return ManualPaymentProvider()
 
     if name == "yoomoney":
         from app.payments.providers.yoomoney import YooMoneyProvider
-        return YooMoneyProvider(settings.YOOMONEY_WALLET, settings.YOOMONEY_NOTIFICATION_SECRET)
+        return YooMoneyProvider(g("YOOMONEY_WALLET"), g("YOOMONEY_NOTIFICATION_SECRET"))
 
     if name == "freekassa":
         from app.payments.providers.freekassa import FreeKassaProvider
-        return FreeKassaProvider(
-            settings.FREEKASSA_MERCHANT_ID,
-            settings.FREEKASSA_SECRET_1,
-            settings.FREEKASSA_SECRET_2,
-        )
+        return FreeKassaProvider(g("FREEKASSA_MERCHANT_ID"), g("FREEKASSA_SECRET_1"), g("FREEKASSA_SECRET_2"))
 
     if name == "lava":
         from app.payments.providers.lava import LavaProvider
-        return LavaProvider(settings.LAVA_PROJECT_ID, settings.LAVA_SECRET_KEY)
+        return LavaProvider(g("LAVA_PROJECT_ID"), g("LAVA_SECRET_KEY"))
 
     if name == "yookassa":
         from app.payments.providers.yookassa import YooKassaProvider
-        return YooKassaProvider(settings.YOOKASSA_SHOP_ID, settings.YOOKASSA_SECRET_KEY)
+        return YooKassaProvider(g("YOOKASSA_SHOP_ID"), g("YOOKASSA_SECRET_KEY"))
 
     if name == "robokassa":
         from app.payments.providers.robokassa import RobokassaProvider
-        return RobokassaProvider(
-            settings.ROBOKASSA_MERCHANT_LOGIN,
-            settings.ROBOKASSA_PASSWORD_1,
-            settings.ROBOKASSA_PASSWORD_2,
-        )
+        return RobokassaProvider(g("ROBOKASSA_MERCHANT_LOGIN"), g("ROBOKASSA_PASSWORD_1"), g("ROBOKASSA_PASSWORD_2"))
 
     if name == "prodamus":
         from app.payments.providers.prodamus import ProdamusProvider
-        return ProdamusProvider(settings.PRODAMUS_API_URL, settings.PRODAMUS_WEBHOOK_SECRET)
+        return ProdamusProvider(g("PRODAMUS_API_URL"), g("PRODAMUS_WEBHOOK_SECRET"))
 
     if name == "stars":
         from app.payments.providers.stars import TelegramStarsProvider
@@ -60,9 +76,14 @@ def _build(name: str) -> PaymentProviderBase:
 
     if name == "crypto":
         from app.payments.providers.crypto import CryptoBotProvider
-        return CryptoBotProvider(settings.CRYPTO_BOT_TOKEN)
+        return CryptoBotProvider(g("CRYPTO_BOT_TOKEN"))
 
     raise ValueError(f"Unknown payment provider: {name}")
+
+
+def _build(name: str) -> PaymentProviderBase:
+    from app.config import settings
+    return _build_with_creds(name, lambda key: getattr(settings, key, ""))
 
 
 async def close_all() -> None:

@@ -20,6 +20,40 @@ logger = logging.getLogger(__name__)
 
 _START_TARIFF_SLUG = "start"
 
+# Maps AppSetting key → provider code used in registry
+_PROVIDER_ENABLED_MAP: dict[str, str] = {
+    "YOOKASSA_ENABLED":   "yookassa",
+    "YOOMONEY_ENABLED":   "yoomoney",
+    "FREEKASSA_ENABLED":  "freekassa",
+    "LAVA_ENABLED":       "lava",
+    "ROBOKASSA_ENABLED":  "robokassa",
+    "PRODAMUS_ENABLED":   "prodamus",
+    "CRYPTO_BOT_ENABLED": "crypto",
+    "STARS_ENABLED":      "stars",
+}
+
+
+async def get_enabled_providers(session: AsyncSession) -> list[str]:
+    """Return list of enabled provider codes from DB, falling back to PAYMENT_PROVIDER env."""
+    from app.models.app_setting import AppSetting
+
+    result = await session.execute(
+        select(AppSetting).where(AppSetting.key.in_(list(_PROVIDER_ENABLED_MAP.keys())))
+    )
+    db_vals = {row.key: (row.value or "").lower() for row in result.scalars().all()}
+
+    enabled = [
+        code
+        for key, code in _PROVIDER_ENABLED_MAP.items()
+        if db_vals.get(key, "") in ("true", "1", "yes")
+    ]
+
+    if not enabled:
+        from app.config import settings
+        enabled = [settings.PAYMENT_PROVIDER]
+
+    return enabled
+
 
 async def _is_first_payment(user_id: int, session: AsyncSession) -> bool:
     result = await session.execute(
@@ -32,13 +66,17 @@ async def create_payment(
     user_id: int,
     tariff_slug: str,
     session: AsyncSession,
+    provider_name: str | None = None,
 ) -> tuple[Payment, PaymentResult]:
-    from app.payments.registry import get_provider
+    from app.payments.registry import get_provider_db
+
+    if provider_name is None:
+        from app.config import settings
+        provider_name = settings.PAYMENT_PROVIDER
 
     tariff_result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
     tariff = tariff_result.scalar_one()
 
-    # Determine price (first month discount for "start" tariff)
     if tariff.slug == _START_TARIFF_SLUG and tariff.price_first_month is not None:
         is_first = await _is_first_payment(user_id, session)
         amount = float(tariff.price_first_month if is_first else tariff.price_monthly)
@@ -63,14 +101,14 @@ async def create_payment(
         amount=Decimal(str(amount)),
         currency="RUB",
         status=PaymentStatus.pending,
-        provider=_provider_name(),
+        provider=provider_name,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
     session.add(payment)
     await session.flush()
 
-    provider = get_provider()
+    provider = await get_provider_db(provider_name, session)
     description = f"Private Line — {tariff.name}"
     payment_result = await provider.create_payment(
         our_payment_id=payment.id,
@@ -91,11 +129,6 @@ async def create_payment(
         f"Провайдер: {payment.provider}"
     )
     return payment, payment_result
-
-
-def _provider_name() -> str:
-    from app.config import settings
-    return settings.PAYMENT_PROVIDER
 
 
 async def confirm_payment(
