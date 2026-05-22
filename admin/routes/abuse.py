@@ -34,7 +34,9 @@ async def abuse_list(
 
     return templates.TemplateResponse("abuse_list.html", {
         "request": request, "admin": admin, "events": events,
-        "page": page, "total": total, "page_size": _PAGE_SIZE, "page_title": "Abuse-журнал",
+        "page": page, "total": total, "page_size": _PAGE_SIZE,
+        "total_pages": (total + _PAGE_SIZE - 1) // _PAGE_SIZE,
+        "page_title": "Abuse-журнал",
     })
 
 

@@ -38,5 +38,7 @@ async def list_referrals(
 
     return templates.TemplateResponse("referrals_list.html", {
         "request": request, "admin": admin, "referrals": referrals,
-        "page": page, "total": total, "page_size": _PAGE_SIZE, "page_title": "Рефералы",
+        "page": page, "total": total, "page_size": _PAGE_SIZE,
+        "total_pages": (total + _PAGE_SIZE - 1) // _PAGE_SIZE,
+        "page_title": "Рефералы",
     })

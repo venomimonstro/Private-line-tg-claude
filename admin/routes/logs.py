@@ -34,5 +34,7 @@ async def logs_list(
 
     return templates.TemplateResponse("logs_list.html", {
         "request": request, "admin": admin, "logs": logs,
-        "page": page, "total": total, "page_size": _PAGE_SIZE, "page_title": "Логи действий",
+        "page": page, "total": total, "page_size": _PAGE_SIZE,
+        "total_pages": (total + _PAGE_SIZE - 1) // _PAGE_SIZE,
+        "page_title": "Логи действий",
     })
