@@ -125,3 +125,7 @@ class AdminAction(str, Enum):
     create_promo_code = "create_promo_code"
     toggle_promo_code = "toggle_promo_code"
     delete_promo_code = "delete_promo_code"
+    create_tariff = "create_tariff"
+    update_tariff = "update_tariff"
+    delete_tariff = "delete_tariff"
+    update_integration_settings = "update_integration_settings"

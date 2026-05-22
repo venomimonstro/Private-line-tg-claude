@@ -1,26 +1,78 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div></div>
+  <a href="/admin/tariffs/new" class="btn btn-primary">
+    <i class="bi bi-plus-lg"></i> Создать тариф
+  </a>
+</div>
 <div class="card">
-  <table class="table table-hover mb-0">
-    <thead class="table-light"><tr><th>Код</th><th>Название</th><th>Цена ₽</th><th>Трафик ГБ</th><th>Устройств</th><th>Активен</th><th>Виден</th><th></th></tr></thead>
+  <table class="table table-hover mb-0 align-middle">
+    <thead class="table-light">
+      <tr>
+        <th>Slug</th>
+        <th>Название</th>
+        <th>Цена / мес.</th>
+        <th>1-й мес.</th>
+        <th>Дней</th>
+        <th>Трафик ГБ</th>
+        <th>Ключей</th>
+        <th>Скорость</th>
+        <th>Активен</th>
+        <th>Виден</th>
+        <th>Сортировка</th>
+        <th></th>
+      </tr>
+    </thead>
     <tbody>
     {% for t in tariffs %}
     <tr>
-      <td><code>{{ t.code }}</code></td>
+      <td><code>{{ t.slug }}</code></td>
       <td>{{ t.name }}</td>
-      <td>{{ t.price }}</td>
-      <td>{{ t.traffic_limit_gb }}</td>
-      <td>{{ t.devices_limit }}</td>
-      <td><span class="badge {% if t.is_active %}bg-success{% else %}bg-secondary{% endif %}">{{ 'Да' if t.is_active else 'Нет' }}</span></td>
-      <td><span class="badge {% if t.is_visible %}bg-primary{% else %}bg-secondary{% endif %}">{{ 'Да' if t.is_visible else 'Нет' }}</span></td>
-      <td class="d-flex gap-1">
-        <form method="post" action="/admin/tariffs/{{ t.id }}/toggle-visible">
-          <button class="btn btn-sm btn-outline-primary">{{ 'Скрыть' if t.is_visible else 'Показать' }}</button>
-        </form>
-        <form method="post" action="/admin/tariffs/{{ t.id }}/toggle-active">
-          <button class="btn btn-sm btn-outline-secondary">{{ 'Деакт.' if t.is_active else 'Активировать' }}</button>
-        </form>
+      <td>{{ t.price_monthly }} {{ t.currency }}</td>
+      <td>{{ t.price_first_month ~ ' ' ~ t.currency if t.price_first_month is not none else '—' }}</td>
+      <td>{{ t.duration_days }}</td>
+      <td>{{ t.traffic_limit_gb if t.traffic_limit_gb is not none else '∞' }}</td>
+      <td>{{ t.max_keys }}</td>
+      <td>{{ t.speed_limit_mbps ~ ' Мбит/с' if t.speed_limit_mbps is not none else '∞' }}</td>
+      <td>
+        <span class="badge {% if t.is_active %}bg-success{% else %}bg-secondary{% endif %}">
+          {{ 'Да' if t.is_active else 'Нет' }}
+        </span>
       </td>
+      <td>
+        <span class="badge {% if t.is_visible %}bg-primary{% else %}bg-secondary{% endif %}">
+          {{ 'Да' if t.is_visible else 'Нет' }}
+        </span>
+      </td>
+      <td>{{ t.sort_order }}</td>
+      <td>
+        <div class="d-flex gap-1 flex-wrap">
+          <a href="/admin/tariffs/{{ t.id }}/edit" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-pencil"></i> Редактировать
+          </a>
+          <form method="post" action="/admin/tariffs/{{ t.id }}/toggle-visible">
+            <button class="btn btn-sm btn-outline-primary">
+              {{ 'Скрыть' if t.is_visible else 'Показать' }}
+            </button>
+          </form>
+          <form method="post" action="/admin/tariffs/{{ t.id }}/toggle-active">
+            <button class="btn btn-sm btn-outline-secondary">
+              {{ 'Деакт.' if t.is_active else 'Активировать' }}
+            </button>
+          </form>
+          <form method="post" action="/admin/tariffs/{{ t.id }}/delete"
+                onsubmit="return confirm('Удалить тариф «{{ t.name }}»? Это действие необратимо.')">
+            <button class="btn btn-sm btn-outline-danger">
+              <i class="bi bi-trash"></i> Удалить
+            </button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="12" class="text-center text-muted py-4">Тарифы не найдены</td>
     </tr>
     {% endfor %}
     </tbody>

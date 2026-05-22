@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-10">
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    <div class="card p-4">
+      <form method="post" action="{{ '/admin/tariffs/' ~ tariff.id ~ '/edit' if tariff else '/admin/tariffs/new' }}" novalidate>
+        <div class="row g-3">
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Slug (код) <span class="text-danger">*</span></label>
+            <input type="text" name="slug" class="form-control font-monospace"
+                   value="{{ tariff.slug if tariff else '' }}"
+                   placeholder="basic_30" required maxlength="64"
+                   pattern="[a-zA-Z0-9_\-]+"
+                   title="Только латинские буквы, цифры, дефис и подчёркивание">
+            <div class="form-text">Уникальный идентификатор тарифа (латиница, цифры, _ и -).</div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Название <span class="text-danger">*</span></label>
+            <input type="text" name="name" class="form-control"
+                   value="{{ tariff.name if tariff else '' }}"
+                   placeholder="Базовый 30 дней" required maxlength="255">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold">Описание</label>
+            <textarea name="description" class="form-control" rows="3"
+                      placeholder="Описание тарифа для пользователей">{{ tariff.description if tariff and tariff.description else '' }}</textarea>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Цена в месяц <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <input type="number" name="price_monthly" class="form-control"
+                     value="{{ tariff.price_monthly if tariff else '' }}"
+                     min="0" step="0.01" placeholder="299.00" required>
+              <span class="input-group-text">{{ tariff.currency if tariff else 'RUB' }}</span>
+            </div>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Цена первого месяца</label>
+            <div class="input-group">
+              <input type="number" name="price_first_month" class="form-control"
+                     value="{{ tariff.price_first_month if tariff and tariff.price_first_month is not none else '' }}"
+                     min="0" step="0.01" placeholder="Оставить пустым = нет скидки">
+              <span class="input-group-text">{{ tariff.currency if tariff else 'RUB' }}</span>
+            </div>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Валюта</label>
+            <input type="text" name="currency" class="form-control text-uppercase"
+                   value="{{ tariff.currency if tariff else 'RUB' }}"
+                   maxlength="8" placeholder="RUB">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Срок действия (дней) <span class="text-danger">*</span></label>
+            <input type="number" name="duration_days" class="form-control"
+                   value="{{ tariff.duration_days if tariff else '' }}"
+                   min="1" required placeholder="30">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Лимит трафика (ГБ)</label>
+            <input type="number" name="traffic_limit_gb" class="form-control"
+                   value="{{ tariff.traffic_limit_gb if tariff and tariff.traffic_limit_gb is not none else '' }}"
+                   min="0" placeholder="0 = без лимита">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Макс. ключей <span class="text-danger">*</span></label>
+            <input type="number" name="max_keys" class="form-control"
+                   value="{{ tariff.max_keys if tariff else 1 }}"
+                   min="1" required placeholder="1">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Лимит скорости (Мбит/с)</label>
+            <input type="number" name="speed_limit_mbps" class="form-control"
+                   value="{{ tariff.speed_limit_mbps if tariff and tariff.speed_limit_mbps is not none else '' }}"
+                   min="0" placeholder="0 = без лимита">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Порядок сортировки</label>
+            <input type="number" name="sort_order" class="form-control"
+                   value="{{ tariff.sort_order if tariff else 0 }}"
+                   placeholder="0">
+          </div>
+
+          <div class="col-md-4 d-flex align-items-end gap-4 pb-1">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="is_active" id="is_active"
+                     {% if tariff and tariff.is_active %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="is_active">Активен</label>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="is_visible" id="is_visible"
+                     {% if tariff and tariff.is_visible %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="is_visible">Виден</label>
+            </div>
+          </div>
+
+          {% if tariff %}
+          <div class="col-12">
+            <div class="alert alert-secondary py-2 small mb-0">
+              ID: <strong>{{ tariff.id }}</strong> &nbsp;|&nbsp;
+              Создан: {{ tariff.created_at.strftime('%d.%m.%Y %H:%M') }} &nbsp;|&nbsp;
+              Обновлён: {{ tariff.updated_at.strftime('%d.%m.%Y %H:%M') }}
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="col-12 d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg"></i> {{ 'Сохранить' if tariff else 'Создать тариф' }}
+            </button>
+            <a href="/admin/tariffs" class="btn btn-outline-secondary">Отмена</a>
+          </div>
+
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
