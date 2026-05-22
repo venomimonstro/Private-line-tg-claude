@@ -79,7 +79,7 @@ async def login_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 
-@app.post("/login")
+@app.post("/login", response_model=None)
 async def login(
     request: Request,
     username: str = Form(...),
