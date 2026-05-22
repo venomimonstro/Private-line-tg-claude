@@ -21,6 +21,7 @@ from admin.routes import (
     dashboard,
     filtering,
     health,
+    integrations,
     load_analytics,
     logs,
     payments,
@@ -71,6 +72,7 @@ app.include_router(abuse.router)
 app.include_router(logs.router)
 app.include_router(promo_codes.router)
 app.include_router(bulk_actions.router)
+app.include_router(integrations.router)
 app.include_router(webhook_router)
 
 

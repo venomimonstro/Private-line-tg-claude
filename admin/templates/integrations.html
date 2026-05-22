@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    {% if saved %}
+    <div class="alert alert-success alert-dismissible fade show">
+      Настройки сохранены.
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/admin/integrations">
+      {% for section in sections %}
+      <div class="card mb-4">
+        <div class="card-header fw-semibold">{{ section }}</div>
+        <div class="card-body">
+          <div class="row g-3">
+            {% for meta in settings_meta if meta.section == section %}
+            <div class="col-12">
+              <label class="form-label">{{ meta.label }}</label>
+              <input
+                type="{{ meta.type }}"
+                name="{{ meta.key }}"
+                class="form-control font-monospace"
+                value="{{ values.get(meta.key, '') if meta.type != 'password' else '' }}"
+                placeholder="{{ meta.placeholder }}"
+                autocomplete="off"
+              >
+              {% if meta.type == 'password' and values.get(meta.key) %}
+              <div class="form-text text-success">✓ Значение задано (оставьте пустым чтобы не менять)</div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <a href="/admin/" class="btn btn-outline-secondary">Отмена</a>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endblock %}
