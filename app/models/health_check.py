@@ -10,7 +10,7 @@ from app.enums import HealthStatus
 
 
 class SystemHealthCheck(Base):
-    __tablename__ = "system_health_checks"
+    __tablename__ = "health_checks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     status: Mapped[HealthStatus] = mapped_column(
