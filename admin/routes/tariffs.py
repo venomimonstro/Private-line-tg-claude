@@ -49,6 +49,23 @@ async def new_tariff_form(
     })
 
 
+def _form_error(request, admin, error: str) -> HTMLResponse:
+    return templates.TemplateResponse("tariff_form.html", {
+        "request": request, "admin": admin, "tariff": None,
+        "page_title": "Новый тариф", "error": error,
+    })
+
+
+def _parse_int_field(value: str, field_name: str) -> int:
+    v = value.strip()
+    if not v:
+        raise ValueError(f"Поле «{field_name}» обязательно")
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        raise ValueError(f"Поле «{field_name}» должно быть целым числом")
+
+
 @router.post("/new")
 async def create_tariff(
     request: Request,
@@ -58,32 +75,40 @@ async def create_tariff(
     price_monthly: str = Form(...),
     price_first_month: str = Form(default=""),
     currency: str = Form(default="RUB"),
-    duration_days: int = Form(...),
+    duration_days: str = Form(default=""),
     traffic_limit_gb: str = Form(default=""),
-    max_keys: int = Form(default=1),
+    max_keys: str = Form(default="1"),
     speed_limit_mbps: str = Form(default=""),
-    sort_order: int = Form(default=0),
+    sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
     is_visible: bool = Form(default=False),
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_super_admin),
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
+    try:
+        dur = _parse_int_field(duration_days, "Срок действия (дней)")
+        keys = _parse_int_field(max_keys or "1", "Макс. ключей")
+        order = int(sort_order.strip() or "0")
+        price = Decimal(price_monthly.strip())
+    except (ValueError, Exception) as exc:
+        return _form_error(request, admin, str(exc))
+
     existing = await session.execute(select(Tariff).where(Tariff.slug == slug.strip()))
     if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=400, detail=f"Тариф с slug '{slug}' уже существует")
+        return _form_error(request, admin, f"Тариф с slug '{slug}' уже существует")
 
     tariff = Tariff(
         slug=slug.strip(),
         name=name.strip(),
         description=description.strip() or None,
-        price_monthly=Decimal(price_monthly),
-        price_first_month=Decimal(price_first_month) if price_first_month.strip() else None,
+        price_monthly=price,
+        price_first_month=Decimal(price_first_month.strip()) if price_first_month.strip() else None,
         currency=currency.strip() or "RUB",
-        duration_days=duration_days,
-        traffic_limit_gb=int(traffic_limit_gb) if traffic_limit_gb.strip() else None,
-        max_keys=max_keys,
-        speed_limit_mbps=int(speed_limit_mbps) if speed_limit_mbps.strip() else None,
-        sort_order=sort_order,
+        duration_days=dur,
+        traffic_limit_gb=int(traffic_limit_gb.strip()) if traffic_limit_gb.strip() else None,
+        max_keys=keys,
+        speed_limit_mbps=int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None,
+        sort_order=order,
         is_active=is_active,
         is_visible=is_visible,
     )
@@ -133,39 +158,52 @@ async def update_tariff(
     price_monthly: str = Form(...),
     price_first_month: str = Form(default=""),
     currency: str = Form(default="RUB"),
-    duration_days: int = Form(...),
+    duration_days: str = Form(default=""),
     traffic_limit_gb: str = Form(default=""),
-    max_keys: int = Form(default=1),
+    max_keys: str = Form(default="1"),
     speed_limit_mbps: str = Form(default=""),
-    sort_order: int = Form(default=0),
+    sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
     is_visible: bool = Form(default=False),
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_super_admin),
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
     tariff = result.scalar_one_or_none()
     if tariff is None:
         raise HTTPException(status_code=404, detail="Тариф не найден")
 
-    # Check slug uniqueness (exclude current tariff)
+    def edit_error(msg: str) -> HTMLResponse:
+        return templates.TemplateResponse("tariff_form.html", {
+            "request": request, "admin": admin, "tariff": tariff,
+            "page_title": f"Редактировать тариф: {tariff.name}", "error": msg,
+        })
+
+    try:
+        dur = _parse_int_field(duration_days, "Срок действия (дней)")
+        keys = _parse_int_field(max_keys or "1", "Макс. ключей")
+        order = int(sort_order.strip() or "0")
+        price = Decimal(price_monthly.strip())
+    except (ValueError, Exception) as exc:
+        return edit_error(str(exc))
+
     dup = await session.execute(
         select(Tariff).where(Tariff.slug == slug.strip(), Tariff.id != tariff_id)
     )
     if dup.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=400, detail=f"Тариф с slug '{slug}' уже существует")
+        return edit_error(f"Тариф с slug '{slug}' уже существует")
 
     tariff.slug = slug.strip()
     tariff.name = name.strip()
     tariff.description = description.strip() or None
-    tariff.price_monthly = Decimal(price_monthly)
-    tariff.price_first_month = Decimal(price_first_month) if price_first_month.strip() else None
+    tariff.price_monthly = price
+    tariff.price_first_month = Decimal(price_first_month.strip()) if price_first_month.strip() else None
     tariff.currency = currency.strip() or "RUB"
-    tariff.duration_days = duration_days
-    tariff.traffic_limit_gb = int(traffic_limit_gb) if traffic_limit_gb.strip() else None
-    tariff.max_keys = max_keys
-    tariff.speed_limit_mbps = int(speed_limit_mbps) if speed_limit_mbps.strip() else None
-    tariff.sort_order = sort_order
+    tariff.duration_days = dur
+    tariff.traffic_limit_gb = int(traffic_limit_gb.strip()) if traffic_limit_gb.strip() else None
+    tariff.max_keys = keys
+    tariff.speed_limit_mbps = int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None
+    tariff.sort_order = order
     tariff.is_active = is_active
     tariff.is_visible = is_visible
 
