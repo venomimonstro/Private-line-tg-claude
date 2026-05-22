@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,20 @@ _BACKUP_RETENTION: dict[BackupType, int | None] = {
     BackupType.manual: None,
     BackupType.emergency: 14,
 }
+
+
+def _parse_pg_url(db_url: str) -> dict[str, str]:
+    clean = db_url.split("?")[0]
+    for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgres://"):
+        clean = clean.replace(prefix, "postgresql://")
+    parsed = urlparse(clean)
+    return {
+        "host": parsed.hostname or "localhost",
+        "port": str(parsed.port or 5432),
+        "user": parsed.username or "",
+        "password": parsed.password or "",
+        "dbname": parsed.path.lstrip("/"),
+    }
 
 
 def _ensure_backup_dir() -> Path:
@@ -66,12 +81,21 @@ async def create_backup(
                 raise FileNotFoundError(f"Database file not found: {db_file_path}")
             shutil.copy2(db_file_path, file_path)
         else:
-            db_name = db_url.rsplit("/", 1)[-1].split("?")[0]
+            conn = _parse_pg_url(db_url)
+            env = {**os.environ, "PGPASSWORD": conn["password"]}
             result = subprocess.run(
-                ["pg_dump", "-Fc", db_name, "-f", str(file_path)],
+                [
+                    "pg_dump", "-Fc",
+                    "-h", conn["host"],
+                    "-p", conn["port"],
+                    "-U", conn["user"],
+                    "-f", str(file_path),
+                    conn["dbname"],
+                ],
                 capture_output=True,
                 text=True,
                 timeout=300,
+                env=env,
             )
             if result.returncode != 0:
                 raise RuntimeError(f"pg_dump failed: {result.stderr}")
@@ -123,18 +147,20 @@ async def restore_backup(backup_id: int, session: AsyncSession) -> None:
         shutil.copy2(file_path, Path(db_file))
         logger.info("Database restored from backup #%d", backup_id)
     else:
-        db_name = db_url.rsplit("/", 1)[-1].split("?")[0]
-        result_drop = subprocess.run(
-            ["dropdb", "--if-exists", db_name],
-            capture_output=True, text=True, timeout=60,
+        conn = _parse_pg_url(db_url)
+        env = {**os.environ, "PGPASSWORD": conn["password"]}
+        pg_args = ["-h", conn["host"], "-p", conn["port"], "-U", conn["user"]]
+        subprocess.run(
+            ["dropdb", "--if-exists", *pg_args, conn["dbname"]],
+            capture_output=True, text=True, timeout=60, env=env,
         )
-        result_create = subprocess.run(
-            ["createdb", db_name],
-            capture_output=True, text=True, timeout=60,
+        subprocess.run(
+            ["createdb", *pg_args, conn["dbname"]],
+            capture_output=True, text=True, timeout=60, env=env,
         )
         result_restore = subprocess.run(
-            ["pg_restore", "-d", db_name, str(file_path)],
-            capture_output=True, text=True, timeout=300,
+            ["pg_restore", "-d", conn["dbname"], *pg_args, str(file_path)],
+            capture_output=True, text=True, timeout=300, env=env,
         )
         if result_restore.returncode not in (0, 1):
             raise RuntimeError(f"pg_restore failed: {result_restore.stderr}")

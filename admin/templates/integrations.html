@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-9">
+  <div class="col-lg-10">
 
     {% if saved %}
     <div class="alert alert-success alert-dismissible fade show">
@@ -9,6 +9,25 @@
       <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
     {% endif %}
+
+    <div class="alert alert-info small mb-4">
+      <strong>Как работает:</strong> включите нужный провайдер (переключатель «Включён»), заполните реквизиты и нажмите
+      <strong>Сохранить</strong>. В поле <strong>«Активный провайдер»</strong> (раздел Общие) укажите код провайдера,
+      который бот использует по умолчанию: <code>yookassa</code>, <code>yoomoney</code>, <code>freekassa</code>,
+      <code>lava</code>, <code>robokassa</code>, <code>prodamus</code>, <code>cryptobot</code>, <code>stars</code>.
+    </div>
+
+    {% set provider_notes = {
+      "YooKassa":        "Банковские карты, СБП, ЮMoney-кошелёк через ЮKassa. Требует юр. лицо или ИП.",
+      "ЮMoney":          "Приём переводов напрямую на кошелёк ЮMoney (бывший Яндекс.Деньги). Для физлиц.",
+      "FreeKassa":       "Мультивалютный агрегатор. Карты, криптовалюта, терминалы и др.",
+      "LAVA":            "Российский агрегатор LAVA.ru. Карты, СБП, криптовалюта.",
+      "Robokassa":       "Крупный российский агрегатор. Карты, электронные деньги, терминалы.",
+      "Prodamus":        "Платёжный виджет Prodamus. Карты, СБП. Работает без юр. лица.",
+      "CryptoBot (TON)": "Приём крипты через @CryptoBot: TON, USDT, BTC, ETH и другие. Аккаунт в @CryptoBot.",
+      "Telegram Stars":  "Встроенная оплата Telegram Stars (XTR). Настраивается в BotFather. Реквизиты не нужны.",
+      "Общие":           ""
+    } %}
 
     <form method="post" action="/admin/integrations">
       {% for section in sections %}
@@ -18,9 +37,9 @@
           <span>{{ section }}</span>
           {% if ps %}
             {% if ps.ready %}
-              <span class="badge bg-success">Активен — доступен пользователям</span>
+              <span class="badge bg-success">&#10003; Активен — доступен пользователям</span>
             {% elif ps.enabled and not ps.has_credentials %}
-              <span class="badge bg-warning text-dark">Включён, но не настроен</span>
+              <span class="badge bg-warning text-dark">&#9888; Включён, но не настроен</span>
             {% elif not ps.enabled and ps.has_credentials %}
               <span class="badge bg-secondary">Отключён (настройки есть)</span>
             {% else %}
@@ -29,6 +48,10 @@
           {% endif %}
         </div>
         <div class="card-body">
+          {% set note = provider_notes.get(section, "") %}
+          {% if note %}
+          <p class="text-muted small mb-3">{{ note }}</p>
+          {% endif %}
           <div class="row g-3">
             {% for meta in settings_meta if meta.section == section %}
               {% if meta.type == 'toggle' %}
@@ -42,12 +65,12 @@
                     {% if values.get(meta.key, '').lower() in ('true', '1', 'yes') %}checked{% endif %}
                   >
                   <label class="form-check-label fw-semibold" for="{{ meta.key }}">
-                    {{ meta.label }} — включить провайдера и сделать доступным пользователям
+                    Включить провайдера и сделать доступным пользователям
                   </label>
                 </div>
               </div>
               {% else %}
-              <div class="col-12">
+              <div class="col-12 col-md-6">
                 <label class="form-label">{{ meta.label }}</label>
                 <input
                   type="{{ meta.type }}"
@@ -68,8 +91,8 @@
       </div>
       {% endfor %}
 
-      <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary">Сохранить</button>
+      <div class="d-flex gap-2 mb-5">
+        <button type="submit" class="btn btn-primary">Сохранить настройки</button>
         <a href="/admin/" class="btn btn-outline-secondary">Отмена</a>
       </div>
     </form>
