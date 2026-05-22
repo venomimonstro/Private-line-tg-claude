@@ -21,7 +21,7 @@ class Referral(Base):
     invited_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True, index=True)
     bonus_days_awarded: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
     status: Mapped[ReferralStatus] = mapped_column(
-        SAEnum(ReferralStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(ReferralStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=ReferralStatus.pending,
         nullable=False,
     )

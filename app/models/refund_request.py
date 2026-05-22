@@ -16,7 +16,7 @@ class RefundRequest(Base):
     payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RefundStatus] = mapped_column(
-        SAEnum(RefundStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(RefundStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         nullable=False,
         default=RefundStatus.pending,
         index=True,

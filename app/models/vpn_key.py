@@ -25,7 +25,7 @@ class VpnKey(Base):
     outline_key_id: Mapped[str] = mapped_column(String(255), nullable=False)
     access_url_encrypted: Mapped[str] = mapped_column(String(2048), nullable=False)
     status: Mapped[VpnKeyStatus] = mapped_column(
-        SAEnum(VpnKeyStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(VpnKeyStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=VpnKeyStatus.active,
         nullable=False,
         index=True,

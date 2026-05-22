@@ -17,7 +17,7 @@ class BlockedIp(Base):
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(128), default="manual", nullable=False)
     status: Mapped[DomainStatus] = mapped_column(
-        SAEnum(DomainStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(DomainStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=DomainStatus.active,
         nullable=False,
     )

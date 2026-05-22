@@ -20,7 +20,7 @@ class VpnServer(Base):
     api_url: Mapped[str] = mapped_column(String(512), nullable=False)
     api_secret_encrypted: Mapped[str] = mapped_column(String(1024), nullable=False)
     status: Mapped[VpnServerStatus] = mapped_column(
-        SAEnum(VpnServerStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(VpnServerStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=VpnServerStatus.active,
         nullable=False,
     )

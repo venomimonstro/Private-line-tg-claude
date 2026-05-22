@@ -14,7 +14,7 @@ class SystemHealthCheck(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     status: Mapped[HealthStatus] = mapped_column(
-        SAEnum(HealthStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(HealthStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         nullable=False,
     )
     bot_status: Mapped[str] = mapped_column(String(16), nullable=False)

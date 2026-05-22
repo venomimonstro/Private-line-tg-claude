@@ -26,7 +26,7 @@ class User(Base):
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
     status: Mapped[UserStatus] = mapped_column(
-        SAEnum(UserStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(UserStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=UserStatus.new,
         nullable=False,
     )
@@ -37,7 +37,7 @@ class User(Base):
     )
     last_activity_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     admin_role: Mapped[AdminRole | None] = mapped_column(
-        SAEnum(AdminRole, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(AdminRole, values_callable=lambda x: [e.value for e in x], native_enum=False),
         nullable=True,
     )
     admin_password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)

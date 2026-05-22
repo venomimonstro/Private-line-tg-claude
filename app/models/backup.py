@@ -14,11 +14,11 @@ class Backup(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     type: Mapped[BackupType] = mapped_column(
-        SAEnum(BackupType, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(BackupType, values_callable=lambda x: [e.value for e in x], native_enum=False),
         nullable=False,
     )
     status: Mapped[BackupStatus] = mapped_column(
-        SAEnum(BackupStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(BackupStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=BackupStatus.creating,
         nullable=False,
     )

@@ -24,7 +24,7 @@ class Payment(Base):
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="RUB", nullable=False)
     status: Mapped[PaymentStatus] = mapped_column(
-        SAEnum(PaymentStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(PaymentStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=PaymentStatus.pending,
         nullable=False,
         index=True,

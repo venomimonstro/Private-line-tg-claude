@@ -22,7 +22,7 @@ class Subscription(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     tariff_id: Mapped[int] = mapped_column(ForeignKey("tariffs.id"), nullable=False)
     status: Mapped[SubscriptionStatus] = mapped_column(
-        SAEnum(SubscriptionStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(SubscriptionStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=SubscriptionStatus.pending_payment,
         nullable=False,
         index=True,

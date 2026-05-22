@@ -16,7 +16,7 @@ class SystemUpdate(Base):
     version_from: Mapped[str] = mapped_column(String(64), nullable=False)
     version_to: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[UpdateStatus] = mapped_column(
-        SAEnum(UpdateStatus, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(UpdateStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=UpdateStatus.uploaded,
         nullable=False,
     )

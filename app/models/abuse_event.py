@@ -17,7 +17,7 @@ class AbuseEvent(Base):
     vpn_key_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_keys.id"), nullable=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     severity: Mapped[AbuseSeverity] = mapped_column(
-        SAEnum(AbuseSeverity, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(AbuseSeverity, values_callable=lambda x: [e.value for e in x], native_enum=False),
         nullable=False,
     )
     source: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -25,7 +25,7 @@ class AbuseEvent(Base):
     target_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[AbuseAction] = mapped_column(
-        SAEnum(AbuseAction, values_callable=lambda x: [e.value for e in x]),
+        SAEnum(AbuseAction, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=AbuseAction.log_only,
         nullable=False,
     )
