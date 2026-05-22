@@ -20,7 +20,7 @@
       <tr>
         <td>{{ p.id }}</td>
         <td><a href="/admin/users/{{ p.user_id }}">{{ p.user_id }}</a></td>
-        <td>{{ p.tariff_code }}</td>
+        <td>{{ p.tariff.slug if p.tariff else "—" }}</td>
         <td>{{ p.amount }} ₽</td>
         <td><span class="badge {% if p.status.value == 'paid' %}bg-success{% elif p.status.value == 'pending' %}bg-warning text-dark{% elif p.status.value in ('failed', 'cancelled') %}bg-danger{% else %}bg-secondary{% endif %}">{{ p.status.value }}</span></td>
         <td>{{ p.created_at.strftime('%d.%m.%Y %H:%M') }}</td>

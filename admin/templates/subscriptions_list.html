@@ -19,7 +19,7 @@
     <tr>
       <td>{{ sub.id }}</td>
       <td><a href="/admin/users/{{ sub.user_id }}">{{ sub.user_id }}</a></td>
-      <td>{{ sub.tariff_code }}</td>
+      <td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
       <td><span class="badge bg-secondary">{{ sub.status.value }}</span></td>
       <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
       <td><a href="/admin/subscriptions/{{ sub.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>

@@ -37,7 +37,7 @@
         <tbody>
         {% for sub in user.subscriptions %}
         <tr>
-          <td>{{ sub.id }}</td><td>{{ sub.tariff_code }}</td>
+          <td>{{ sub.id }}</td><td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
           <td><span class="badge bg-secondary">{{ sub.status.value }}</span></td>
           <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
         </tr>
@@ -53,7 +53,7 @@
         {% for p in user.payments %}
         <tr>
           <td><a href="/admin/payments/{{ p.id }}">{{ p.id }}</a></td>
-          <td>{{ p.tariff_code }}</td><td>{{ p.amount }} ₽</td>
+          <td>{{ p.tariff.slug if p.tariff else "—" }}</td><td>{{ p.amount }} ₽</td>
           <td><span class="badge bg-secondary">{{ p.status.value }}</span></td>
           <td>{{ p.created_at.strftime('%d.%m.%Y') }}</td>
         </tr>

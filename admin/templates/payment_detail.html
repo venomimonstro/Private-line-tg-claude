@@ -6,13 +6,13 @@
       <h6 class="fw-bold">Платёж #{{ payment.id }}</h6>
       <table class="table table-sm">
         <tr><td>Пользователь</td><td><a href="/admin/users/{{ payment.user_id }}">{{ payment.user_id }}</a></td></tr>
-        <tr><td>Тариф</td><td>{{ payment.tariff_code }}</td></tr>
+        <tr><td>Тариф</td><td>{{ payment.tariff.slug if payment.tariff else "—" }}</td></tr>
         <tr><td>Сумма</td><td><b>{{ payment.amount }} {{ payment.currency }}</b></td></tr>
         <tr><td>Статус</td><td><span class="badge {% if payment.status.value == 'paid' %}bg-success{% elif payment.status.value == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ payment.status.value }}</span></td></tr>
         <tr><td>Провайдер</td><td>{{ payment.provider }}</td></tr>
         <tr><td>Создан</td><td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
         {% if payment.confirmed_at %}<tr><td>Подтверждён</td><td>{{ payment.confirmed_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>{% endif %}
-        {% if payment.manual_comment %}<tr><td>Комментарий</td><td>{{ payment.manual_comment }}</td></tr>{% endif %}
+        {% if payment.comment %}<tr><td>Комментарий</td><td>{{ payment.comment }}</td></tr>{% endif %}
       </table>
 
       {% if payment.status.value in ('pending', 'manual_review') %}
