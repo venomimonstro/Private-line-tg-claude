@@ -353,16 +353,25 @@ async def _process_payment(
     promo_code: str | None,
 ) -> None:
     """Mark rules accepted, then show provider selection or go straight to payment."""
+    import logging
     from datetime import datetime
+    logger = logging.getLogger(__name__)
 
-    async with async_session_maker() as session:
-        merged_user = await session.get(User, db_user.id)
-        if merged_user is not None:
-            merged_user.rules_accepted_at = datetime.utcnow()
-            await session.flush()
-        await session.commit()
+    try:
+        async with async_session_maker() as session:
+            merged_user = await session.get(User, db_user.id)
+            if merged_user is not None:
+                merged_user.rules_accepted_at = datetime.utcnow()
+                await session.flush()
+            await session.commit()
 
-        providers = await get_enabled_providers(session)
+        async with async_session_maker() as session:
+            providers = await get_enabled_providers(session)
+    except Exception as exc:
+        logger.exception("_process_payment: DB error getting providers: %s", exc)
+        await callback.answer("Ошибка сервера, попробуйте позже.", show_alert=True)
+        await state.clear()
+        return
 
     if len(providers) == 1:
         await _do_create_payment(callback, state, db_user, tariff_slug, promo_code, providers[0])
@@ -396,30 +405,39 @@ async def _do_create_payment(
     provider_name: str,
 ) -> None:
     """Create payment with a specific provider and send result to user."""
-    async with async_session_maker() as session:
-        result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
-        tariff = result.scalar_one_or_none()
-        if tariff is None:
-            await callback.answer("Тариф не найден.", show_alert=True)
-            return
+    import logging
+    from decimal import Decimal
+    from app.services.promo import apply_promo, validate_promo
+    logger = logging.getLogger(__name__)
 
-        from app.services.promo import apply_promo, validate_promo
-        from decimal import Decimal
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
+            tariff = result.scalar_one_or_none()
+            if tariff is None:
+                await callback.answer("Тариф не найден.", show_alert=True)
+                return
 
-        promo_obj = None
-        if promo_code:
-            promo_obj, _error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
+            promo_obj = None
+            if promo_code:
+                promo_obj, _error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
 
-        payment, payment_result = await create_payment(
-            db_user.id, tariff_slug, session, provider_name=provider_name
-        )
+            payment, payment_result = await create_payment(
+                db_user.id, tariff_slug, session, provider_name=provider_name
+            )
 
-        if promo_obj is not None:
-            discounted_amount = await apply_promo(promo_obj, float(payment.amount), session)
-            payment.amount = Decimal(str(discounted_amount))
-            await session.flush()
+            if promo_obj is not None:
+                discounted_amount = await apply_promo(promo_obj, float(payment.amount), session)
+                payment.amount = Decimal(str(discounted_amount))
+                await session.flush()
 
-        await session.commit()
+            await session.commit()
+
+    except Exception as exc:
+        logger.exception("_do_create_payment error (provider=%s tariff=%s): %s", provider_name, tariff_slug, exc)
+        await callback.answer("Ошибка при создании платежа. Попробуйте позже.", show_alert=True)
+        await state.clear()
+        return
 
     promo_line = "\n🎟 Промокод применён! Скидка учтена." if promo_obj else ""
 
