@@ -12,25 +12,56 @@
 
     <form method="post" action="/admin/integrations">
       {% for section in sections %}
+      {% set ps = provider_status.get(section, {}) %}
       <div class="card mb-4">
-        <div class="card-header fw-semibold">{{ section }}</div>
+        <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
+          <span>{{ section }}</span>
+          {% if ps %}
+            {% if ps.ready %}
+              <span class="badge bg-success">Активен — доступен пользователям</span>
+            {% elif ps.enabled and not ps.has_credentials %}
+              <span class="badge bg-warning text-dark">Включён, но не настроен</span>
+            {% elif not ps.enabled and ps.has_credentials %}
+              <span class="badge bg-secondary">Отключён (настройки есть)</span>
+            {% else %}
+              <span class="badge bg-danger">Не настроен</span>
+            {% endif %}
+          {% endif %}
+        </div>
         <div class="card-body">
           <div class="row g-3">
             {% for meta in settings_meta if meta.section == section %}
-            <div class="col-12">
-              <label class="form-label">{{ meta.label }}</label>
-              <input
-                type="{{ meta.type }}"
-                name="{{ meta.key }}"
-                class="form-control font-monospace"
-                value="{{ values.get(meta.key, '') if meta.type != 'password' else '' }}"
-                placeholder="{{ meta.placeholder }}"
-                autocomplete="off"
-              >
-              {% if meta.type == 'password' and values.get(meta.key) %}
-              <div class="form-text text-success">✓ Значение задано (оставьте пустым чтобы не менять)</div>
+              {% if meta.type == 'toggle' %}
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    name="{{ meta.key }}"
+                    id="{{ meta.key }}"
+                    {% if values.get(meta.key, '').lower() in ('true', '1', 'yes') %}checked{% endif %}
+                  >
+                  <label class="form-check-label fw-semibold" for="{{ meta.key }}">
+                    {{ meta.label }} — включить провайдера и сделать доступным пользователям
+                  </label>
+                </div>
+              </div>
+              {% else %}
+              <div class="col-12">
+                <label class="form-label">{{ meta.label }}</label>
+                <input
+                  type="{{ meta.type }}"
+                  name="{{ meta.key }}"
+                  class="form-control font-monospace"
+                  value="{{ values.get(meta.key, '') if meta.type != 'password' else '' }}"
+                  placeholder="{{ meta.placeholder }}"
+                  autocomplete="off"
+                >
+                {% if meta.type == 'password' and values.get(meta.key) %}
+                <div class="form-text text-success">&#10003; Значение задано (оставьте пустым чтобы не менять)</div>
+                {% endif %}
+              </div>
               {% endif %}
-            </div>
             {% endfor %}
           </div>
         </div>

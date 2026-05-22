@@ -50,6 +50,10 @@
                      min="0" step="0.01" placeholder="Оставить пустым = нет скидки">
               <span class="input-group-text">{{ tariff.currency if tariff else 'RUB' }}</span>
             </div>
+            <div class="form-text text-muted">
+              Промо-цена для новых пользователей (только первый платёж).
+              Оставьте пустым если скидка не нужна.
+            </div>
           </div>
 
           <div class="col-md-4">
@@ -70,7 +74,12 @@
             <label class="form-label fw-semibold">Лимит трафика (ГБ)</label>
             <input type="number" name="traffic_limit_gb" class="form-control"
                    value="{{ tariff.traffic_limit_gb if tariff and tariff.traffic_limit_gb is not none else '' }}"
-                   min="0" placeholder="0 = без лимита">
+                   min="0" placeholder="Оставить пустым = без лимита">
+            <div class="form-text text-warning">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <strong>Осторожно:</strong> без лимита один пользователь может выжрать весь трафик сервера.
+              Рекомендуется: 30–100 ГБ для базовых тарифов, 200–500 ГБ для продвинутых.
+            </div>
           </div>
 
           <div class="col-md-4">
@@ -78,13 +87,21 @@
             <input type="number" name="max_keys" class="form-control"
                    value="{{ tariff.max_keys if tariff else 1 }}"
                    min="1" required placeholder="1">
+            <div class="form-text text-muted">
+              Количество одновременных устройств на подписку.
+              Рекомендуется: 1–2 для базовых тарифов, 3–5 для семейных/продвинутых.
+            </div>
           </div>
 
           <div class="col-md-4">
             <label class="form-label fw-semibold">Лимит скорости (Мбит/с)</label>
             <input type="number" name="speed_limit_mbps" class="form-control"
                    value="{{ tariff.speed_limit_mbps if tariff and tariff.speed_limit_mbps is not none else '' }}"
-                   min="0" placeholder="0 = без лимита">
+                   min="0" placeholder="Оставить пустым = без лимита">
+            <div class="form-text text-muted">
+              Рекомендуется: 50–100 Мбит/с для дешёвых тарифов, без лимита для Premium.
+              Помогает снизить нагрузку на сервер при безлимитном трафике.
+            </div>
           </div>
 
           <div class="col-md-4">
