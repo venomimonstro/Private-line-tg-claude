@@ -19,7 +19,7 @@ from app.models.user import User
 router = APIRouter(prefix="/tariffs")
 templates = Jinja2Templates(directory="admin/templates")
 
-_INACTIVE_STATUSES = {SubscriptionStatus.expired, SubscriptionStatus.cancelled}
+_INACTIVE_STATUSES = {SubscriptionStatus.expired, SubscriptionStatus.disabled, SubscriptionStatus.blocked}
 
 
 @router.get("", response_class=HTMLResponse)
