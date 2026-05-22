@@ -298,9 +298,18 @@ docker compose up -d db >/dev/null 2>&1
 sleep 5  # Wait for postgres to initialize
 
 info "Применяю миграции Alembic..."
-docker compose run --rm bot python -m alembic upgrade head >/dev/null 2>&1 &
-spinner $! "Применение миграций..."
+if ! docker compose run --rm bot python -m alembic upgrade head 2>&1; then
+    die "Миграции не применились. Проверьте подключение к БД."
+fi
 success "Миграции применены"
+
+info "Создаю admin-пользователя..."
+if ! docker compose run --rm bot python scripts/setup_admin.py 2>&1; then
+    warn "Не удалось создать admin автоматически. После запуска выполните:"
+    warn "  docker compose run --rm bot python scripts/setup_admin.py"
+else
+    success "Admin-пользователь создан"
+fi
 
 # ─── Start services ───────────────────────────────────────────────────────────
 section "Запуск всех сервисов"
@@ -315,7 +324,7 @@ section "Проверка работоспособности"
 info "Ожидаю готовности Admin Panel (до 60 секунд)..."
 READY=false
 for i in $(seq 1 12); do
-    if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+    if curl -sf http://localhost:8000/_health >/dev/null 2>&1; then
         READY=true
         break
     fi
