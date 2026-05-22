@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -30,7 +30,7 @@ async def main() -> None:
         sys.exit(1)
 
     pw_hash = hash_password(password)
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     async with async_session_maker() as session:
         result = await session.execute(
