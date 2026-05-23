@@ -43,10 +43,37 @@
   <div class="col-md-6">
     <div class="card p-3">
       <h6 class="fw-bold">VPN-ключи</h6>
-      {% for key in sub.vpn_keys %}
-      <div class="mb-2 p-2 border rounded">
-        <div>ID: {{ key.id }} | Статус: <span class="badge bg-secondary">{{ key.status.value }}</span></div>
-        <div class="text-muted small">Трафик: {{ "%.2f"|format(key.traffic_used_gb) }} ГБ</div>
+      {% for kd in key_details %}
+      {% set key = kd.key %}
+      {% set server = kd.server %}
+      <div class="mb-3 p-2 border rounded {% if key.status.value == 'active' %}border-success{% endif %}">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+          <div>
+            <span class="fw-semibold small">
+              {% if server %}{{ server.flag_emoji or '🌐' }} {{ server.country }}{% if server.city %}, {{ server.city }}{% endif %}{% else %}Сервер #{{ key.server_id }}{% endif %}
+            </span>
+            <span class="badge ms-1 {% if key.status.value == 'active' %}bg-success{% elif key.status.value == 'disabled' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ key.status.value }}</span>
+          </div>
+          <small class="text-muted">ID: {{ key.id }}</small>
+        </div>
+        <div class="text-muted small mb-1">Трафик: {{ "%.2f"|format(key.traffic_used_gb) }} ГБ | Создан: {{ key.created_at.strftime('%d.%m.%Y') }}</div>
+        {% if kd.access_url %}
+        <div class="mb-2">
+          <code class="small d-block text-break bg-light p-1 rounded" style="font-size:0.7rem;word-break:break-all">{{ kd.access_url }}</code>
+        </div>
+        {% else %}
+        <div class="text-danger small mb-2">⚠️ Ключ пустой — нажмите «Перевыпустить»</div>
+        {% endif %}
+        {% if key.status.value == 'active' %}
+        <div class="d-flex gap-1 flex-wrap">
+          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/disable">
+            <button class="btn btn-sm btn-outline-warning" onclick="return confirm('Отключить ключ?')">Отключить</button>
+          </form>
+          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/reissue">
+            <button class="btn btn-sm btn-outline-primary" onclick="return confirm('Перевыпустить ключ? Старый перестанет работать.')">🔄 Перевыпустить</button>
+          </form>
+        </div>
+        {% endif %}
       </div>
       {% else %}
       <p class="text-muted">VPN-ключей нет</p>

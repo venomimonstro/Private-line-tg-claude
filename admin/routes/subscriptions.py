@@ -72,8 +72,30 @@ async def subscription_detail(
     sub = result.scalar_one_or_none()
     if sub is None:
         raise HTTPException(status_code=404)
+
+    from app.encryption import decrypt as _decrypt
+    from app.enums import VpnKeyStatus
+    from app.models.vpn_server import VpnServer
+
+    key_details = []
+    for key in sub.vpn_keys:
+        server = await session.get(VpnServer, key.server_id) if key.server_id else None
+        access_url = ""
+        if key.status == VpnKeyStatus.active and key.access_url_encrypted:
+            try:
+                access_url = _decrypt(key.access_url_encrypted)
+            except Exception:
+                pass
+        key_details.append({
+            "key": key,
+            "server": server,
+            "access_url": access_url,
+        })
+
     return templates.TemplateResponse("subscription_detail.html", {
-        "request": request, "admin": admin, "sub": sub, "page_title": f"Подписка #{sub_id}",
+        "request": request, "admin": admin, "sub": sub,
+        "key_details": key_details,
+        "page_title": f"Подписка #{sub_id}",
     })
 
 
@@ -190,6 +212,94 @@ async def retry_activation(
         target_entity="subscription",
         target_entity_id=sub_id,
         details={"success": vpn_key is not None},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/keys/{key_id}/disable")
+async def admin_disable_key(
+    sub_id: int,
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    from app.models.vpn_key import VpnKey
+
+    result = await session.execute(
+        select(VpnKey).where(VpnKey.id == key_id, VpnKey.subscription_id == sub_id)
+    )
+    key = result.scalar_one_or_none()
+    if key is None:
+        raise HTTPException(status_code=404)
+
+    server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
+    server = server_result.scalar_one_or_none()
+    if server:
+        await vpn_key_service.disable_vpn_key(key, server, session)
+        server.current_users = max(0, server.current_users - 1)
+    else:
+        from app.enums import VpnKeyStatus
+        from datetime import datetime as _dt
+        key.status = VpnKeyStatus.disabled
+        key.disabled_at = _dt.utcnow()
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="disable_vpn_key",
+        target_entity="vpn_key",
+        target_entity_id=key_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/keys/{key_id}/reissue")
+async def admin_reissue_key(
+    sub_id: int,
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    from app.models.vpn_key import VpnKey
+
+    result = await session.execute(
+        select(VpnKey).where(VpnKey.id == key_id, VpnKey.subscription_id == sub_id)
+    )
+    key = result.scalar_one_or_none()
+    if key is None:
+        raise HTTPException(status_code=404)
+
+    sub_result = await session.execute(
+        select(Subscription).options(selectinload(Subscription.tariff)).where(Subscription.id == sub_id)
+    )
+    sub = sub_result.scalar_one_or_none()
+    if sub is None or sub.tariff is None:
+        raise HTTPException(status_code=404)
+
+    server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
+    server = server_result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    try:
+        await vpn_key_service.reissue_vpn_key(
+            key, server, sub.tariff.slug, sub.tariff.traffic_limit_gb, session
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="reissue_vpn_key",
+        target_entity="vpn_key",
+        target_entity_id=key_id,
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)
