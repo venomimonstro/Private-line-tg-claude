@@ -204,7 +204,12 @@ async def retry_activation(
     await session.flush()
 
     from app.services.user_notifications import send_key_to_user
-    vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)
+    try:
+        vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).error("Retry activation sub %d failed: %s", sub_id, exc)
+        raise HTTPException(status_code=503, detail=f"VPN сервер недоступен: {exc}")
 
     log = AdminLog(
         admin_user_id=admin.id,
@@ -294,6 +299,10 @@ async def admin_reissue_key(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).error("Reissue key %d failed: %s", key_id, exc)
+        raise HTTPException(status_code=503, detail=f"VPN сервер недоступен: {exc}")
 
     log = AdminLog(
         admin_user_id=admin.id,
