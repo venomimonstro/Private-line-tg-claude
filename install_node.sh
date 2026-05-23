@@ -136,34 +136,23 @@ services:
       - /var/lib/marzban:/var/lib/marzban
 DCEOF
 
-# Generate self-signed SSL cert (required for Marzban to bind on 0.0.0.0)
-info "Генерирую SSL-сертификат для Marzban..."
-openssl req -x509 -newkey rsa:4096 \
-    -keyout "$MARZBAN_DATA/key.pem" \
-    -out "$MARZBAN_DATA/cert.pem" \
-    -days 3650 -nodes \
-    -subj "/CN=${SERVER_IP}" >/dev/null 2>&1
-success "SSL-сертификат создан"
-
-# Marzban env
+# Marzban env — localhost only, socat handles external access
 cat > "$MARZBAN_DIR/.env" << EOF
-UVICORN_HOST = "0.0.0.0"
-UVICORN_PORT = ${MARZBAN_PORT}
-SUDO_USERNAME = "${MARZBAN_USER}"
-SUDO_PASSWORD = "${MARZBAN_PASS}"
-XRAY_JSON = "/var/lib/marzban/xray_config.json"
-UVICORN_SSL_CERTFILE = "/var/lib/marzban/cert.pem"
-UVICORN_SSL_KEYFILE = "/var/lib/marzban/key.pem"
+UVICORN_HOST=127.0.0.1
+UVICORN_PORT=${MARZBAN_PORT}
+SUDO_USERNAME=${MARZBAN_USER}
+SUDO_PASSWORD=${MARZBAN_PASS}
+XRAY_JSON=/var/lib/marzban/xray_config.json
 EOF
 
 info "Запускаю Marzban (первый запуск скачает XRay ~60МБ)..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
-# Wait for Marzban API to become ready (up to 120s) — poll token endpoint
+# Wait for Marzban API to become ready (up to 120s)
 info "Жду готовности API..."
-API_URL="https://127.0.0.1:${MARZBAN_PORT}"
+API_URL="http://127.0.0.1:${MARZBAN_PORT}"
 for i in $(seq 1 24); do
-    if curl -sfk -X POST "${API_URL}/api/admin/token" \
+    if curl -sf -X POST "${API_URL}/api/admin/token" \
         -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
         >/dev/null 2>&1; then
         success "Marzban API готов (${i})"
@@ -176,7 +165,7 @@ for i in $(seq 1 24); do
 done
 
 # Verify credentials work
-TOKEN=$(curl -sfk -X POST "${API_URL}/api/admin/token" \
+TOKEN=$(curl -sf -X POST "${API_URL}/api/admin/token" \
     -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
     2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
 
@@ -191,18 +180,48 @@ section "Настройка файерволла"
 
 ufw --force reset >/dev/null 2>&1
 ufw default deny incoming >/dev/null 2>&1
+PROXY_PORT=2096
+
+# ─── Firewall ─────────────────────────────────────────────────────────────────
+section "Настройка файерволла"
+
+ufw --force reset >/dev/null 2>&1
+ufw default deny incoming >/dev/null 2>&1
 ufw default allow outgoing >/dev/null 2>&1
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
 ufw allow "${VPN_PORT}/tcp" comment "VLESS VPN" >/dev/null 2>&1
-ufw allow "${MARZBAN_PORT}/tcp" comment "Marzban API" >/dev/null 2>&1
+ufw allow "${PROXY_PORT}/tcp" comment "Marzban API proxy" >/dev/null 2>&1
 ufw --force enable >/dev/null 2>&1
-success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS), $MARZBAN_PORT (API)"
+success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS), $PROXY_PORT (API)"
+
+# ─── Socat proxy: expose Marzban API externally ───────────────────────────────
+section "Настройка внешнего доступа к API"
+
+apt-get install -y -qq socat >/dev/null 2>&1
+
+cat > /etc/systemd/system/marzban-proxy.service << SVCEOF
+[Unit]
+Description=Marzban API external proxy
+After=network.target docker.service
+
+[Service]
+ExecStart=/usr/bin/socat TCP4-LISTEN:${PROXY_PORT},fork,reuseaddr TCP4:127.0.0.1:${MARZBAN_PORT}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable marzban-proxy --now >/dev/null 2>&1
+success "API прокси запущен на порту $PROXY_PORT"
 
 # ─── Register node in admin panel ─────────────────────────────────────────────
 section "Регистрация ноды в Admin Panel"
 
-# Use public IP for API URL (HTTPS with self-signed cert)
-PUBLIC_API_URL="https://${SERVER_IP}:${MARZBAN_PORT}"
+# Use public IP + proxy port for API URL
+PUBLIC_API_URL="http://${SERVER_IP}:${PROXY_PORT}"
 info "Регистрирую: $PUBLIC_API_URL"
 
 PAYLOAD=$(python3 - << PYEOF
