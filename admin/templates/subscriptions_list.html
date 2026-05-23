@@ -22,7 +22,14 @@
       <td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
       <td><span class="badge bg-secondary">{{ sub.status.value }}</span></td>
       <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
-      <td><a href="/admin/subscriptions/{{ sub.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+      <td class="d-flex gap-1">
+        <a href="/admin/subscriptions/{{ sub.id }}" class="btn btn-sm btn-outline-primary">Открыть</a>
+        {% if sub.status.value not in ('active', 'disabled', 'expired') %}
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/retry" style="display:inline">
+          <button class="btn btn-sm btn-warning" onclick="return confirm('Повторить активацию?')">🔄</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
     {% else %}
     <tr><td colspan="6" class="text-center text-muted py-4">Подписки не найдены</td></tr>

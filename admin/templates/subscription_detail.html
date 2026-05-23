@@ -22,7 +22,7 @@
       <div class="alert alert-danger py-2 small mb-2">⚠️ Ошибка: {{ sub.last_activation_error }}</div>
       {% endif %}
       <div class="border-top pt-3 d-flex gap-2 flex-wrap">
-        {% if sub.status.value == 'activation_error' %}
+        {% if sub.status.value not in ('active', 'disabled', 'expired') %}
         <form method="post" action="/admin/subscriptions/{{ sub.id }}/retry">
           <button class="btn btn-sm btn-warning" onclick="return confirm('Повторить активацию и отправить ключ пользователю?')">🔄 Повторить активацию</button>
         </form>
