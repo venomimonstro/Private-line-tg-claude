@@ -2,8 +2,8 @@
 # deploy.sh — sprint-based deployment with validation and auto-rollback
 #
 # Usage:
-#   ./deploy.sh                        # deploy latest from current branch
-#   ./deploy.sh claude/private-line-mvp-cmx4Z   # deploy specific branch
+#   ./deploy.sh                                    # latest from current branch
+#   ./deploy.sh claude/private-line-mvp-cmx4Z     # specific branch
 
 set -euo pipefail
 
@@ -16,42 +16,48 @@ SPRINT_DIR="$DEPLOY_DIR/sprints"
 
 cd "$DEPLOY_DIR"
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 ok()   { echo "[$(date '+%H:%M:%S')] ✅ $*"; }
-fail() { echo "[$(date '+%H:%M:%S')] ❌ $*" >&2; exit 1; }
+err()  { echo "[$(date '+%H:%M:%S')] ❌ $*" >&2; }
 warn() { echo "[$(date '+%H:%M:%S')] ⚠️  $*"; }
 
-# ── sprint number ─────────────────────────────────────────────────────────────
+fail() {
+    err "$1"
+    exit 1
+}
+
+# ── sprint number (safe count) ────────────────────────────────────────────────
 mkdir -p "$SPRINT_DIR"
-SPRINT_NUM=$(( $(ls "$SPRINT_DIR" 2>/dev/null | grep -c '^sprint_' || echo 0) + 1 ))
+SPRINT_COUNT=0
+for d in "$SPRINT_DIR"/sprint_*/; do
+    [ -d "$d" ] && SPRINT_COUNT=$(( SPRINT_COUNT + 1 ))
+done
+SPRINT_NUM=$(( SPRINT_COUNT + 1 ))
 SPRINT_NAME="sprint_${SPRINT_NUM}"
 SPRINT_PATH="$SPRINT_DIR/$SPRINT_NAME"
+mkdir -p "$SPRINT_PATH"
 
 log "════════════════════════════════════════════"
 log "  Деплой $SPRINT_NAME  |  ветка: $BRANCH"
 log "════════════════════════════════════════════"
 
-# ── save current state for rollback ──────────────────────────────────────────
+# ── save current commit for rollback ─────────────────────────────────────────
 PREV_COMMIT=$(git rev-parse HEAD)
-PREV_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-log "Текущая версия: $PREV_COMMIT ($PREV_BRANCH)"
-
-# Save rollback marker
-mkdir -p "$SPRINT_PATH"
+PREV_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$PREV_COMMIT")
+log "Текущая версия: ${PREV_COMMIT:0:7} ($PREV_BRANCH)"
 echo "$PREV_COMMIT" > "$SPRINT_PATH/.rollback_commit"
-echo "$PREV_BRANCH" > "$SPRINT_PATH/.rollback_branch"
 
 rollback() {
-    warn "Откатываюсь на предыдущую версию ($PREV_COMMIT)..."
-    git checkout "$PREV_COMMIT" -- . 2>/dev/null || git checkout "$PREV_BRANCH" 2>/dev/null || true
+    warn "Откат на $PREV_COMMIT..."
+    git checkout "$PREV_COMMIT" -- . 2>/dev/null || true
     docker compose restart admin bot 2>/dev/null || true
     rm -rf "$SPRINT_PATH"
     fail "$1"
 }
 
 # ── pull new code ─────────────────────────────────────────────────────────────
-log "⬇  Получаю обновления ветки '$BRANCH'..."
+log "⬇  Получаю обновления '$BRANCH'..."
 git fetch origin "$BRANCH" 2>&1 | sed 's/^/    /'
 git checkout "$BRANCH" 2>/dev/null || true
 git pull origin "$BRANCH" 2>&1 | sed 's/^/    /'
@@ -59,49 +65,49 @@ git pull origin "$BRANCH" 2>&1 | sed 's/^/    /'
 NEW_COMMIT=$(git rev-parse HEAD)
 
 if [ "$PREV_COMMIT" = "$NEW_COMMIT" ]; then
-    ok "Изменений нет (уже актуальная версия)"
+    ok "Изменений нет — уже актуальная версия"
     rm -rf "$SPRINT_PATH"
     exit 0
 fi
 
-log "Новая версия: $NEW_COMMIT"
+log "Новая версия:  ${NEW_COMMIT:0:7}"
 echo "$NEW_COMMIT" > "$SPRINT_PATH/.deploy_commit"
-git log --oneline "$PREV_COMMIT..$NEW_COMMIT" 2>/dev/null | sed 's/^/    /' || true
+git log --oneline "${PREV_COMMIT}..${NEW_COMMIT}" 2>/dev/null | sed 's/^/    ► /' || true
 
-# ── validate Python syntax ───────────────────────────────────────────────────
+# ── validate Python syntax ────────────────────────────────────────────────────
 log "🔍 Проверяю синтаксис Python..."
 SYNTAX_ERRORS=0
 CHECKED=0
 
 while IFS= read -r -d '' pyfile; do
+    CHECKED=$(( CHECKED + 1 ))
     if ! python3 -c "
 import ast, sys
 try:
-    ast.parse(open('$pyfile').read())
+    ast.parse(open(sys.argv[1]).read())
 except SyntaxError as e:
-    print(f'  СИНТАКСИЧЕСКАЯ ОШИБКА: $pyfile:{e.lineno}: {e.msg}')
+    print(f'  ОШИБКА {sys.argv[1]}:{e.lineno}: {e.msg}')
     sys.exit(1)
-" 2>&1; then
+" "$pyfile" 2>&1; then
         SYNTAX_ERRORS=$(( SYNTAX_ERRORS + 1 ))
     fi
-    CHECKED=$(( CHECKED + 1 ))
 done < <(find app bot admin backup_manager health_monitor update_manager -name "*.py" -print0 2>/dev/null)
 
 if [ "$SYNTAX_ERRORS" -gt 0 ]; then
     rollback "Найдено $SYNTAX_ERRORS синтаксических ошибок — деплой отменён"
 fi
-ok "Синтаксис Python: $CHECKED файлов проверено, ошибок нет"
+ok "Python OK: $CHECKED файлов проверено"
 
-# ── apply: restart services (code mounted via volumes — no rebuild) ───────────
+# ── restart services (code via volumes — no rebuild needed) ───────────────────
 log "🔄 Перезапускаю сервисы..."
 docker compose restart admin bot 2>&1 | sed 's/^/    /'
 
-# ── wait for admin to become healthy ─────────────────────────────────────────
-log "⏳ Жду запуска admin (до $(( HEALTH_RETRIES * HEALTH_WAIT )) сек)..."
+# ── health check ──────────────────────────────────────────────────────────────
+log "⏳ Жду запуска admin..."
 sleep 5
 
 HEALTHY=0
-for i in $(seq 1 $HEALTH_RETRIES); do
+for i in $(seq 1 "$HEALTH_RETRIES"); do
     if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; then
         HEALTHY=1
         break
@@ -111,9 +117,9 @@ for i in $(seq 1 $HEALTH_RETRIES); do
 done
 
 if [ "$HEALTHY" -eq 0 ]; then
-    warn "Admin не отвечает после обновления. Проверяю логи..."
-    docker compose logs admin --tail=20 2>/dev/null | sed 's/^/    /' || true
-    rollback "Admin не запустился — автооткат выполнен"
+    warn "Admin не отвечает. Последние логи:"
+    docker compose logs admin --tail=15 2>/dev/null | sed 's/^/    /' || true
+    rollback "Admin не запустился — выполнен автооткат"
 fi
 
 # ── success ───────────────────────────────────────────────────────────────────
@@ -121,22 +127,20 @@ echo "$NEW_COMMIT" > "$SPRINT_PATH/.success"
 echo "$SPRINT_NAME" > "$DEPLOY_DIR/.current_sprint"
 
 ok "════════════════════════════════════════════"
-ok "  $SPRINT_NAME успешно задеплоен!"
-ok "  Коммит: $NEW_COMMIT"
-ok "  Предыдущий: $PREV_COMMIT"
+ok "  $SPRINT_NAME задеплоен успешно!"
+ok "  Коммит: ${NEW_COMMIT:0:7}"
 ok "════════════════════════════════════════════"
 
-# Show sprint history
 log ""
 log "История спринтов:"
-ls "$SPRINT_DIR" 2>/dev/null | while read -r s; do
-    commit_file="$SPRINT_DIR/$s/.deploy_commit"
-    success_file="$SPRINT_DIR/$s/.success"
+for s in "$SPRINT_DIR"/sprint_*/; do
+    [ -d "$s" ] || continue
+    sname=$(basename "$s")
     commit=""
     status="⚠️  (отменён)"
-    [ -f "$commit_file" ] && commit="$(cat "$commit_file" | cut -c1-7)"
-    [ -f "$success_file" ] && status="✅"
+    [ -f "$s/.deploy_commit" ] && commit=" $(cut -c1-7 < "$s/.deploy_commit")"
+    [ -f "$s/.success" ] && status="✅"
     current=""
-    [ "$(cat "$DEPLOY_DIR/.current_sprint" 2>/dev/null)" = "$s" ] && current=" ← текущий"
-    echo "  $status $s  $commit$current"
+    [ "$(cat "$DEPLOY_DIR/.current_sprint" 2>/dev/null || true)" = "$sname" ] && current=" ← текущий"
+    log "  $status $sname$commit$current"
 done
