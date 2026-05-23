@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin, require_super_admin
@@ -134,9 +134,15 @@ async def test_server(
         raise HTTPException(status_code=404)
     from app.services.vpn_key import _make_client
     client = _make_client(server)
-    ok = await client.check_connection()
-    await client.aclose()
-    return {"ok": ok}
+    try:
+        ok = await client.check_connection()
+        error = None
+    except Exception as exc:
+        ok = False
+        error = str(exc)
+    finally:
+        await client.aclose()
+    return {"ok": ok, "error": error, "url": server.api_url}
 
 
 @router.post("/{server_id}/update-creds")
@@ -173,16 +179,49 @@ async def delete_server(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_super_admin),
 ) -> RedirectResponse:
+    from app.models.abuse_event import AbuseEvent
+    from app.models.key_delivery_log import KeyDeliveryLog
+    from app.models.pending_operation import PendingOperation
+    from app.models.vpn_key import VpnKey
+
     result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
     server = result.scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404)
+
+    server_name = server.name
+
+    # Collect key IDs for this server
+    key_ids_result = await session.execute(
+        select(VpnKey.id).where(VpnKey.server_id == server_id)
+    )
+    key_ids = [row[0] for row in key_ids_result.all()]
+
+    if key_ids:
+        # Nullify nullable FKs pointing at these keys
+        await session.execute(
+            sa_update(PendingOperation).where(PendingOperation.vpn_key_id.in_(key_ids)).values(vpn_key_id=None)
+        )
+        await session.execute(
+            sa_update(AbuseEvent).where(AbuseEvent.vpn_key_id.in_(key_ids)).values(vpn_key_id=None)
+        )
+        await session.execute(
+            sa_update(KeyDeliveryLog).where(KeyDeliveryLog.vpn_key_id.in_(key_ids)).values(vpn_key_id=None)
+        )
+        # Delete all keys for this server
+        await session.execute(sa_delete(VpnKey).where(VpnKey.server_id == server_id))
+
+    # Nullify pending operations that reference this server directly
+    await session.execute(
+        sa_update(PendingOperation).where(PendingOperation.server_id == server_id).values(server_id=None)
+    )
+
     log = AdminLog(
         admin_user_id=admin.id,
         action="delete_server",
         target_entity="server",
         target_entity_id=server_id,
-        details={"name": server.name},
+        details={"name": server_name, "keys_deleted": len(key_ids)},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)
@@ -334,19 +373,11 @@ async def register_node(
     if not incoming_token or incoming_token != stored_token:
         raise HTTPException(status_code=401, detail="Invalid registration token")
 
-    # Build credentials and test connection
+    # Build credentials (no back-check — node initiates, admin trusts the token)
     if body.marzban_password:
-        from app.vpn.marzban import MarzbanClient
         creds = _json.dumps({"protocol": "marzban", "username": body.marzban_username, "password": body.marzban_password})
-        client = MarzbanClient(api_url=body.api_url, username=body.marzban_username, password=body.marzban_password)
     else:
         creds = _json.dumps({"protocol": "outline"})
-        client = OutlineClient(api_url=body.api_url)
-
-    reachable = await client.check_connection()
-    await client.aclose()
-    if not reachable:
-        raise HTTPException(status_code=400, detail="Cannot connect to VPN API at the provided URL")
 
     server = VpnServer(
         name=body.name,

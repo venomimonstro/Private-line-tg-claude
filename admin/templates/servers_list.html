@@ -113,9 +113,15 @@ async function testServer(id, btn) {
   try {
     const r = await fetch('/admin/servers/' + id + '/test', {method: 'POST'});
     const d = await r.json();
-    btn.textContent = d.ok ? '✅ Доступен' : '❌ Недоступен';
-  } catch(e) { btn.textContent = '❌ Ошибка'; }
-  setTimeout(() => { btn.disabled=false; btn.textContent='Проверить соединение'; }, 3000);
+    if (d.ok) {
+      btn.textContent = '✅ Доступен';
+    } else {
+      btn.textContent = '❌ Недоступен';
+      const err = d.error ? ('\n' + d.url + '\n' + d.error) : '';
+      if (err) alert('Ошибка подключения:' + err);
+    }
+  } catch(e) { btn.textContent = '❌ Ошибка: ' + e; }
+  setTimeout(() => { btn.disabled=false; btn.textContent='Проверить соединение'; }, 5000);
 }
 async function migrateToVless(btn) {
   if (!confirm('Мигрировать всех пользователей с Outline на VLESS?\nКаждый получит новый ключ в боте. Outline-серверы будут отключены.')) return;
