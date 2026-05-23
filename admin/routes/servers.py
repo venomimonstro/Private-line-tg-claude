@@ -56,6 +56,16 @@ async def get_install_script() -> PlainTextResponse:
     return PlainTextResponse(content, media_type="text/x-sh")
 
 
+@api_router.get("/fix-reality-script", response_class=PlainTextResponse)
+async def get_fix_reality_script() -> PlainTextResponse:
+    script_path = os.path.join(settings.APP_DIR, "fix_reality.sh")
+    if not os.path.isfile(script_path):
+        raise HTTPException(status_code=404, detail="fix_reality.sh not found")
+    with open(script_path) as f:
+        content = f.read()
+    return PlainTextResponse(content, media_type="text/x-sh")
+
+
 @router.get("", response_class=HTMLResponse)
 async def list_servers(
     request: Request,
