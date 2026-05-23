@@ -3,10 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin, require_super_admin
+from app.config import settings
 from app.database import get_async_session
 from app.encryption import encrypt
 from app.enums import VpnServerStatus
@@ -16,6 +18,7 @@ from app.models.vpn_server import VpnServer
 from app.vpn.outline import OutlineClient
 
 router = APIRouter(prefix="/servers")
+api_router = APIRouter(prefix="/api")
 templates = Jinja2Templates(directory="admin/templates")
 
 
@@ -29,6 +32,7 @@ async def list_servers(
     servers = result.scalars().all()
     return templates.TemplateResponse("servers_list.html", {
         "request": request, "admin": admin, "servers": servers, "page_title": "VPN-серверы",
+        "node_register_token": settings.NODE_REGISTER_TOKEN,
     })
 
 
@@ -106,3 +110,54 @@ async def disable_server(
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/servers", status_code=303)
+
+
+# ── Node auto-registration API ────────────────────────────────────────────────
+
+class NodeRegistrationRequest(BaseModel):
+    name: str
+    country: str
+    api_url: str
+    city: str = ""
+    country_code: str = ""
+    flag_emoji: str = ""
+    provider: str = "unknown"
+    cert_sha256: str = ""
+    max_users: int = 100
+
+
+@api_router.post("/register-node")
+async def register_node(
+    request: Request,
+    body: NodeRegistrationRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict:
+    if not settings.NODE_REGISTER_TOKEN:
+        raise HTTPException(status_code=403, detail="Node auto-registration is disabled. Set NODE_REGISTER_TOKEN in .env")
+
+    token = request.headers.get("X-Node-Token", "")
+    if token != settings.NODE_REGISTER_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid registration token")
+
+    client = OutlineClient(api_url=body.api_url)
+    reachable = await client.check_connection()
+    await client.aclose()
+    if not reachable:
+        raise HTTPException(status_code=400, detail="Cannot connect to Outline API at the provided URL")
+
+    server = VpnServer(
+        name=body.name,
+        country=body.country,
+        city=body.city or None,
+        country_code=body.country_code or None,
+        flag_emoji=body.flag_emoji or None,
+        provider=body.provider,
+        api_url=body.api_url,
+        api_secret_encrypted=encrypt(body.cert_sha256 or body.api_url),
+        max_users=body.max_users,
+        status=VpnServerStatus.active,
+    )
+    session.add(server)
+    await session.commit()
+    await session.refresh(server)
+    return {"ok": True, "server_id": server.id, "message": f"Сервер '{body.name}' успешно зарегистрирован (ID: {server.id})"}

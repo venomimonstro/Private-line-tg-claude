@@ -213,6 +213,62 @@ EOF
 
 success "Конфигурация сохранена: $INFO_FILE"
 
+# ─── Auto-register node in admin panel ───────────────────────────────────────
+section "Регистрация ноды в системе"
+
+echo -e "${CYAN}Введите данные вашего основного сервера для автоматической регистрации ноды.${RESET}"
+echo -e "${YELLOW}Если хотите пропустить — просто нажмите Enter на каждом вопросе.${RESET}\n"
+
+prompt ADMIN_BASE_URL "URL вашего сервера (например: http://1.2.3.4 или https://example.com)" ""
+prompt NODE_TOKEN     "Токен регистрации (NODE_REGISTER_TOKEN из .env основного сервера)" ""
+
+REGISTERED=false
+if [[ -n "$ADMIN_BASE_URL" && -n "$NODE_TOKEN" ]]; then
+    ADMIN_BASE_URL="${ADMIN_BASE_URL%/}"
+    REGISTER_URL="${ADMIN_BASE_URL}/admin/api/register-node"
+
+    # Build JSON payload safely with python3
+    REGISTER_PAYLOAD=$(python3 - <<PYEOF
+import json
+print(json.dumps({
+    "name":         "${SERVER_NAME}",
+    "country":      "${COUNTRY}",
+    "city":         "${CITY:-}",
+    "country_code": "${COUNTRY_CODE:-}",
+    "flag_emoji":   "${FLAG_EMOJI:-🌐}",
+    "provider":     "custom",
+    "api_url":      "${API_URL}",
+    "cert_sha256":  "${CERT_SHA256:-}",
+    "max_users":    100
+}))
+PYEOF
+)
+
+    info "Отправляю запрос на: $REGISTER_URL"
+    HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
+        -X POST "$REGISTER_URL" \
+        -H "Content-Type: application/json" \
+        -H "X-Node-Token: ${NODE_TOKEN}" \
+        -d "$REGISTER_PAYLOAD" \
+        --max-time 30 2>&1)
+
+    HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
+    HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        REG_MSG=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null || echo "$HTTP_BODY")
+        success "Нода успешно зарегистрирована!"
+        echo -e "  ${GREEN}${REG_MSG}${RESET}"
+        REGISTERED=true
+    else
+        warn "Не удалось зарегистрировать ноду автоматически (HTTP ${HTTP_CODE})"
+        [[ -n "$HTTP_BODY" ]] && warn "Ответ сервера: $HTTP_BODY"
+        warn "Добавьте ноду вручную: Admin Panel → Серверы → Добавить сервер"
+    fi
+else
+    info "Авто-регистрация пропущена. Ноду можно добавить вручную: Admin Panel → Серверы"
+fi
+
 # ─── Optional SSH hardening ───────────────────────────────────────────────────
 section "Дополнительная защита"
 
@@ -255,11 +311,16 @@ echo
 echo -e "  Cert SHA256:${RESET}"
 echo -e "  ${YELLOW}$CERT_SHA256${RESET}"
 echo
-echo -e "${BOLD}⚡ Следующий шаг:${RESET}"
+if [[ "$REGISTERED" == "true" ]]; then
+echo -e "${BOLD}✅ Статус регистрации:${RESET} ${GREEN}Нода автоматически добавлена в Admin Panel!${RESET}"
+echo -e "  Перейдите в Admin Panel → Серверы и убедитесь, что нода появилась в списке."
+else
+echo -e "${BOLD}⚡ Следующий шаг (ручное добавление):${RESET}"
 echo -e "  1. Войдите в Admin Panel основного сервера"
 echo -e "  2. Перейдите: Серверы → Добавить сервер"
-echo -e "  3. Введите ${BOLD}API URL${RESET} и ${BOLD}Cert SHA256${RESET} из строк выше"
+echo -e "  3. Введите ${BOLD}API URL${RESET} из строки выше"
 echo -e "  4. Нажмите «Проверить соединение» — должна появиться зелёная галочка"
+fi
 echo
 echo -e "${BOLD}📁 Конфигурация сохранена:${RESET} $INFO_FILE"
 echo

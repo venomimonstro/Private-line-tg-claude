@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     REFUND_WINDOW_DAYS: int = 7
     REFUND_MAX_TRAFFIC_MB: float = 100.0
 
+    # Node auto-registration (set a random secret token, share it only with install_node.sh)
+    NODE_REGISTER_TOKEN: str = ""
+
     @field_validator("ADMIN_ALLOWED_IPS", mode="before")
     @classmethod
     def parse_allowed_ips(cls, v: object) -> list[str]:

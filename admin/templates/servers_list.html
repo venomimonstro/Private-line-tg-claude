@@ -38,6 +38,28 @@
   </form>
 </div>
 
+<div class="card p-3 mt-3">
+  <h6 class="fw-bold mb-2">Автоматическая регистрация нод</h6>
+  {% if node_register_token %}
+  <p class="text-muted small mb-2">Используйте токен ниже при запуске <code>install_node.sh</code> на новом сервере. Нода зарегистрируется автоматически.</p>
+  <div class="mb-2">
+    <label class="form-label small fw-semibold">Токен регистрации (NODE_REGISTER_TOKEN)</label>
+    <div class="input-group">
+      <input type="password" id="nodeToken" class="form-control font-monospace" value="{{ node_register_token }}" readonly>
+      <button class="btn btn-outline-secondary" type="button" onclick="toggleToken()">Показать</button>
+      <button class="btn btn-outline-secondary" type="button" onclick="copyToken()">Копировать</button>
+    </div>
+  </div>
+  <p class="text-muted small mb-0">Endpoint: <code>POST {{ request.url.scheme }}://{{ request.headers.get('host', 'your-server') }}/admin/api/register-node</code></p>
+  {% else %}
+  <div class="alert alert-warning mb-0 py-2">
+    <strong>Авто-регистрация не настроена.</strong> Добавьте в <code>.env</code> строку:<br>
+    <code>NODE_REGISTER_TOKEN=<em>ваш-секретный-токен</em></code><br>
+    <span class="small">Сгенерировать: <code>python3 -c "import secrets; print(secrets.token_urlsafe(32))"</code></span>
+  </div>
+  {% endif %}
+</div>
+
 <script>
 async function testServer(id, btn) {
   btn.disabled = true; btn.textContent = 'Проверяю...';
@@ -47,6 +69,14 @@ async function testServer(id, btn) {
     btn.textContent = d.ok ? '✅ Доступен' : '❌ Недоступен';
   } catch(e) { btn.textContent = '❌ Ошибка'; }
   setTimeout(() => { btn.disabled=false; btn.textContent='Проверить соединение'; }, 3000);
+}
+function toggleToken() {
+  const inp = document.getElementById('nodeToken');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+function copyToken() {
+  const inp = document.getElementById('nodeToken');
+  navigator.clipboard.writeText(inp.value).then(() => alert('Токен скопирован!'));
 }
 </script>
 {% endblock %}
