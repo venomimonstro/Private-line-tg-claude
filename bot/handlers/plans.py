@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+import math
+from datetime import datetime
+from decimal import Decimal
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -7,11 +12,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import async_session_maker
 from app.models.tariff import Tariff
 from app.models.user import User
 from app.payments.services import create_payment, get_enabled_providers
-from bot.keyboards.main_menu import accept_rules_keyboard, tariff_selection_keyboard
+from bot.keyboards.main_menu import tariff_selection_keyboard
+
+logger = logging.getLogger(__name__)
 
 _PROVIDER_LABELS: dict[str, str] = {
     "yookassa":  "💳 ЮKassa (карта / СБП)",
@@ -167,7 +175,6 @@ async def on_promo_code_entered(message: Message, state: FSMContext, db_user: Us
             )
             return
 
-        # Valid promo — fetch tariff details for display
         tariff_result = await session.execute(
             select(Tariff).where(Tariff.slug == tariff_slug)
         )
@@ -201,7 +208,6 @@ async def on_promo_code_entered(message: Message, state: FSMContext, db_user: Us
             reply_markup=markup,
         )
     else:
-        # Compute discounted price for display
         base_price = float(tariff.price_monthly)
         discounted_price = base_price
         if promo.discount_percent:
@@ -261,7 +267,7 @@ async def on_skip_promo(callback: CallbackQuery, state: FSMContext) -> None:
         f"📱 Устройств: {tariff.max_keys}\n\n"
         + _RULES_TEXT,
         parse_mode="HTML",
-        reply_markup=accept_rules_keyboard(tariff_slug),
+        reply_markup=_confirm_purchase_keyboard(tariff_slug),
     )
     await callback.answer()
 
@@ -286,7 +292,6 @@ async def back_to_plans(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("confirm_trial:"))
 async def on_confirm_trial(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
-    """Handle trial subscription activation from promo code."""
     parts = callback.data.split(":", 2)  # type: ignore[union-attr]
     if len(parts) < 3:
         await callback.answer("Ошибка данных.", show_alert=True)
@@ -295,23 +300,28 @@ async def on_confirm_trial(callback: CallbackQuery, state: FSMContext, db_user: 
     tariff_slug = parts[1]
     promo_code = parts[2]
 
-    async with async_session_maker() as session:
-        from app.services.promo import create_trial_subscription, validate_promo
+    try:
+        async with async_session_maker() as session:
+            from app.services.promo import create_trial_subscription, validate_promo
 
-        promo, error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
-        if promo is None:
-            await callback.answer(f"❌ {error}", show_alert=True)
-            return
+            promo, error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
+            if promo is None:
+                await callback.answer(f"❌ {error}", show_alert=True)
+                return
 
-        subscription = await create_trial_subscription(db_user.id, tariff_slug, promo, session)
-        if subscription is None:
-            await callback.answer(
-                "❌ Пробный период уже был использован или недоступен.",
-                show_alert=True,
-            )
-            return
+            subscription = await create_trial_subscription(db_user.id, tariff_slug, promo, session)
+            if subscription is None:
+                await callback.answer(
+                    "❌ Пробный период уже был использован или недоступен.",
+                    show_alert=True,
+                )
+                return
 
-        await session.commit()
+            await session.commit()
+    except Exception:
+        logger.exception("confirm_trial error")
+        await callback.answer("Ошибка сервера, попробуйте позже.", show_alert=True)
+        return
 
     await callback.message.edit_text(  # type: ignore[union-attr]
         "🎉 <b>Пробный период активирован!</b>\n\n"
@@ -325,74 +335,80 @@ async def on_confirm_trial(callback: CallbackQuery, state: FSMContext, db_user: 
 
 @router.callback_query(F.data.startswith("accept_rules:"))
 async def on_accept_rules(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
-    from datetime import datetime
     tariff_slug = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
-
-    await _process_payment(callback, state, db_user, tariff_slug, promo_code=None)
+    await _show_payment_methods(callback, state, db_user, tariff_slug, promo_code=None)
 
 
 @router.callback_query(F.data.startswith("accept_rules_promo:"))
 async def on_accept_rules_promo(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
-    """Handle rules acceptance with a promo code."""
     parts = callback.data.split(":", 2)  # type: ignore[union-attr]
     if len(parts) < 3:
         await callback.answer("Ошибка данных.", show_alert=True)
         return
-
     tariff_slug = parts[1]
     promo_code = parts[2]
+    await _show_payment_methods(callback, state, db_user, tariff_slug, promo_code=promo_code)
 
-    await _process_payment(callback, state, db_user, tariff_slug, promo_code=promo_code)
 
-
-async def _process_payment(
+async def _show_payment_methods(
     callback: CallbackQuery,
     state: FSMContext,
     db_user: User,
     tariff_slug: str,
     promo_code: str | None,
 ) -> None:
-    """Mark rules accepted, then show provider selection or go straight to payment."""
-    import logging
-    from datetime import datetime
-    logger = logging.getLogger(__name__)
+    """Save rules acceptance and show payment method selection buttons."""
+    await callback.answer()
 
     try:
         async with async_session_maker() as session:
             merged_user = await session.get(User, db_user.id)
             if merged_user is not None:
                 merged_user.rules_accepted_at = datetime.utcnow()
-                await session.flush()
             await session.commit()
+    except Exception:
+        logger.exception("_show_payment_methods: failed to save rules_accepted_at")
 
+    try:
         async with async_session_maker() as session:
             providers = await get_enabled_providers(session)
-    except Exception as exc:
-        logger.exception("_process_payment: DB error getting providers: %s", exc)
-        await callback.answer("Ошибка сервера, попробуйте позже.", show_alert=True)
+    except Exception:
+        logger.exception("_show_payment_methods: failed to get enabled providers")
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Ошибка сервера при загрузке методов оплаты. Попробуйте позже."
+        )
         await state.clear()
         return
 
-    if len(providers) == 1:
-        await _do_create_payment(callback, state, db_user, tariff_slug, promo_code, providers[0])
-    else:
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            "✅ Правила приняты.\n\n<b>Выберите способ оплаты:</b>",
-            parse_mode="HTML",
-            reply_markup=_provider_selection_keyboard(providers, tariff_slug, promo_code),
+    if not providers:
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Нет доступных методов оплаты. Обратитесь в поддержку."
         )
-        await callback.answer()
+        await state.clear()
+        return
+
+    promo_note = f"\n🎟 Промокод: <b>{promo_code}</b>" if promo_code else ""
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"✅ Правила приняты.{promo_note}\n\n"
+        "<b>Выберите способ оплаты:</b>",
+        parse_mode="HTML",
+        reply_markup=_provider_selection_keyboard(providers, tariff_slug, promo_code),
+    )
 
 
 @router.callback_query(F.data.startswith("pay_via:"))
 async def on_pay_via_selected(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    await callback.answer()
+
     parts = callback.data.split(":", 3)  # type: ignore[union-attr]
     if len(parts) < 3:
-        await callback.answer("Ошибка данных.", show_alert=True)
+        await callback.message.answer("❌ Ошибка данных. Попробуйте снова.")  # type: ignore[union-attr]
         return
+
     provider_name = parts[1]
     tariff_slug = parts[2]
     promo_code = parts[3] if len(parts) > 3 and parts[3] else None
+
     await _do_create_payment(callback, state, db_user, tariff_slug, promo_code, provider_name)
 
 
@@ -404,22 +420,18 @@ async def _do_create_payment(
     promo_code: str | None,
     provider_name: str,
 ) -> None:
-    """Create payment with a specific provider and send result to user."""
-    import logging
-    from decimal import Decimal
-    from app.services.promo import apply_promo, validate_promo
-    logger = logging.getLogger(__name__)
-
     try:
         async with async_session_maker() as session:
             result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
             tariff = result.scalar_one_or_none()
             if tariff is None:
-                await callback.answer("Тариф не найден.", show_alert=True)
+                await callback.message.answer("❌ Тариф не найден.")  # type: ignore[union-attr]
+                await state.clear()
                 return
 
             promo_obj = None
             if promo_code:
+                from app.services.promo import validate_promo
                 promo_obj, _error = await validate_promo(promo_code, tariff_slug, db_user.id, session)
 
             payment, payment_result = await create_payment(
@@ -427,65 +439,134 @@ async def _do_create_payment(
             )
 
             if promo_obj is not None:
+                from app.services.promo import apply_promo
                 discounted_amount = await apply_promo(promo_obj, float(payment.amount), session)
                 payment.amount = Decimal(str(discounted_amount))
                 await session.flush()
 
+            amount = float(payment.amount)
+            payment_id = payment.id
+            tariff_name = tariff.name
             await session.commit()
 
-    except Exception as exc:
-        logger.exception("_do_create_payment error (provider=%s tariff=%s): %s", provider_name, tariff_slug, exc)
-        await callback.answer("Ошибка при создании платежа. Попробуйте позже.", show_alert=True)
+    except Exception:
+        logger.exception("_do_create_payment error (provider=%s tariff=%s)", provider_name, tariff_slug)
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку."
+        )
         await state.clear()
         return
 
     promo_line = "\n🎟 Промокод применён! Скидка учтена." if promo_obj else ""
+    await state.clear()
 
     if payment_result.payment_url:
         markup = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)
         ]])
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            f"<b>Заявка #{payment.id}</b>\n"
-            f"Тариф: {tariff.name}\n"
-            f"Сумма: <b>{int(payment.amount)} RUB</b>{promo_line}\n\n"
+        await callback.message.answer(  # type: ignore[union-attr]
+            f"<b>Заявка #{payment_id}</b>\n"
+            f"Тариф: {tariff_name}\n"
+            f"Сумма: <b>{int(amount)} RUB</b>{promo_line}\n\n"
             "Нажмите кнопку ниже для оплаты:",
             parse_mode="HTML",
             reply_markup=markup,
         )
+
     elif payment_result.display_data.get("stars_flow"):
-        from bot.handlers.stars_payment import send_stars_invoice
-        await callback.message.edit_text(  # type: ignore[union-attr]
+        stars_count = max(1, math.ceil(amount * settings.STARS_PER_RUB))
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=f"⭐ Оплатить {stars_count} Stars",
+                callback_data=f"stars_pay:{payment_id}",
+            )
+        ]])
+        await callback.message.answer(  # type: ignore[union-attr]
             f"⭐ <b>Оплата через Telegram Stars</b>\n\n"
-            f"Тариф: {tariff.name}\n"
-            f"Заявка: #{payment.id}\n\n"
-            "Счёт отправлен ниже — нажмите <b>Pay ⭐</b> для оплаты.",
+            f"Тариф: {tariff_name}\n"
+            f"Заявка: #{payment_id}\n"
+            f"Сумма: <b>{stars_count} ⭐</b> ({int(amount)} ₽){promo_line}\n\n"
+            "Нажмите кнопку ниже для перехода к оплате:",
             parse_mode="HTML",
+            reply_markup=markup,
         )
-        await send_stars_invoice(
-            callback.bot,
-            db_user.telegram_id,
-            payment.id,
-            float(payment.amount),
-            f"Private Line — {tariff.name}",
-        )
+
     else:
-        from app.payments.registry import get_provider
-        provider = get_provider(provider_name)
-        instructions = (
-            provider.get_instructions()  # type: ignore[attr-defined]
-            if hasattr(provider, "get_instructions")
-            else payment_result.display_data.get("instructions", "Ожидайте инструкций от поддержки.")
-        )
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            f"<b>Заявка #{payment.id} создана.</b>\n"
-            f"Тариф: {tariff.name}\n"
-            f"Сумма к оплате: <b>{int(payment.amount)} RUB</b>{promo_line}\n\n"
+        from app.payments.registry import get_provider_db
+        try:
+            async with async_session_maker() as session:
+                provider = await get_provider_db(provider_name, session)
+            instructions = (
+                provider.get_instructions()  # type: ignore[attr-defined]
+                if hasattr(provider, "get_instructions")
+                else payment_result.display_data.get("instructions", "Ожидайте инструкций от поддержки.")
+            )
+        except Exception:
+            instructions = "Ожидайте инструкций от поддержки."
+
+        await callback.message.answer(  # type: ignore[union-attr]
+            f"<b>Заявка #{payment_id} создана.</b>\n"
+            f"Тариф: {tariff_name}\n"
+            f"Сумма к оплате: <b>{int(amount)} RUB</b>{promo_line}\n\n"
             f"📋 <b>Инструкция по оплате:</b>\n{instructions}\n\n"
-            f"В комментарии укажите: <code>#{payment.id}</code>\n\n"
+            f"В комментарии укажите: <code>#{payment_id}</code>\n\n"
             "После поступления оплаты вы получите ключ доступа.",
             parse_mode="HTML",
         )
 
-    await state.clear()
+
+@router.callback_query(F.data.startswith("stars_pay:"))
+async def on_stars_pay(callback: CallbackQuery, db_user: User) -> None:
+    """Send Stars invoice when user clicks the explicit pay button."""
     await callback.answer()
+
+    try:
+        payment_id = int(callback.data.split(":", 1)[1])  # type: ignore[union-attr]
+    except (ValueError, IndexError):
+        await callback.message.answer("❌ Ошибка данных платежа.")  # type: ignore[union-attr]
+        return
+
+    try:
+        from app.enums import PaymentStatus
+        from app.models.payment import Payment
+
+        async with async_session_maker() as session:
+            payment = await session.get(Payment, payment_id)
+            if payment is None:
+                await callback.message.answer("❌ Платёж не найден.")  # type: ignore[union-attr]
+                return
+            if payment.status != PaymentStatus.pending:
+                await callback.message.answer("ℹ️ Этот платёж уже обработан.")  # type: ignore[union-attr]
+                return
+            if payment.user_id != db_user.id:
+                await callback.message.answer("❌ Нет доступа к этому платежу.")  # type: ignore[union-attr]
+                return
+
+            amount = float(payment.amount)
+            tariff_id = payment.tariff_id
+
+        async with async_session_maker() as session:
+            from app.models.tariff import Tariff as TariffModel
+            tariff = await session.get(TariffModel, tariff_id)
+            tariff_name = tariff.name if tariff else "Private Line"
+
+    except Exception:
+        logger.exception("stars_pay: DB error for payment_id=%d", payment_id)
+        await callback.message.answer("❌ Ошибка сервера. Попробуйте позже.")  # type: ignore[union-attr]
+        return
+
+    try:
+        from bot.handlers.stars_payment import send_stars_invoice
+        await send_stars_invoice(
+            callback.bot,
+            db_user.telegram_id,
+            payment_id,
+            amount,
+            f"Private Line — {tariff_name}",
+        )
+    except Exception:
+        logger.exception("stars_pay: send_invoice failed for payment_id=%d", payment_id)
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Не удалось создать счёт для оплаты Stars. "
+            "Проверьте настройки бота или обратитесь в поддержку."
+        )
