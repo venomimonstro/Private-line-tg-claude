@@ -18,9 +18,14 @@ async def send_key_to_user(user_id: int, vpn_key: object) -> None:
         await bot.send_message(
             chat_id=user_id,
             text=(
-                "✅ Ваш персональный ключ готов!\n\n"
+                "✅ Ваш персональный ключ доступа готов!\n\n"
                 f"<code>{url}</code>\n\n"
-                "Скопируйте ключ и добавьте в приложение Outline."
+                "📱 <b>Как подключиться:</b>\n"
+                "Скопируйте ключ и импортируйте в приложение:\n"
+                "• <b>V2RayNG</b> (Android)\n"
+                "• <b>Streisand</b> или <b>FoXray</b> (iPhone)\n"
+                "• <b>NekoBox</b> или <b>Hiddify</b> (Windows/Mac)\n\n"
+                "Нажмите кнопку «➕ Добавить» или «Импорт» в приложении."
             ),
             parse_mode="HTML",
         )

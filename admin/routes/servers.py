@@ -116,7 +116,8 @@ async def test_server(
     server = result.scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404)
-    client = OutlineClient(api_url=server.api_url)
+    from app.services.vpn_key import _make_client
+    client = _make_client(server)
     ok = await client.check_connection()
     await client.aclose()
     return {"ok": ok}
@@ -155,7 +156,11 @@ class NodeRegistrationRequest(BaseModel):
     city: str = ""
     country_code: str = ""
     flag_emoji: str = ""
-    provider: str = "unknown"
+    provider: str = "marzban"
+    # Marzban credentials
+    marzban_username: str = "admin"
+    marzban_password: str = ""
+    # Legacy Outline fields (kept for backward compat)
     cert_sha256: str = ""
     max_users: int = 100
 
@@ -166,16 +171,25 @@ async def register_node(
     body: NodeRegistrationRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
+    import json as _json
     stored_token = await _get_or_create_token(session)
     incoming_token = request.headers.get("X-Node-Token", "")
     if not incoming_token or incoming_token != stored_token:
         raise HTTPException(status_code=401, detail="Invalid registration token")
 
-    client = OutlineClient(api_url=body.api_url)
+    # Build credentials and test connection
+    if body.marzban_password:
+        from app.vpn.marzban import MarzbanClient
+        creds = _json.dumps({"protocol": "marzban", "username": body.marzban_username, "password": body.marzban_password})
+        client = MarzbanClient(api_url=body.api_url, username=body.marzban_username, password=body.marzban_password)
+    else:
+        creds = _json.dumps({"protocol": "outline"})
+        client = OutlineClient(api_url=body.api_url)
+
     reachable = await client.check_connection()
     await client.aclose()
     if not reachable:
-        raise HTTPException(status_code=400, detail="Cannot connect to Outline API at the provided URL")
+        raise HTTPException(status_code=400, detail="Cannot connect to VPN API at the provided URL")
 
     server = VpnServer(
         name=body.name,
@@ -185,7 +199,7 @@ async def register_node(
         flag_emoji=body.flag_emoji or None,
         provider=body.provider,
         api_url=body.api_url,
-        api_secret_encrypted=encrypt(body.cert_sha256 or body.api_url),
+        api_secret_encrypted=encrypt(creds),
         max_users=body.max_users,
         status=VpnServerStatus.active,
     )

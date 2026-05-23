@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from datetime import datetime, timedelta
+from typing import Union
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,17 +13,43 @@ from app.encryption import decrypt, encrypt
 from app.enums import VpnKeyStatus, VpnServerStatus
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.circuit_breaker import get_circuit_breaker, CircuitOpenError
+from app.services.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from app.vpn.outline import OutlineClient
+from app.vpn.marzban import MarzbanClient, MarzbanKey
 
 logger = logging.getLogger(__name__)
 
 _KEY_REISSUE_COOLDOWN_DAYS = 7
 _START_TARIFF_SLUG = "start"
 
+AnyClient = Union[OutlineClient, MarzbanClient]
 
-def _make_client(server: VpnServer) -> OutlineClient:
+
+def _server_protocol(server: VpnServer) -> str:
+    """Detect protocol from encrypted credentials. Returns 'marzban' or 'outline'."""
+    try:
+        data = json.loads(decrypt(server.api_secret_encrypted))
+        return data.get("protocol", "outline")
+    except Exception:
+        return "outline"
+
+
+def _make_client(server: VpnServer) -> AnyClient:
+    if _server_protocol(server) == "marzban":
+        creds = json.loads(decrypt(server.api_secret_encrypted))
+        return MarzbanClient(
+            api_url=server.api_url,
+            username=creds["username"],
+            password=creds["password"],
+        )
     return OutlineClient(api_url=server.api_url)
+
+
+def _marzban_username(user_id: int, subscription_id: int, label: str | None) -> str:
+    """Build a valid Marzban username (3-32 chars, alphanumeric + underscore)."""
+    nums = re.findall(r"\d+", label or "")
+    suffix = f"k{nums[0]}" if nums else ""
+    return f"u{user_id}s{subscription_id}{suffix}"[:32]
 
 
 async def create_vpn_key(
@@ -31,7 +60,7 @@ async def create_vpn_key(
     session: AsyncSession,
     label: str | None = None,
 ) -> VpnKey:
-    # Idempotency: return existing active key with same subscription + label if present
+    # Idempotency: return existing active key with same subscription + label
     existing_result = await session.execute(
         select(VpnKey).where(
             VpnKey.subscription_id == subscription_id,
@@ -43,48 +72,43 @@ async def create_vpn_key(
     if existing_key is not None:
         logger.info(
             "Returning existing active key %d for subscription %d (label=%s)",
-            existing_key.id,
-            subscription_id,
-            label,
+            existing_key.id, subscription_id, label,
         )
         return existing_key
 
     client = _make_client(server)
     cb = get_circuit_breaker(server.id)
+    protocol = _server_protocol(server)
+
     try:
         async def _create():
-            key_name = f"user_{user_id}_sub_{subscription_id}"
-            if label:
-                key_name = f"{key_name}_{label}"
-            outline_key = await client.create_key(name=key_name)
-            if traffic_limit_gb is not None and traffic_limit_gb > 0:
-                limit_bytes = traffic_limit_gb * 1024 * 1024 * 1024
-                await client.set_data_limit(outline_key.id, limit_bytes)
-            return outline_key
+            if protocol == "marzban":
+                assert isinstance(client, MarzbanClient)
+                name = _marzban_username(user_id, subscription_id, label)
+                return await client.create_key(name=name, traffic_limit_gb=traffic_limit_gb)
+            else:
+                assert isinstance(client, OutlineClient)
+                key_name = f"user_{user_id}_sub_{subscription_id}"
+                if label:
+                    key_name = f"{key_name}_{label}"
+                outline_key = await client.create_key(name=key_name)
+                if traffic_limit_gb is not None and traffic_limit_gb > 0:
+                    await client.set_data_limit(outline_key.id, traffic_limit_gb * 1024 ** 3)
+                return outline_key
 
-        outline_key = await cb.call(_create())
+        raw_key = await cb.call(_create())
     except Exception as exc:
         if not isinstance(exc, CircuitOpenError):
             server.failure_count += 1
             server.last_error = str(exc)[:500]
             server.last_error_at = datetime.utcnow()
-        # Enqueue for retry via pending operations
         try:
             from app.services.outline_queue import enqueue_create_key
             await enqueue_create_key(
                 subscription_id=subscription_id,
                 server_id=server.id,
-                payload={
-                    "user_id": user_id,
-                    "traffic_limit_gb": traffic_limit_gb,
-                    "label": label,
-                },
+                payload={"user_id": user_id, "traffic_limit_gb": traffic_limit_gb, "label": label},
                 session=session,
-            )
-            logger.warning(
-                "Outline API failed for sub %d, enqueued pending operation. Error: %s",
-                subscription_id,
-                exc,
             )
         except Exception as enqueue_exc:
             logger.error("Failed to enqueue pending operation: %s", enqueue_exc)
@@ -96,8 +120,8 @@ async def create_vpn_key(
         user_id=user_id,
         subscription_id=subscription_id,
         server_id=server.id,
-        outline_key_id=outline_key.id,
-        access_url_encrypted=encrypt(outline_key.access_url),
+        outline_key_id=raw_key.id,           # stores Marzban username or Outline key id
+        access_url_encrypted=encrypt(raw_key.access_url),
         status=VpnKeyStatus.active,
         traffic_used_gb=0.0,
         traffic_limit_gb=traffic_limit_gb,
@@ -111,13 +135,14 @@ async def create_vpn_key(
 async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSession) -> None:
     client = _make_client(server)
     try:
-        await client.delete_key(vpn_key.outline_key_id)
+        if isinstance(client, MarzbanClient):
+            await client.delete_key(vpn_key.outline_key_id)
+        else:
+            await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
-        logger.error("Failed to delete Outline key %s: %s", vpn_key.outline_key_id, exc)
-        # Enqueue for retry
+        logger.error("Failed to delete key %s: %s", vpn_key.outline_key_id, exc)
         try:
             from app.models.pending_operation import PendingOperation, PendingOperationType
-            from datetime import datetime
             op = PendingOperation(
                 operation_type=PendingOperationType.disable_key.value,
                 vpn_key_id=vpn_key.id,
@@ -181,7 +206,7 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
 
         client = _make_client(server)
         try:
-            stats = await cb.call(client.get_transfer_stats())
+            stats: dict[str, int] = await cb.call(client.get_transfer_stats())
             server.failure_count = 0
             server.last_error = None
         except Exception as exc:
@@ -194,7 +219,6 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
         finally:
             await client.aclose()
 
-        # Batch-load all active keys for this server to avoid N+1 queries
         keys_result = await session.execute(
             select(VpnKey).where(
                 VpnKey.server_id == server.id,
@@ -203,8 +227,8 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
         )
         key_map: dict[str, VpnKey] = {k.outline_key_id: k for k in keys_result.scalars().all()}
 
-        for outline_key_id, bytes_used in stats.items():
-            key = key_map.get(outline_key_id)
+        for key_id, bytes_used in stats.items():
+            key = key_map.get(str(key_id))
             if key is not None:
                 key.traffic_used_gb = bytes_used / (1024 ** 3)
                 key.last_checked_at = datetime.utcnow()
