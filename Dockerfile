@@ -2,11 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Build-time deps needed to compile Python packages (layer cached separately)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev curl postgresql-client && rm -rf /var/lib/apt/lists/*
+    gcc libpq-dev curl && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=120 -r requirements.txt
+
+# Runtime tools in a separate layer so the pip layer above stays cached
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
