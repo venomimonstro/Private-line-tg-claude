@@ -3,6 +3,9 @@
 # Run as root on a fresh Ubuntu 20.04/22.04/24.04 server.
 set -euo pipefail
 
+# Redirect stdin to terminal so interactive prompts work even when piped (curl|bash)
+exec < /dev/tty
+
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
