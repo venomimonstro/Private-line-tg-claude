@@ -80,17 +80,11 @@ async def show_my_access(message: Message, db_user: User) -> None:
         f"📋 Тариф: <b>{tariff_name}</b>\n"
         f"📊 Статус: {status_label}\n"
         f"📅 Действует до: <b>{expires_str}</b>\n"
-        f"🌍 Сервер: Германия\n"
         f"📦 Лимит трафика: <b>{traffic_limit_str}</b>\n"
         f"📈 Использовано: {traffic_used} ГБ"
     )
 
-    key_ids = [k.id for k in active_keys] if len(active_keys) > 1 else None
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=my_access_keyboard(active_key_ids=key_ids),
-    )
+    await message.answer(text, parse_mode="HTML", reply_markup=my_access_keyboard())
 
 
 @router.callback_query(F.data == "get_key")
@@ -101,21 +95,37 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Активный ключ не найден. Обратитесь в поддержку.", show_alert=True)
         return
 
-    active_key = active_keys[0]
-    try:
-        access_url = get_access_url(active_key)
-    except Exception:
-        await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
-        return
-
-    label_part = f" ({active_key.label})" if active_key.label else ""
-    await callback.message.answer(  # type: ignore[union-attr]
-        f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
-        f"<code>{access_url}</code>\n\n"
-        f"Скопируйте ключ и добавьте его в приложение Outline.\n"
-        f"Нажмите «📱 Как подключиться» для инструкции.",
-        parse_mode="HTML",
-    )
+    if len(active_keys) == 1:
+        key = active_keys[0]
+        try:
+            access_url = get_access_url(key)
+        except Exception:
+            await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
+            return
+        label_part = f" ({key.label})" if key.label else ""
+        await callback.message.answer(  # type: ignore[union-attr]
+            f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
+            f"<code>{access_url}</code>\n\n"
+            f"Скопируйте ключ и импортируйте в приложение:\n"
+            f"• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
+            f"• <b>Hiddify</b> (Windows/Mac)",
+            parse_mode="HTML",
+        )
+    else:
+        lines = ["🔑 <b>Ваши ключи доступа (выберите любой):</b>\n"]
+        for key in active_keys:
+            try:
+                url = get_access_url(key)
+            except Exception:
+                continue
+            label = key.label or "VPN"
+            lines.append(f"<b>{label}:</b>\n<code>{url}</code>")
+        lines.append(
+            "\n📱 Скопируйте любой ключ и добавьте в приложение:\n"
+            "• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
+            "• <b>Hiddify</b> (Windows/Mac)"
+        )
+        await callback.message.answer("\n\n".join(lines), parse_mode="HTML")  # type: ignore[union-attr]
     await callback.answer()
 
 

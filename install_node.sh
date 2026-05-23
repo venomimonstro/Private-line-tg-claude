@@ -105,7 +105,7 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
   "log": {"loglevel": "warning"},
   "inbounds": [{
     "tag": "VLESS-TCP",
-    "listen": "0.0.0.0",
+    "listen": "${SERVER_IP}",
     "port": ${VPN_PORT},
     "protocol": "vless",
     "settings": {"clients": [], "decryption": "none"},

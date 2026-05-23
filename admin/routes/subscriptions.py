@@ -166,6 +166,21 @@ async def retry_activation(
     for sid in list(_registry.keys()):
         reset_circuit(sid)
 
+    # Disable any existing active keys (may have empty URL from previous failed attempts)
+    from app.enums import VpnKeyStatus
+    from app.models.vpn_key import VpnKey
+    keys_result = await session.execute(
+        select(VpnKey).where(
+            VpnKey.subscription_id == sub_id,
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    from datetime import datetime as _dt
+    for stale_key in keys_result.scalars().all():
+        stale_key.status = VpnKeyStatus.disabled
+        stale_key.disabled_at = _dt.utcnow()
+    await session.flush()
+
     from app.services.user_notifications import send_key_to_user
     vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)
 

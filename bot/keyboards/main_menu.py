@@ -33,29 +33,13 @@ def accept_rules_keyboard(tariff_slug: str) -> InlineKeyboardMarkup:
     )
 
 
-def my_access_keyboard(
-    active_key_ids: list[int] | None = None,
-) -> InlineKeyboardMarkup:
-    """Build the 'My Access' inline keyboard.
-
-    If active_key_ids is provided and has more than one key, individual key
-    buttons are shown (🔑 Ключ 1, 🔑 Ключ 2 …). Otherwise the generic
-    "get_key" button is shown.
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-
-    if active_key_ids and len(active_key_ids) > 1:
-        for idx, key_id in enumerate(active_key_ids, start=1):
-            rows.append(
-                [InlineKeyboardButton(text=f"🔑 Ключ {idx}", callback_data=f"get_key:{key_id}")]
-            )
-    else:
-        rows.append([InlineKeyboardButton(text="🔑 Получить ключ", callback_data="get_key")])
-
-    rows.append([InlineKeyboardButton(text="🌍 Сменить сервер", callback_data="geo_switch")])
-    rows.append([InlineKeyboardButton(text="🔄 Продлить", callback_data="renew")])
-    rows.append([InlineKeyboardButton(text="❓ Помощь", callback_data="help")])
-
+def my_access_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="🔑 Мой ключ", callback_data="get_key")],
+        [InlineKeyboardButton(text="🌍 Выбрать страну", callback_data="geo_switch")],
+        [InlineKeyboardButton(text="🔄 Продлить", callback_data="renew")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

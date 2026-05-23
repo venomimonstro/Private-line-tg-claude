@@ -68,11 +68,22 @@ async def create_vpn_key(
     )
     existing_key = existing_result.scalars().first()
     if existing_key is not None:
-        logger.info(
-            "Returning existing active key %d for subscription %d on server %d",
-            existing_key.id, subscription_id, server.id,
-        )
-        return existing_key
+        from app.encryption import decrypt as _decrypt
+        try:
+            existing_url = _decrypt(existing_key.access_url_encrypted)
+        except Exception:
+            existing_url = ""
+        if existing_url:
+            logger.info(
+                "Returning existing active key %d for subscription %d on server %d",
+                existing_key.id, subscription_id, server.id,
+            )
+            return existing_key
+        # Key exists but has empty URL — disable it and create fresh
+        existing_key.status = VpnKeyStatus.disabled
+        from datetime import datetime as _dt
+        existing_key.disabled_at = _dt.utcnow()
+        await session.flush()
 
     client = _make_client(server)
     cb = get_circuit_breaker(server.id)

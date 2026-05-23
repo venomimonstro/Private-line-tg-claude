@@ -54,12 +54,42 @@ class MarzbanClient:
             body["data_limit"] = int(traffic_limit_gb * 1024 ** 3)
 
         resp = await self._client.post(f"{self._base}/api/user", headers=headers, json=body)
-        resp.raise_for_status()
-        data = resp.json()
+        if resp.status_code == 409:
+            # User already exists in Marzban — fetch their data instead
+            get_resp = await self._client.get(f"{self._base}/api/user/{safe_name}", headers=headers)
+            get_resp.raise_for_status()
+            data = get_resp.json()
+        else:
+            resp.raise_for_status()
+            data = resp.json()
 
         links: list[str] = data.get("links", [])
         vless_links = [lnk for lnk in links if lnk.startswith("vless://")]
-        access_url = vless_links[0] if vless_links else (links[0] if links else "")
+
+        if vless_links:
+            access_url = vless_links[0]
+            # Fix 0.0.0.0 — Marzban uses bind address instead of public IP
+            if "@0.0.0.0:" in access_url:
+                import re as _re
+                m = _re.match(r'https?://([^:/]+)', self._base)
+                if m:
+                    access_url = _re.sub(r'@0\.0\.0\.0:', f'@{m.group(1)}:', access_url)
+        else:
+            # No links returned — build from UUID if present
+            uuid = data.get("proxies", {}).get("vless", {}).get("id", "")
+            if uuid:
+                import re as _re
+                m = _re.match(r'https?://([^:/]+)', self._base)
+                host = m.group(1) if m else "unknown"
+                port = 10443
+                for lnk in links:
+                    pm = _re.search(r'@[^:]+:(\d+)', lnk)
+                    if pm:
+                        port = int(pm.group(1))
+                        break
+                access_url = f"vless://{uuid}@{host}:{port}?type=tcp&security=none#{safe_name}"
+            else:
+                access_url = links[0] if links else ""
 
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
 

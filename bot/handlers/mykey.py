@@ -42,20 +42,28 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
         except Exception:
             await message.answer("Ошибка получения ключа. Обратитесь в поддержку.")
             return
-
         label_part = f" ({key.label})" if key.label else ""
         await message.answer(
-            f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
+            f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
             f"<code>{url}</code>\n\n"
-            f"Скопируйте ключ и добавьте его в приложение Outline.",
+            f"Скопируйте и добавьте в приложение VLESS (V2RayNG, Hiddify, FoXray).",
             parse_mode="HTML",
         )
     else:
-        await message.answer(
-            f"У вас активно <b>{len(active_keys)} ключа</b>. Выберите нужный:",
-            parse_mode="HTML",
-            reply_markup=_keys_keyboard(active_keys),
+        lines = ["🔑 <b>Ваши ключи доступа:</b>\n"]
+        for key in active_keys:
+            try:
+                url = get_access_url(key)
+            except Exception:
+                continue
+            label = key.label or "VPN"
+            lines.append(f"<b>{label}:</b>\n<code>{url}</code>")
+        lines.append(
+            "\n📱 Скопируйте нужный ключ и добавьте в приложение:\n"
+            "• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
+            "• <b>Hiddify</b> (Windows/Mac)"
         )
+        await message.answer("\n\n".join(lines), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("resend_key:"))
