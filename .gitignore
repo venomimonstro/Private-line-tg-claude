@@ -15,3 +15,7 @@ releases/
 *.log
 .DS_Store
 .claude/
+
+# Sprint deployment artifacts (server-local)
+sprints/
+.current_sprint
