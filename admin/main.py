@@ -91,7 +91,14 @@ async def not_found_handler(request: Request, exc: Exception) -> HTMLResponse:
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> HTMLResponse | JSONResponse:
+    if request.url.path.rstrip("/").endswith("/login"):
+        _tmpl = Jinja2Templates(directory="admin/templates")
+        return _tmpl.TemplateResponse(
+            "login.html",
+            {"request": request, "error": "Ошибка формы. Пожалуйста, войдите заново."},
+            status_code=400,
+        )
     return JSONResponse({"detail": str(exc)}, status_code=422)
 templates = Jinja2Templates(directory="admin/templates")
 
