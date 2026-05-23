@@ -149,7 +149,15 @@ async function testServer(id, btn) {
       btn.textContent = '✅ OK';
     } else {
       btn.textContent = '❌ Нет связи';
-      if (d.error) alert('Ошибка:\n' + d.url + '\n\n' + d.error);
+      const msg = [
+        'URL: ' + d.url,
+        'Протокол: ' + (d.protocol || '?'),
+        'Логин: ' + (d.username || '?'),
+        'Пароль: ' + (d.has_password ? 'задан' : '❌ НЕ ЗАДАН'),
+        '',
+        'Ошибка: ' + (d.error || 'нет деталей'),
+      ].join('\n');
+      alert(msg);
     }
   } catch(e) { btn.textContent = '❌ ' + e; }
   setTimeout(() => { btn.disabled=false; btn.textContent='Проверить'; }, 5000);

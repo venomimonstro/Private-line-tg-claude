@@ -51,16 +51,14 @@ async def activate_subscription(
         )
         return None
 
-    max_keys = getattr(tariff, "max_keys", 1) or 1
-
+    created_keys: list[VpnKey] = []
     last_exc: Exception | None = None
-    first_key: VpnKey | None = None
 
-    # Try each server for the first (primary) key
+    # Create one key per server so user can connect to any of them
     for server in servers:
+        label = f"{server.flag_emoji or '🌍'} {server.country}"
         try:
-            label = _KEY_LABELS[0] if max_keys > 1 else None
-            first_key = await vpn_key_service.create_vpn_key(
+            key = await vpn_key_service.create_vpn_key(
                 user_id=subscription.user_id,
                 subscription_id=subscription.id,
                 server=server,
@@ -68,64 +66,35 @@ async def activate_subscription(
                 label=label,
                 session=session,
             )
-            # Mark subscription as active
-            subscription.status = SubscriptionStatus.active
-            subscription.started_at = datetime.utcnow()
-            subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
             server.current_users += 1
-            await session.flush()
-
-            # Create additional keys on same server (best-effort)
-            for i in range(1, max_keys):
-                try:
-                    extra_label = _KEY_LABELS[i] if i < len(_KEY_LABELS) else f"Ключ {i + 1}"
-                    extra_key = await vpn_key_service.create_vpn_key(
-                        user_id=subscription.user_id,
-                        subscription_id=subscription.id,
-                        server=server,
-                        traffic_limit_gb=tariff.traffic_limit_gb,
-                        label=extra_label,
-                        session=session,
-                    )
-                    server.current_users += 1
-                    logger.info(
-                        "Created extra key %d (label=%s) for subscription %d",
-                        extra_key.id,
-                        extra_label,
-                        subscription.id,
-                    )
-                except Exception as extra_exc:
-                    logger.warning(
-                        "Failed to create extra key %d for subscription %d: %s",
-                        i + 1,
-                        subscription.id,
-                        extra_exc,
-                    )
-                    # Extra key failure is non-fatal
-
-            await session.flush()
-
-            if send_key_callback is not None:
-                try:
-                    await send_key_callback(subscription.user_id, first_key)
-                except Exception as exc:
-                    logger.error("Failed to send key to user %s: %s", subscription.user_id, exc)
-
-            return first_key
+            created_keys.append(key)
         except Exception as exc:
             last_exc = exc
             logger.warning("Server %d failed for subscription %d: %s", server.id, subscription.id, exc)
 
-    # All servers failed
-    subscription.status = SubscriptionStatus.activation_error
-    subscription.activation_attempts = (subscription.activation_attempts or 0) + 1
-    subscription.last_activation_error = str(last_exc)[:500] if last_exc else "All servers failed"
+    if not created_keys:
+        subscription.status = SubscriptionStatus.activation_error
+        subscription.activation_attempts = (subscription.activation_attempts or 0) + 1
+        subscription.last_activation_error = str(last_exc)[:500] if last_exc else "All servers failed"
+        await session.flush()
+        await notify_admin(
+            f"⚠️ Subscription #{subscription.id}: all {len(servers)} server(s) failed. "
+            f"Last error: {last_exc}"
+        )
+        return None
+
+    subscription.status = SubscriptionStatus.active
+    subscription.started_at = datetime.utcnow()
+    subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
     await session.flush()
-    await notify_admin(
-        f"⚠️ Subscription #{subscription.id}: all {len(servers)} server(s) failed. "
-        f"Last error: {last_exc}"
-    )
-    return None
+
+    if send_key_callback is not None:
+        try:
+            await send_key_callback(subscription.user_id, created_keys)
+        except Exception as exc:
+            logger.error("Failed to send keys to user %s: %s", subscription.user_id, exc)
+
+    return created_keys[0]
 
 
 async def expire_subscriptions(session: AsyncSession, notify_user_callback: object | None = None) -> None:

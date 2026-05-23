@@ -45,11 +45,9 @@ def _make_client(server: VpnServer) -> AnyClient:
     return OutlineClient(api_url=server.api_url)
 
 
-def _marzban_username(user_id: int, subscription_id: int, label: str | None) -> str:
+def _marzban_username(user_id: int, subscription_id: int) -> str:
     """Build a valid Marzban username (3-32 chars, alphanumeric + underscore)."""
-    nums = re.findall(r"\d+", label or "")
-    suffix = f"k{nums[0]}" if nums else ""
-    return f"u{user_id}s{subscription_id}{suffix}"[:32]
+    return f"u{user_id}s{subscription_id}"[:32]
 
 
 async def create_vpn_key(
@@ -60,19 +58,19 @@ async def create_vpn_key(
     session: AsyncSession,
     label: str | None = None,
 ) -> VpnKey:
-    # Idempotency: return existing active key with same subscription + label
+    # Idempotency: return existing active key for same subscription + server
     existing_result = await session.execute(
         select(VpnKey).where(
             VpnKey.subscription_id == subscription_id,
+            VpnKey.server_id == server.id,
             VpnKey.status == VpnKeyStatus.active,
-            VpnKey.label == label,
         )
     )
     existing_key = existing_result.scalars().first()
     if existing_key is not None:
         logger.info(
-            "Returning existing active key %d for subscription %d (label=%s)",
-            existing_key.id, subscription_id, label,
+            "Returning existing active key %d for subscription %d on server %d",
+            existing_key.id, subscription_id, server.id,
         )
         return existing_key
 
@@ -84,7 +82,7 @@ async def create_vpn_key(
         async def _create():
             if protocol == "marzban":
                 assert isinstance(client, MarzbanClient)
-                name = _marzban_username(user_id, subscription_id, label)
+                name = _marzban_username(user_id, subscription_id)
                 return await client.create_key(name=name, traffic_limit_gb=traffic_limit_gb)
             else:
                 assert isinstance(client, OutlineClient)

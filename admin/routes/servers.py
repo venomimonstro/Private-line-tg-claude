@@ -128,11 +128,22 @@ async def test_server(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> dict:
+    import json as _json
     result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
     server = result.scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404)
-    from app.services.vpn_key import _make_client
+
+    from app.encryption import decrypt
+    from app.services.vpn_key import _make_client, _server_protocol
+    protocol = _server_protocol(server)
+
+    # Decode stored credentials for diagnostics
+    try:
+        creds = _json.loads(decrypt(server.api_secret_encrypted))
+    except Exception:
+        creds = {}
+
     client = _make_client(server)
     try:
         ok = await client.check_connection()
@@ -142,7 +153,15 @@ async def test_server(
         error = str(exc)
     finally:
         await client.aclose()
-    return {"ok": ok, "error": error, "url": server.api_url}
+
+    return {
+        "ok": ok,
+        "error": error,
+        "url": server.api_url,
+        "protocol": protocol,
+        "username": creds.get("username", ""),
+        "has_password": bool(creds.get("password")),
+    }
 
 
 @router.post("/{server_id}/edit")

@@ -5,34 +5,58 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def send_key_to_user(user_id: int, vpn_key: object) -> None:
-    """Send access key to user after activation, then send onboarding."""
+async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
+    """Send all access keys to user after activation, then send onboarding."""
     from app.bot_instance import get_bot
     from app.services.vpn_key import get_access_url
 
     bot = get_bot()
     if bot is None:
         return
+
+    # Accept both a single VpnKey and a list[VpnKey]
+    if not isinstance(vpn_keys, list):
+        vpn_keys = [vpn_keys]
+
     try:
-        url = get_access_url(vpn_key)  # type: ignore[arg-type]
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
-                "✅ Ваш персональный ключ доступа готов!\n\n"
+        first_url: str = ""
+
+        if len(vpn_keys) == 1:
+            url = get_access_url(vpn_keys[0])  # type: ignore[arg-type]
+            first_url = url
+            text = (
+                "✅ Ваш ключ доступа готов!\n\n"
                 f"<code>{url}</code>\n\n"
                 "📱 <b>Как подключиться:</b>\n"
                 "Скопируйте ключ и импортируйте в приложение:\n"
                 "• <b>V2RayNG</b> (Android)\n"
                 "• <b>Streisand</b> или <b>FoXray</b> (iPhone)\n"
                 "• <b>NekoBox</b> или <b>Hiddify</b> (Windows/Mac)\n\n"
-                "Нажмите кнопку «➕ Добавить» или «Импорт» в приложении."
-            ),
-            parse_mode="HTML",
-        )
-        # Send onboarding instructions as follow-up
+                "Нажмите «➕ Добавить» или «Импорт» в приложении."
+            )
+        else:
+            lines = ["✅ Ваши ключи доступа готовы! Подключайтесь к любому серверу.\n"]
+            for key in vpn_keys:
+                url = get_access_url(key)  # type: ignore[arg-type]
+                if not first_url:
+                    first_url = url
+                label = getattr(key, "label", None) or "VPN"
+                lines.append(f"<b>{label}:</b>\n<code>{url}</code>\n")
+            lines.append(
+                "📱 <b>Как подключиться:</b>\n"
+                "Скопируйте любой ключ и импортируйте в приложение:\n"
+                "• <b>V2RayNG</b> (Android)\n"
+                "• <b>Streisand</b> или <b>FoXray</b> (iPhone)\n"
+                "• <b>NekoBox</b> или <b>Hiddify</b> (Windows/Mac)\n\n"
+                "Нажмите «➕ Добавить» или «Импорт» в приложении."
+            )
+            text = "\n".join(lines)
+
+        await bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+
         try:
             from bot.handlers.onboarding import send_onboarding_message
-            await send_onboarding_message(user_id, url)
+            await send_onboarding_message(user_id, first_url)
         except Exception as onboard_exc:
             logger.error("send_onboarding_message failed for user %d: %s", user_id, onboard_exc)
     except Exception as exc:
