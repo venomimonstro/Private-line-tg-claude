@@ -199,7 +199,8 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         logger.error("Tariff %d not found for payment %d", payment.tariff_id, payment.id)
         return
 
-    await subscription_service.activate_subscription(subscription, tariff, session)
+    from app.services.user_notifications import send_key_to_user
+    await subscription_service.activate_subscription(subscription, tariff, session, send_key_callback=send_key_to_user)
     await _process_referral_reward(payment.user_id, session)
 
 
