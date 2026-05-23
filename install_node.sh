@@ -136,6 +136,15 @@ services:
       - /var/lib/marzban:/var/lib/marzban
 DCEOF
 
+# Generate self-signed SSL cert (required for Marzban to bind on 0.0.0.0)
+info "Генерирую SSL-сертификат для Marzban..."
+openssl req -x509 -newkey rsa:4096 \
+    -keyout "$MARZBAN_DATA/key.pem" \
+    -out "$MARZBAN_DATA/cert.pem" \
+    -days 3650 -nodes \
+    -subj "/CN=${SERVER_IP}" >/dev/null 2>&1
+success "SSL-сертификат создан"
+
 # Marzban env
 cat > "$MARZBAN_DIR/.env" << EOF
 UVICORN_HOST = "0.0.0.0"
@@ -143,15 +152,20 @@ UVICORN_PORT = ${MARZBAN_PORT}
 SUDO_USERNAME = "${MARZBAN_USER}"
 SUDO_PASSWORD = "${MARZBAN_PASS}"
 XRAY_JSON = "/var/lib/marzban/xray_config.json"
+UVICORN_SSL_CERTFILE = "/var/lib/marzban/cert.pem"
+UVICORN_SSL_KEYFILE = "/var/lib/marzban/key.pem"
 EOF
 
 info "Запускаю Marzban (первый запуск скачает XRay ~60МБ)..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
-# Wait for Marzban API to become ready (up to 120s)
+# Wait for Marzban API to become ready (up to 120s) — poll token endpoint
 info "Жду готовности API..."
+API_URL="https://127.0.0.1:${MARZBAN_PORT}"
 for i in $(seq 1 24); do
-    if curl -sf "http://127.0.0.1:${MARZBAN_PORT}/docs" >/dev/null 2>&1; then
+    if curl -sfk -X POST "${API_URL}/api/admin/token" \
+        -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
+        >/dev/null 2>&1; then
         success "Marzban API готов (${i})"
         break
     fi
@@ -162,8 +176,7 @@ for i in $(seq 1 24); do
 done
 
 # Verify credentials work
-API_URL="http://127.0.0.1:${MARZBAN_PORT}"
-TOKEN=$(curl -sf -X POST "${API_URL}/api/admin/token" \
+TOKEN=$(curl -sfk -X POST "${API_URL}/api/admin/token" \
     -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
     2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
 
@@ -188,8 +201,8 @@ success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS), $MARZBAN_PORT (
 # ─── Register node in admin panel ─────────────────────────────────────────────
 section "Регистрация ноды в Admin Panel"
 
-# Use public IP for API URL (not localhost)
-PUBLIC_API_URL="http://${SERVER_IP}:${MARZBAN_PORT}"
+# Use public IP for API URL (HTTPS with self-signed cert)
+PUBLIC_API_URL="https://${SERVER_IP}:${MARZBAN_PORT}"
 info "Регистрирую: $PUBLIC_API_URL"
 
 PAYLOAD=$(python3 - << PYEOF
