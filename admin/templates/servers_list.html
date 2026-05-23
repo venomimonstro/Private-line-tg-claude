@@ -10,10 +10,21 @@
     </div>
     <p class="text-muted small mb-1">🌍 {{ server.country }} | {{ server.provider }}</p>
     <p class="text-muted small mb-2">Пользователей: {{ server.current_users }} / {{ server.max_users }}</p>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
       <button class="btn btn-sm btn-outline-primary" onclick="testServer({{ server.id }}, this)">Проверить соединение</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="toggleCreds({{ server.id }})">🔑 Учётные данные</button>
       <form method="post" action="/admin/servers/{{ server.id }}/disable">
         <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Отключить сервер?')">Отключить</button>
+      </form>
+    </div>
+    <div id="creds-{{ server.id }}" class="mt-2 d-none">
+      <form method="post" action="/admin/servers/{{ server.id }}/update-creds">
+        <div class="row g-1">
+          <div class="col-5"><input type="url" name="marzban_api_url" class="form-control form-control-sm" placeholder="http://IP:8000"></div>
+          <div class="col-3"><input type="text" name="marzban_username" class="form-control form-control-sm" placeholder="Логин" value="admin"></div>
+          <div class="col-4"><input type="text" name="marzban_password" class="form-control form-control-sm" placeholder="Пароль"></div>
+          <div class="col-12"><button type="submit" class="btn btn-sm btn-success">Сохранить</button></div>
+        </div>
       </form>
     </div>
   </div>
@@ -21,33 +32,6 @@
 {% else %}
 <div class="col-12"><p class="text-muted">Серверы не добавлены.</p></div>
 {% endfor %}
-</div>
-
-<div class="card p-3">
-  <h6 class="fw-bold mb-3">Добавить сервер</h6>
-  <form method="post" action="/admin/servers">
-    <div class="row g-2">
-      <div class="col-md-4"><input type="text" name="name" class="form-control" placeholder="Название (Germany 1)" required></div>
-      <div class="col-md-2"><input type="text" name="country" class="form-control" placeholder="Германия" required></div>
-      <div class="col-md-2"><input type="text" name="provider" class="form-control" placeholder="Hetzner" required></div>
-      <div class="col-md-6"><input type="url" name="api_url" class="form-control" placeholder="https://1.2.3.4:12345/secret" required></div>
-      <div class="col-md-4"><input type="text" name="api_secret" class="form-control" placeholder="API secret (если отдельно)" value="included_in_url"></div>
-      <div class="col-md-2"><input type="number" name="max_users" class="form-control" placeholder="Макс. польз." value="100"></div>
-      <div class="col-12"><button type="submit" class="btn btn-primary">Добавить</button></div>
-    </div>
-  </form>
-</div>
-
-<div class="card p-3 mt-3 border-warning">
-  <h6 class="fw-bold mb-2">⚡ Миграция Outline → VLESS</h6>
-  <p class="text-muted small mb-2">
-    Заменяет все активные Outline-ключи на VLESS. Каждый пользователь получит новый ключ в боте.
-    Outline-серверы будут отключены, новые пользователи будут идти на Marzban.
-  </p>
-  <div id="migrateResult" class="mb-2 d-none"></div>
-  <button class="btn btn-warning btn-sm" onclick="migrateToVless(this)">
-    🔄 Мигрировать всех на VLESS
-  </button>
 </div>
 
 <div class="card p-3 mt-3">
@@ -73,7 +57,54 @@
   {% endif %}
 </div>
 
+<div class="card p-3 mt-3">
+  <h6 class="fw-bold mb-3">Добавить сервер вручную</h6>
+  <form method="post" action="/admin/servers">
+    <div class="row g-2 mb-2">
+      <div class="col-md-4"><input type="text" name="name" class="form-control" placeholder="Название (Germany 1)" required></div>
+      <div class="col-md-3"><input type="text" name="country" class="form-control" placeholder="Германия" required></div>
+      <div class="col-md-3"><input type="text" name="provider" class="form-control" placeholder="Hetzner"></div>
+      <div class="col-md-2"><input type="number" name="max_users" class="form-control" placeholder="Макс. польз." value="200"></div>
+    </div>
+    <div class="mb-2">
+      <select name="protocol" class="form-select" onchange="toggleProtocolFields(this.value)" style="max-width:200px">
+        <option value="marzban">Marzban (VLESS)</option>
+        <option value="outline">Outline</option>
+      </select>
+    </div>
+    <div id="marzban-fields" class="row g-2 mb-2">
+      <div class="col-md-5"><input type="url" name="marzban_api_url" class="form-control" placeholder="http://1.2.3.4:8000"></div>
+      <div class="col-md-3"><input type="text" name="marzban_username" class="form-control" placeholder="Логин" value="admin"></div>
+      <div class="col-md-4"><input type="text" name="marzban_password" class="form-control" placeholder="Пароль Marzban"></div>
+    </div>
+    <div id="outline-fields" class="row g-2 mb-2 d-none">
+      <div class="col-12"><input type="url" name="outline_api_url" class="form-control" placeholder="https://1.2.3.4:12345/secret"></div>
+    </div>
+    <button type="submit" class="btn btn-primary">Добавить</button>
+  </form>
+</div>
+
+<div class="card p-3 mt-3 border-warning">
+  <h6 class="fw-bold mb-2">⚡ Миграция Outline → VLESS</h6>
+  <p class="text-muted small mb-2">
+    Заменяет все активные Outline-ключи на VLESS. Каждый пользователь получит новый ключ в боте.
+    Outline-серверы будут отключены, новые пользователи будут идти на Marzban.
+  </p>
+  <div id="migrateResult" class="mb-2 d-none"></div>
+  <button class="btn btn-warning btn-sm" onclick="migrateToVless(this)">
+    🔄 Мигрировать всех на VLESS
+  </button>
+</div>
+
 <script>
+function toggleCreds(id) {
+  const el = document.getElementById('creds-' + id);
+  el.classList.toggle('d-none');
+}
+function toggleProtocolFields(proto) {
+  document.getElementById('marzban-fields').classList.toggle('d-none', proto !== 'marzban');
+  document.getElementById('outline-fields').classList.toggle('d-none', proto !== 'outline');
+}
 async function testServer(id, btn) {
   btn.disabled = true; btn.textContent = 'Проверяю...';
   try {

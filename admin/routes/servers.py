@@ -76,19 +76,35 @@ async def add_server(
     request: Request,
     name: str = Form(...),
     country: str = Form(...),
-    provider: str = Form(...),
-    api_url: str = Form(...),
-    api_secret: str = Form(...),
-    max_users: int = Form(default=100),
+    provider: str = Form(""),
+    protocol: str = Form("marzban"),
+    max_users: int = Form(default=200),
+    marzban_api_url: str = Form(""),
+    marzban_username: str = Form("admin"),
+    marzban_password: str = Form(""),
+    outline_api_url: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_super_admin),
 ) -> RedirectResponse:
+    import json as _json
+
+    if protocol == "marzban":
+        api_url = marzban_api_url
+        creds = _json.dumps({
+            "protocol": "marzban",
+            "username": marzban_username,
+            "password": marzban_password,
+        })
+    else:
+        api_url = outline_api_url
+        creds = _json.dumps({"protocol": "outline"})
+
     server = VpnServer(
         name=name,
         country=country,
-        provider=provider,
+        provider=provider or protocol,
         api_url=api_url,
-        api_secret_encrypted=encrypt(api_secret),
+        api_secret_encrypted=encrypt(creds),
         max_users=max_users,
         status=VpnServerStatus.active,
     )
@@ -97,7 +113,7 @@ async def add_server(
         admin_user_id=admin.id,
         action="add_server",
         target_entity="server",
-        details={"name": name, "country": country},
+        details={"name": name, "country": country, "protocol": protocol},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)
@@ -121,6 +137,33 @@ async def test_server(
     ok = await client.check_connection()
     await client.aclose()
     return {"ok": ok}
+
+
+@router.post("/{server_id}/update-creds")
+async def update_server_creds(
+    server_id: int,
+    request: Request,
+    marzban_username: str = Form("admin"),
+    marzban_password: str = Form(""),
+    marzban_api_url: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse:
+    import json as _json
+    result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
+    server = result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404)
+    creds = _json.dumps({
+        "protocol": "marzban",
+        "username": marzban_username,
+        "password": marzban_password,
+    })
+    server.api_secret_encrypted = encrypt(creds)
+    if marzban_api_url:
+        server.api_url = marzban_api_url
+    await session.commit()
+    return RedirectResponse("/admin/servers", status_code=303)
 
 
 @router.post("/{server_id}/disable")
