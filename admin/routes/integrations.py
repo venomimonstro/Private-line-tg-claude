@@ -110,10 +110,12 @@ async def _load_settings(session: AsyncSession) -> dict[str, str]:
 
 def _build_context(request, admin, values: dict, saved: bool) -> dict:
     provider_status = {s: _provider_status(s, values) for s in _SECTIONS}
+    base_url = str(request.base_url).rstrip("/")
     return {
         "request": request, "admin": admin, "page_title": "Интеграции",
         "sections": _SECTIONS, "settings_meta": _SETTINGS_META,
         "values": values, "saved": saved, "provider_status": provider_status,
+        "base_url": base_url,
     }
 
 

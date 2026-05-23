@@ -20,7 +20,7 @@
     {% set provider_notes = {
       "YooKassa":        "Банковские карты, СБП, ЮMoney-кошелёк через ЮKassa. Требует юр. лицо или ИП.",
       "ЮMoney":          "Приём переводов напрямую на кошелёк ЮMoney (бывший Яндекс.Деньги). Для физлиц.",
-      "FreeKassa":       "Мультивалютный агрегатор. Карты, криптовалюта, терминалы и др.",
+      "FreeKassa":       "Мультивалютный агрегатор. Карты, криптовалюта, терминалы и др. API ключ берётся из личного кабинета FreeKassa → Настройки → API.",
       "LAVA":            "Российский агрегатор LAVA.ru. Карты, СБП, криптовалюта.",
       "Robokassa":       "Крупный российский агрегатор. Карты, электронные деньги, терминалы.",
       "Prodamus":        "Платёжный виджет Prodamus. Карты, СБП. Работает без юр. лица.",
@@ -89,6 +89,34 @@
           </div>
         </div>
       </div>
+      {% if section == 'FreeKassa' %}
+      <div class="card mb-4 border-info">
+        <div class="card-header fw-semibold text-info">📋 URL для настройки в личном кабинете FreeKassa</div>
+        <div class="card-body">
+          <p class="small text-muted mb-3">Скопируйте эти ссылки в настройки магазина FreeKassa (Мой магазин → Настройки). Метод: <strong>POST</strong> для оповещения, <strong>GET</strong> для остальных.</p>
+          <table class="table table-sm table-bordered mb-0">
+            <tr>
+              <td class="text-nowrap fw-semibold">URL оповещения (IPN)</td>
+              <td><code id="fk-url-ipn" class="small">{{ base_url }}/webhooks/payment/freekassa</code></td>
+              <td><span class="badge bg-primary">POST</span></td>
+              <td><button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyUrl('fk-url-ipn')">Копировать</button></td>
+            </tr>
+            <tr>
+              <td class="text-nowrap fw-semibold">URL успешной оплаты</td>
+              <td><code id="fk-url-ok" class="small">{{ base_url }}/webhooks/payment/success</code></td>
+              <td><span class="badge bg-secondary">GET</span></td>
+              <td><button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyUrl('fk-url-ok')">Копировать</button></td>
+            </tr>
+            <tr>
+              <td class="text-nowrap fw-semibold">URL неудачной оплаты</td>
+              <td><code id="fk-url-fail" class="small">{{ base_url }}/webhooks/payment/failed</code></td>
+              <td><span class="badge bg-secondary">GET</span></td>
+              <td><button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyUrl('fk-url-fail')">Копировать</button></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      {% endif %}
       {% endfor %}
 
       <div class="d-flex gap-2 mb-5">
@@ -99,4 +127,13 @@
 
   </div>
 </div>
+<script>
+function copyUrl(id) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    event.target.textContent = '✅ Скопировано';
+    setTimeout(() => event.target.textContent = 'Копировать', 2000);
+  });
+}
+</script>
 {% endblock %}
