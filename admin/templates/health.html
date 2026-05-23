@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+
+{% if error %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Ошибка проверки:</strong> {{ error }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
 <div class="mb-3">
   <form method="post" action="/admin/health/run">
     <button class="btn btn-primary">🔄 Запустить проверку</button>

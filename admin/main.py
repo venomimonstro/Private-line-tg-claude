@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -45,12 +46,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
-    from app.payments.registry import close_all
-    await close_all()
+    try:
+        from app.payments.registry import close_all
+        await close_all()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Private Line Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+try:
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+except Exception:
+    pass  # metrics not critical — skip if prometheus fails
+
+
+_error_templates = Jinja2Templates(directory="admin/templates")
+
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc: Exception) -> HTMLResponse:
+    import logging
+    logging.getLogger(__name__).exception("Unhandled 500 error: %s %s", request.method, request.url)
+    try:
+        return _error_templates.TemplateResponse(
+            "error.html",
+            {"request": request, "code": 500, "message": "Внутренняя ошибка сервера. Подробности записаны в лог."},
+            status_code=500,
+        )
+    except Exception:
+        return HTMLResponse("<h1>500 — Internal Server Error</h1>", status_code=500)
+
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: Exception) -> HTMLResponse:
+    try:
+        return _error_templates.TemplateResponse(
+            "error.html",
+            {"request": request, "code": 404, "message": "Страница не найдена."},
+            status_code=404,
+        )
+    except Exception:
+        return HTMLResponse("<h1>404 — Not Found</h1>", status_code=404)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=422)
 templates = Jinja2Templates(directory="admin/templates")
 
 app.include_router(dashboard.router)

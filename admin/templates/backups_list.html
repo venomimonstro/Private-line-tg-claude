@@ -1,33 +1,67 @@
 {% extends "base.html" %}
 {% block content %}
+
+{% if error %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Ошибка:</strong> {{ error }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% if success %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+  <i class="bi bi-check-circle-fill me-2"></i>{{ success }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
 <div class="mb-3">
   <form method="post" action="/admin/backups/create">
-    <button class="btn btn-primary">💾 Создать бэкап вручную</button>
+    <button class="btn btn-primary">
+      <i class="bi bi-database-add me-1"></i>Создать бэкап вручную
+    </button>
   </form>
 </div>
+
 <div class="card">
+  <div class="card-header fw-semibold">Список бэкапов</div>
   <table class="table table-hover mb-0">
-    <thead class="table-light"><tr><th>#</th><th>Тип</th><th>Статус</th><th>Размер МБ</th><th>Создан</th><th>Кем</th><th></th></tr></thead>
+    <thead class="table-light">
+      <tr>
+        <th>#</th><th>Тип</th><th>Статус</th><th>Размер МБ</th>
+        <th>Создан</th><th>Кем</th><th>Ошибка</th><th></th>
+      </tr>
+    </thead>
     <tbody>
     {% for b in backups %}
     <tr>
       <td>{{ b.id }}</td>
       <td>{{ b.type.value }}</td>
-      <td><span class="badge {% if b.status.value == 'success' %}bg-success{% elif b.status.value == 'creating' %}bg-info{% else %}bg-danger{% endif %}">{{ b.status.value }}</span></td>
+      <td>
+        <span class="badge {% if b.status.value == 'success' %}bg-success{% elif b.status.value == 'creating' %}bg-info{% else %}bg-danger{% endif %}">
+          {{ b.status.value }}
+        </span>
+      </td>
       <td>{{ "%.1f"|format(b.size_mb or 0) }}</td>
       <td>{{ b.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
-      <td>{{ b.created_by }}</td>
+      <td>{{ b.created_by or '—' }}</td>
+      <td class="text-danger small" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="{{ b.error_message or '' }}">{{ b.error_message or '' }}</td>
       <td class="d-flex gap-1">
         {% if b.status.value == 'success' %}
-        <a href="/admin/backups/{{ b.id }}/download" class="btn btn-sm btn-outline-primary">Скачать</a>
-        <form method="post" action="/admin/backups/{{ b.id }}/restore">
-          <button class="btn btn-sm btn-danger" onclick="return confirm('Восстановить из этого бэкапа? Текущие данные будут заменены!')">Восстановить</button>
+        <a href="/admin/backups/{{ b.id }}/download" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-download"></i> Скачать
+        </a>
+        <form method="post" action="/admin/backups/{{ b.id }}/restore"
+              onsubmit="return confirm('Восстановить базу данных из этого бэкапа?\nТекущие данные будут заменены!')">
+          <button class="btn btn-sm btn-danger">
+            <i class="bi bi-arrow-counterclockwise"></i> Восстановить
+          </button>
         </form>
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="text-center text-muted py-4">Бэкапов нет</td></tr>
+    <tr><td colspan="8" class="text-center text-muted py-4">Бэкапов нет</td></tr>
     {% endfor %}
     </tbody>
   </table>

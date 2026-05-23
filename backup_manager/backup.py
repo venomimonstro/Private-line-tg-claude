@@ -159,7 +159,8 @@ async def restore_backup(backup_id: int, session: AsyncSession) -> None:
             capture_output=True, text=True, timeout=60, env=env,
         )
         result_restore = subprocess.run(
-            ["pg_restore", "-d", conn["dbname"], *pg_args, str(file_path)],
+            ["pg_restore", "--no-owner", "--no-privileges",
+             "-d", conn["dbname"], *pg_args, str(file_path)],
             capture_output=True, text=True, timeout=300, env=env,
         )
         if result_restore.returncode not in (0, 1):
