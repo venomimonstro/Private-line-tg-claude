@@ -166,6 +166,31 @@ async def update_server_creds(
     return RedirectResponse("/admin/servers", status_code=303)
 
 
+@router.post("/{server_id}/delete")
+async def delete_server(
+    server_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse:
+    result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
+    server = result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404)
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="delete_server",
+        target_entity="server",
+        target_entity_id=server_id,
+        details={"name": server.name},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.delete(server)
+    await session.commit()
+    return RedirectResponse("/admin/servers", status_code=303)
+
+
 @router.post("/{server_id}/disable")
 async def disable_server(
     server_id: int,

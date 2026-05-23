@@ -14,7 +14,10 @@
       <button class="btn btn-sm btn-outline-primary" onclick="testServer({{ server.id }}, this)">Проверить соединение</button>
       <button class="btn btn-sm btn-outline-secondary" onclick="toggleCreds({{ server.id }})">🔑 Учётные данные</button>
       <form method="post" action="/admin/servers/{{ server.id }}/disable">
-        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Отключить сервер?')">Отключить</button>
+        <button class="btn btn-sm btn-outline-warning" onclick="return confirm('Отключить сервер?')">Отключить</button>
+      </form>
+      <form method="post" action="/admin/servers/{{ server.id }}/delete">
+        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Удалить сервер {{ server.name }}? Это действие необратимо.')">Удалить</button>
       </form>
     </div>
     <div id="creds-{{ server.id }}" class="mt-2 d-none">
