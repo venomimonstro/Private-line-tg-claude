@@ -1,49 +1,31 @@
 #!/usr/bin/env bash
-# Private Line VPN Bot — VPN Node Installer (Outline Manager)
-# Run as root on a fresh Ubuntu 20.04/22.04/24.04 server.
+# Private Line VPN Bot — VPN Node Installer
+# Usage (copy from Admin Panel → Серверы):
+#   ADMIN_URL=http://your-server NODE_TOKEN=xxx bash <(curl -fsSL http://your-server/admin/api/install-script)
 set -euo pipefail
 
-# Redirect stdin to terminal so interactive prompts work even when piped (curl|bash)
-exec < /dev/tty
-
-# ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
 info()    { echo -e "${CYAN}[INFO]${RESET} $*"; }
 success() { echo -e "${GREEN}[OK]${RESET}   $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
-error()   { echo -e "${RED}[ERR]${RESET}  $*" >&2; }
 section() { echo -e "\n${BOLD}${BLUE}══ $* ══${RESET}"; }
-die()     { error "$*"; exit 1; }
+die()     { echo -e "${RED}[ERR]${RESET}  $*" >&2; exit 1; }
 
-spinner() {
-    local pid=$1 msg=$2
-    local i=0 chars="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-    while kill -0 "$pid" 2>/dev/null; do
-        printf "\r${CYAN}%s${RESET} %s" "${chars:$i:1}" "$msg"
-        i=$(( (i+1) % ${#chars} ))
-        sleep 0.1
-    done
-    printf "\r"
-}
+# ─── Validate required env vars ───────────────────────────────────────────────
+section "Проверка параметров"
 
-prompt() {
-    local var=$1 msg=$2 default=${3:-}
-    if [[ -n "$default" ]]; then
-        read -rp "$(echo -e "${YELLOW}▶ ${msg} [${default}]: ${RESET}")" val
-        eval "$var='${val:-$default}'"
-    else
-        read -rp "$(echo -e "${YELLOW}▶ ${msg}: ${RESET}")" val
-        eval "$var='$val'"
-    fi
-}
+[[ $EUID -eq 0 ]] || die "Запустите от root."
 
-# ─── Pre-checks ───────────────────────────────────────────────────────────────
-section "Проверка системы"
+[[ -n "${ADMIN_URL:-}" ]] || die "Переменная ADMIN_URL не задана. Скопируйте команду из Admin Panel → Серверы."
+[[ -n "${NODE_TOKEN:-}" ]] || die "Переменная NODE_TOKEN не задана. Скопируйте команду из Admin Panel → Серверы."
 
-[[ $EUID -eq 0 ]] || die "Запустите установщик от root: sudo ./install_node.sh"
+ADMIN_URL="${ADMIN_URL%/}"
+success "Admin URL: $ADMIN_URL"
+success "Токен задан"
 
+# ─── OS check ─────────────────────────────────────────────────────────────────
 OS_ID=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"' || true)
 OS_VER=$(grep -oP '(?<=^VERSION_ID=).+' /etc/os-release | tr -d '"' || true)
 case "$OS_ID" in
@@ -51,6 +33,7 @@ case "$OS_ID" in
     *) die "Поддерживаются только Ubuntu и Debian. Обнаружена: $OS_ID" ;;
 esac
 
+# ─── Get server IP ────────────────────────────────────────────────────────────
 SERVER_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null \
     || curl -s --max-time 10 api.ipify.org 2>/dev/null \
     || hostname -I | awk '{print $1}')
@@ -72,261 +55,168 @@ done
 
 if ! command -v docker &>/dev/null; then
     info "Устанавливаю Docker..."
-    curl -fsSL https://get.docker.com | bash >/dev/null 2>&1 &
-    spinner $! "Установка Docker (1–2 минуты)..."
+    curl -fsSL https://get.docker.com | bash
     systemctl enable docker --now >/dev/null 2>&1
     success "Docker установлен: $(docker --version)"
 else
     success "Docker уже установлен: $(docker --version)"
 fi
 
-# ─── Collect server info ──────────────────────────────────────────────────────
-section "Информация о сервере"
+# ─── Auto-detect geo location ─────────────────────────────────────────────────
+section "Определение расположения сервера"
 
-echo -e "${CYAN}Введите информацию о расположении сервера (для отображения в боте):${RESET}\n"
+info "Запрашиваю геоданные..."
+GEO=$(curl -s --max-time 10 "http://ip-api.com/json/${SERVER_IP}?fields=country,countryCode,city" 2>/dev/null || echo "{}")
+COUNTRY=$(echo "$GEO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('country','Unknown'))" 2>/dev/null || echo "Unknown")
+COUNTRY_CODE=$(echo "$GEO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('countryCode','').lower())" 2>/dev/null || echo "")
+CITY=$(echo "$GEO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('city',''))" 2>/dev/null || echo "")
 
-prompt SERVER_NAME "Название сервера (например: Germany-1)" "Server-1"
-prompt COUNTRY     "Страна (на английском, например: Germany)" "Germany"
-prompt CITY        "Город (например: Frankfurt)" ""
-prompt COUNTRY_CODE "Код страны ISO (например: de, nl, us)" ""
-
-# Suggest flag emoji based on country code
+# Build flag emoji
+FLAG_EMOJI="🌐"
 if [[ -n "$COUNTRY_CODE" ]]; then
-    # Convert country code to flag emoji (regional indicator symbols)
     cc_upper=$(echo "$COUNTRY_CODE" | tr '[:lower:]' '[:upper:]')
-    flag=""
+    FLAG_EMOJI=""
     for (( i=0; i<${#cc_upper}; i++ )); do
         c="${cc_upper:$i:1}"
         code=$(printf '%d' "'$c")
         regional=$(( code - 65 + 127462 ))
-        flag+=$(printf "\\U$(printf '%08X' $regional)")
+        FLAG_EMOJI+=$(printf "\\U$(printf '%08X' $regional)")
     done
-    prompt FLAG_EMOJI "Флаг (эмодзи)" "${flag}"
-else
-    prompt FLAG_EMOJI "Флаг (эмодзи, например: 🇩🇪)" "🌐"
 fi
 
-# ─── Run Outline Manager installer ───────────────────────────────────────────
-section "Установка Outline Manager"
+# Auto-generate server name from country + last IP octet
+LAST_OCTET=$(echo "$SERVER_IP" | grep -oP '\d+$' || echo "1")
+SERVER_NAME="${COUNTRY// /-}-${LAST_OCTET}"
 
-info "Скачиваю и запускаю официальный установщик Outline..."
-echo -e "${YELLOW}Это займёт 2–5 минут. Не закрывайте терминал!${RESET}\n"
+success "Страна: $COUNTRY (${COUNTRY_CODE:-?}) $FLAG_EMOJI"
+success "Город:  ${CITY:-неизвестен}"
+success "Имя ноды: $SERVER_NAME"
 
-OUTLINE_OUTPUT_FILE=$(mktemp)
+# ─── Install Outline VPN ──────────────────────────────────────────────────────
+section "Установка Outline VPN"
 
-# Run Outline installer, capture its output
+info "Запускаю установщик Outline (2–5 минут)..."
+OUTLINE_LOG=$(mktemp)
+
 bash -c "$(wget -qO- https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/server_manager/install_scripts/install_server.sh)" \
-    2>&1 | tee "$OUTLINE_OUTPUT_FILE"
+    2>&1 | tee "$OUTLINE_LOG"
 
 echo
 
-# ─── Parse Outline output ─────────────────────────────────────────────────────
+# ─── Extract Outline API credentials ─────────────────────────────────────────
 section "Извлечение данных подключения"
 
-# Extract the JSON config line from Outline output
-OUTLINE_JSON=$(grep -oP '\{[^{}]*"apiUrl"[^{}]*"certSha256"[^{}]*\}' "$OUTLINE_OUTPUT_FILE" \
-    || grep -oP '\{[^{}]*"certSha256"[^{}]*"apiUrl"[^{}]*\}' "$OUTLINE_OUTPUT_FILE" \
+OUTLINE_JSON=$(grep -oP '\{[^{}]*"apiUrl"[^{}]*"certSha256"[^{}]*\}' "$OUTLINE_LOG" \
+    || grep -oP '\{[^{}]*"certSha256"[^{}]*"apiUrl"[^{}]*\}' "$OUTLINE_LOG" \
     || true)
 
 if [[ -z "$OUTLINE_JSON" ]]; then
-    # Try alternative: look for ShadowBox config
-    OUTLINE_JSON=$(grep -oP 'ss-server-config:.*' "$OUTLINE_OUTPUT_FILE" | grep -oP '\{.*\}' || true)
+    cat "$OUTLINE_LOG"
+    rm -f "$OUTLINE_LOG"
+    die "Не удалось извлечь конфигурацию Outline. Смотрите вывод выше."
 fi
 
-if [[ -z "$OUTLINE_JSON" ]]; then
-    warn "Не удалось автоматически извлечь конфигурацию Outline."
-    warn "Найдите в выводе выше строку вида:"
-    warn '  {"apiUrl":"https://...","certSha256":"..."}'
-    warn "и скопируйте её вручную."
-    prompt OUTLINE_JSON "Вставьте JSON строку конфигурации"
-fi
+API_URL=$(echo "$OUTLINE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('apiUrl',''))" 2>/dev/null || true)
+CERT_SHA256=$(echo "$OUTLINE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('certSha256',''))" 2>/dev/null || true)
 
-if [[ -n "$OUTLINE_JSON" ]]; then
-    API_URL=$(echo "$OUTLINE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('apiUrl',''))" 2>/dev/null \
-        || echo "$OUTLINE_JSON" | grep -oP '"apiUrl"\s*:\s*"\K[^"]+' || true)
-    CERT_SHA256=$(echo "$OUTLINE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('certSha256',''))" 2>/dev/null \
-        || echo "$OUTLINE_JSON" | grep -oP '"certSha256"\s*:\s*"\K[^"]+' || true)
-else
-    API_URL=""
-    CERT_SHA256=""
-fi
+[[ -n "$API_URL" ]] || die "Не удалось получить API URL от Outline."
+success "Outline API URL получен"
+rm -f "$OUTLINE_LOG"
 
-if [[ -z "$API_URL" ]]; then
-    warn "Не удалось извлечь API URL автоматически."
-    prompt API_URL "Введите API URL вручную (из вывода Outline)"
-fi
-if [[ -z "$CERT_SHA256" ]]; then
-    warn "Не удалось извлечь Cert SHA256 автоматически."
-    prompt CERT_SHA256 "Введите Cert SHA256 вручную (из вывода Outline)"
-fi
+# ─── Firewall ─────────────────────────────────────────────────────────────────
+section "Настройка файерволла"
 
-# Extract management port from API URL
 MGMT_PORT=$(echo "$API_URL" | grep -oP ':\K[0-9]+(?=/)' || echo "")
-
-rm -f "$OUTLINE_OUTPUT_FILE"
-
-# ─── Firewall setup ───────────────────────────────────────────────────────────
-section "Настройка файерволла (UFW)"
 
 ufw --force reset >/dev/null 2>&1
 ufw default deny incoming >/dev/null 2>&1
 ufw default allow outgoing >/dev/null 2>&1
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
 
-if [[ -n "$MGMT_PORT" ]]; then
-    ufw allow "${MGMT_PORT}/tcp" comment "Outline management" >/dev/null 2>&1
-    success "Открыт порт управления: $MGMT_PORT/tcp"
-fi
+[[ -n "$MGMT_PORT" ]] && ufw allow "${MGMT_PORT}/tcp" comment "Outline management" >/dev/null 2>&1
 
-# Outline access port (typically random, shown in Docker ps)
 OUTLINE_ACCESS_PORT=$(docker ps --format '{{.Ports}}' 2>/dev/null \
-    | grep -oP '0\.0\.0\.0:\K[0-9]+(?=->)' | grep -v "$MGMT_PORT" | head -1 || true)
+    | grep -oP '0\.0\.0\.0:\K[0-9]+(?=->)' | grep -v "${MGMT_PORT:-__}" | head -1 || true)
 if [[ -n "$OUTLINE_ACCESS_PORT" ]]; then
-    ufw allow "${OUTLINE_ACCESS_PORT}/tcp" comment "Outline access TCP" >/dev/null 2>&1
-    ufw allow "${OUTLINE_ACCESS_PORT}/udp" comment "Outline access UDP" >/dev/null 2>&1
-    success "Открыты порты доступа: $OUTLINE_ACCESS_PORT/tcp и /udp"
+    ufw allow "${OUTLINE_ACCESS_PORT}/tcp" >/dev/null 2>&1
+    ufw allow "${OUTLINE_ACCESS_PORT}/udp" >/dev/null 2>&1
+    success "Открыты порты: 22, $MGMT_PORT (mgmt), $OUTLINE_ACCESS_PORT (vpn)"
 else
-    ufw allow 443/tcp comment "Outline access (443)" >/dev/null 2>&1
-    ufw allow 443/udp comment "Outline access (443)" >/dev/null 2>&1
-    warn "Не определён порт доступа. Открыты 443/tcp и 443/udp."
+    ufw allow 443/tcp >/dev/null 2>&1
+    ufw allow 443/udp >/dev/null 2>&1
+    success "Открыты порты: 22, ${MGMT_PORT:-443}, 443"
 fi
 
 ufw --force enable >/dev/null 2>&1
-success "UFW файерволл включён"
 
-# ─── Save node info ───────────────────────────────────────────────────────────
-section "Сохранение конфигурации"
+# ─── Auto-register in admin panel ─────────────────────────────────────────────
+section "Регистрация ноды в Admin Panel"
 
-INFO_FILE="/root/outline_node_info.txt"
-cat > "$INFO_FILE" <<EOF
-=== Private Line VPN Node ===
-Установлено: $(date '+%Y-%m-%d %H:%M:%S')
+info "Подключаюсь к $ADMIN_URL ..."
 
-Сервер:      $SERVER_NAME
-Страна:      $COUNTRY
-Город:       ${CITY:-—}
-Код страны:  ${COUNTRY_CODE:-—}
-Флаг:        ${FLAG_EMOJI:-🌐}
-IP:          $SERVER_IP
-
-=== Данные для добавления в Admin Panel ===
-API URL:     $API_URL
-Cert SHA256: $CERT_SHA256
-EOF
-
-success "Конфигурация сохранена: $INFO_FILE"
-
-# ─── Auto-register node in admin panel ───────────────────────────────────────
-section "Регистрация ноды в системе"
-
-echo -e "${CYAN}Введите данные вашего основного сервера для автоматической регистрации ноды.${RESET}"
-echo -e "${YELLOW}Если хотите пропустить — просто нажмите Enter на каждом вопросе.${RESET}\n"
-
-prompt ADMIN_BASE_URL "URL вашего сервера (например: http://1.2.3.4 или https://example.com)" ""
-prompt NODE_TOKEN     "Токен регистрации (NODE_REGISTER_TOKEN из .env основного сервера)" ""
-
-REGISTERED=false
-if [[ -n "$ADMIN_BASE_URL" && -n "$NODE_TOKEN" ]]; then
-    ADMIN_BASE_URL="${ADMIN_BASE_URL%/}"
-    REGISTER_URL="${ADMIN_BASE_URL}/admin/api/register-node"
-
-    # Build JSON payload safely with python3
-    REGISTER_PAYLOAD=$(python3 - <<PYEOF
+PAYLOAD=$(python3 - <<PYEOF
 import json
 print(json.dumps({
     "name":         "${SERVER_NAME}",
     "country":      "${COUNTRY}",
-    "city":         "${CITY:-}",
-    "country_code": "${COUNTRY_CODE:-}",
-    "flag_emoji":   "${FLAG_EMOJI:-🌐}",
+    "city":         "${CITY}",
+    "country_code": "${COUNTRY_CODE}",
+    "flag_emoji":   "${FLAG_EMOJI}",
     "provider":     "custom",
     "api_url":      "${API_URL}",
-    "cert_sha256":  "${CERT_SHA256:-}",
+    "cert_sha256":  "${CERT_SHA256}",
     "max_users":    100
 }))
 PYEOF
 )
 
-    info "Отправляю запрос на: $REGISTER_URL"
-    HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
-        -X POST "$REGISTER_URL" \
-        -H "Content-Type: application/json" \
-        -H "X-Node-Token: ${NODE_TOKEN}" \
-        -d "$REGISTER_PAYLOAD" \
-        --max-time 30 2>&1)
+HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -X POST "${ADMIN_URL}/admin/api/register-node" \
+    -H "Content-Type: application/json" \
+    -H "X-Node-Token: ${NODE_TOKEN}" \
+    -d "$PAYLOAD" \
+    --max-time 30)
 
-    HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
-    HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
+HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
 
-    if [[ "$HTTP_CODE" == "200" ]]; then
-        REG_MSG=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null || echo "$HTTP_BODY")
-        success "Нода успешно зарегистрирована!"
-        echo -e "  ${GREEN}${REG_MSG}${RESET}"
-        REGISTERED=true
-    else
-        warn "Не удалось зарегистрировать ноду автоматически (HTTP ${HTTP_CODE})"
-        [[ -n "$HTTP_BODY" ]] && warn "Ответ сервера: $HTTP_BODY"
-        warn "Добавьте ноду вручную: Admin Panel → Серверы → Добавить сервер"
-    fi
+if [[ "$HTTP_CODE" == "200" ]]; then
+    REG_MSG=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('message',''))" 2>/dev/null || echo "$HTTP_BODY")
+    success "Нода зарегистрирована!"
+    echo -e "  ${GREEN}${REG_MSG}${RESET}"
+    REGISTERED=true
 else
-    info "Авто-регистрация пропущена. Ноду можно добавить вручную: Admin Panel → Серверы"
+    warn "Авторегистрация не удалась (HTTP ${HTTP_CODE}): $HTTP_BODY"
+    warn "Добавьте вручную: Admin Panel → Серверы → API URL: $API_URL"
+    REGISTERED=false
 fi
 
-# ─── Optional SSH hardening ───────────────────────────────────────────────────
-section "Дополнительная защита"
+# ─── Save info ────────────────────────────────────────────────────────────────
+cat > /root/outline_node_info.txt <<EOF
+=== Private Line VPN Node ===
+Установлено: $(date '+%Y-%m-%d %H:%M:%S')
+Имя:    $SERVER_NAME
+Страна: $COUNTRY ($COUNTRY_CODE)
+Город:  ${CITY:-—}
+IP:     $SERVER_IP
+API URL: $API_URL
+EOF
 
-echo -e "${YELLOW}Хотите отключить вход по паролю SSH (рекомендуется, если есть SSH-ключ)?${RESET}"
-read -rp "$(echo -e "${YELLOW}▶ Отключить SSH-пароль? [y/N]: ${RESET}")" DISABLE_SSH_PASS
-
-if [[ "${DISABLE_SSH_PASS,,}" == "y" ]]; then
-    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-    success "Вход по SSH-паролю отключён. Убедитесь, что ваш SSH-ключ добавлен!"
-    warn "ВАЖНО: Не закрывайте текущую сессию, пока не проверите вход по ключу!"
-fi
-
-# Unattended upgrades
-if command -v apt-get &>/dev/null; then
-    apt-get install -y -qq unattended-upgrades >/dev/null 2>&1
-    echo 'Unattended-Upgrade::Automatic-Reboot "false";' \
-        > /etc/apt/apt.conf.d/51private-line
-    success "Автоматические обновления безопасности включены"
-fi
-
-# ─── Final summary ────────────────────────────────────────────────────────────
+# ─── Summary ──────────────────────────────────────────────────────────────────
 echo
-echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║       Private Line VPN Node — Установка завершена!  ║${RESET}"
-echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${RESET}"
+echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${GREEN}║  Private Line Node — Установка завершена!   ║${RESET}"
+echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════╝${RESET}"
 echo
-echo -e "${BOLD}📋 Информация о ноде:${RESET}"
-echo -e "  Сервер:      ${CYAN}$SERVER_NAME${RESET}"
-echo -e "  Страна:      ${CYAN}$COUNTRY${RESET}"
-if [[ -n "${CITY:-}" ]]; then
-echo -e "  Город:       ${CYAN}$CITY${RESET}"
-fi
-echo -e "  IP:          ${CYAN}$SERVER_IP${RESET}"
-echo
-echo -e "${BOLD}🔑 Данные для добавления в Admin Panel:${RESET}"
-echo -e "  API URL:${RESET}"
-echo -e "  ${YELLOW}$API_URL${RESET}"
-echo
-echo -e "  Cert SHA256:${RESET}"
-echo -e "  ${YELLOW}$CERT_SHA256${RESET}"
-echo
-if [[ "$REGISTERED" == "true" ]]; then
-echo -e "${BOLD}✅ Статус регистрации:${RESET} ${GREEN}Нода автоматически добавлена в Admin Panel!${RESET}"
-echo -e "  Перейдите в Admin Panel → Серверы и убедитесь, что нода появилась в списке."
+echo -e "  Нода:    ${CYAN}$SERVER_NAME${RESET}"
+echo -e "  IP:      ${CYAN}$SERVER_IP${RESET}"
+echo -e "  Страна:  ${CYAN}$COUNTRY $FLAG_EMOJI${RESET}"
+if [[ "${REGISTERED:-false}" == "true" ]]; then
+    echo -e "  Статус:  ${GREEN}✅ Зарегистрирована в Admin Panel${RESET}"
 else
-echo -e "${BOLD}⚡ Следующий шаг (ручное добавление):${RESET}"
-echo -e "  1. Войдите в Admin Panel основного сервера"
-echo -e "  2. Перейдите: Серверы → Добавить сервер"
-echo -e "  3. Введите ${BOLD}API URL${RESET} из строки выше"
-echo -e "  4. Нажмите «Проверить соединение» — должна появиться зелёная галочка"
+    echo -e "  Статус:  ${YELLOW}⚠️  Требуется ручная регистрация${RESET}"
+    echo -e "  API URL: ${YELLOW}$API_URL${RESET}"
 fi
 echo
-echo -e "${BOLD}📁 Конфигурация сохранена:${RESET} $INFO_FILE"
-echo
-echo -e "${BOLD}📊 Статус Outline:${RESET}"
-docker ps --filter "name=shadowbox" --format "  {{.Names}}: {{.Status}}" 2>/dev/null || true
+docker ps --filter "name=shadowbox" --format "  Outline: {{.Status}}" 2>/dev/null || true
 echo
