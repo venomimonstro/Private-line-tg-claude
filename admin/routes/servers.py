@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -20,6 +22,17 @@ from app.vpn.outline import OutlineClient
 router = APIRouter(prefix="/servers")
 api_router = APIRouter(prefix="/api")
 templates = Jinja2Templates(directory="admin/templates")
+
+
+@api_router.get("/install-script", response_class=PlainTextResponse)
+async def get_install_script() -> PlainTextResponse:
+    """Serve install_node.sh for download by node servers."""
+    script_path = os.path.join(settings.APP_DIR, "install_node.sh")
+    if not os.path.isfile(script_path):
+        raise HTTPException(status_code=404, detail="install_node.sh not found")
+    with open(script_path, "r") as f:
+        content = f.read()
+    return PlainTextResponse(content, media_type="text/x-sh")
 
 
 @router.get("", response_class=HTMLResponse)
