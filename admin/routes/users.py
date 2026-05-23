@@ -72,7 +72,11 @@ async def user_detail(
 ) -> HTMLResponse:
     result = await session.execute(
         select(User)
-        .options(selectinload(User.subscriptions), selectinload(User.payments), selectinload(User.vpn_keys))
+        .options(
+            selectinload(User.subscriptions).selectinload(Subscription.tariff),
+            selectinload(User.payments).selectinload(Payment.tariff),
+            selectinload(User.vpn_keys),
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()

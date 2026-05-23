@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from admin.dependencies import get_current_admin
 from app.database import get_async_session
@@ -41,7 +42,10 @@ async def list_payments(
     total = total_result.scalar_one() or 0
 
     offset = (page - 1) * _PAGE_SIZE
-    result = await session.execute(query.order_by(Payment.created_at.desc()).offset(offset).limit(_PAGE_SIZE))
+    result = await session.execute(
+        query.options(selectinload(Payment.tariff))
+        .order_by(Payment.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
+    )
     payments = result.scalars().all()
 
     return templates.TemplateResponse("payments_list.html", {
@@ -59,7 +63,9 @@ async def payment_detail(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    result = await session.execute(select(Payment).where(Payment.id == payment_id))
+    result = await session.execute(
+        select(Payment).options(selectinload(Payment.tariff)).where(Payment.id == payment_id)
+    )
     payment = result.scalar_one_or_none()
     if payment is None:
         raise HTTPException(status_code=404)

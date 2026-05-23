@@ -44,7 +44,8 @@ async def list_subscriptions(
 
     offset = (page - 1) * _PAGE_SIZE
     result = await session.execute(
-        query.order_by(Subscription.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
+        query.options(selectinload(Subscription.tariff))
+        .order_by(Subscription.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
     )
     subscriptions = result.scalars().all()
 
@@ -64,7 +65,9 @@ async def subscription_detail(
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
     result = await session.execute(
-        select(Subscription).options(selectinload(Subscription.vpn_keys)).where(Subscription.id == sub_id)
+        select(Subscription)
+        .options(selectinload(Subscription.vpn_keys), selectinload(Subscription.tariff))
+        .where(Subscription.id == sub_id)
     )
     sub = result.scalar_one_or_none()
     if sub is None:

@@ -12,6 +12,7 @@ from app.enums import PaymentStatus
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.subscription import Subscription
+    from app.models.tariff import Tariff
 
 
 class Payment(Base):
@@ -42,3 +43,4 @@ class Payment(Base):
     user: Mapped[User] = relationship("User", foreign_keys=[user_id], back_populates="payments")
     confirmed_by: Mapped[User | None] = relationship("User", foreign_keys=[confirmed_by_id])
     subscription: Mapped[Subscription | None] = relationship("Subscription", foreign_keys=[subscription_id])
+    tariff: Mapped[Tariff] = relationship("Tariff", foreign_keys=[tariff_id], lazy="select")
