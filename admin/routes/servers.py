@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -15,6 +16,7 @@ from app.database import get_async_session
 from app.encryption import encrypt
 from app.enums import VpnServerStatus
 from app.models.admin_log import AdminLog
+from app.models.app_setting import AppSetting
 from app.models.user import User
 from app.models.vpn_server import VpnServer
 from app.vpn.outline import OutlineClient
@@ -23,14 +25,33 @@ router = APIRouter(prefix="/servers")
 api_router = APIRouter(prefix="/api")
 templates = Jinja2Templates(directory="admin/templates")
 
+_TOKEN_KEY = "node_register_token"
+
+
+async def _get_or_create_token(session: AsyncSession) -> str:
+    """Return the node registration token, auto-generating it on first call."""
+    row = await session.get(AppSetting, _TOKEN_KEY)
+    if row and row.value:
+        return row.value
+    token = secrets.token_urlsafe(32)
+    if row:
+        row.value = token
+    else:
+        session.add(AppSetting(
+            key=_TOKEN_KEY,
+            value=token,
+            description="Token for automatic VPN node registration via install_node.sh",
+        ))
+    await session.commit()
+    return token
+
 
 @api_router.get("/install-script", response_class=PlainTextResponse)
 async def get_install_script() -> PlainTextResponse:
-    """Serve install_node.sh for download by node servers."""
     script_path = os.path.join(settings.APP_DIR, "install_node.sh")
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail="install_node.sh not found")
-    with open(script_path, "r") as f:
+    with open(script_path) as f:
         content = f.read()
     return PlainTextResponse(content, media_type="text/x-sh")
 
@@ -43,9 +64,10 @@ async def list_servers(
 ) -> HTMLResponse:
     result = await session.execute(select(VpnServer).order_by(VpnServer.id))
     servers = result.scalars().all()
+    token = await _get_or_create_token(session)
     return templates.TemplateResponse("servers_list.html", {
         "request": request, "admin": admin, "servers": servers, "page_title": "VPN-серверы",
-        "node_register_token": settings.NODE_REGISTER_TOKEN,
+        "node_register_token": token,
     })
 
 
@@ -94,7 +116,6 @@ async def test_server(
     server = result.scalar_one_or_none()
     if server is None:
         raise HTTPException(status_code=404)
-
     client = OutlineClient(api_url=server.api_url)
     ok = await client.check_connection()
     await client.aclose()
@@ -125,7 +146,7 @@ async def disable_server(
     return RedirectResponse("/admin/servers", status_code=303)
 
 
-# ── Node auto-registration API ────────────────────────────────────────────────
+# ── Node auto-registration API ─────────────────────────────────────────────────
 
 class NodeRegistrationRequest(BaseModel):
     name: str
@@ -145,11 +166,9 @@ async def register_node(
     body: NodeRegistrationRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    if not settings.NODE_REGISTER_TOKEN:
-        raise HTTPException(status_code=403, detail="Node auto-registration is disabled. Set NODE_REGISTER_TOKEN in .env")
-
-    token = request.headers.get("X-Node-Token", "")
-    if token != settings.NODE_REGISTER_TOKEN:
+    stored_token = await _get_or_create_token(session)
+    incoming_token = request.headers.get("X-Node-Token", "")
+    if not incoming_token or incoming_token != stored_token:
         raise HTTPException(status_code=401, detail="Invalid registration token")
 
     client = OutlineClient(api_url=body.api_url)
@@ -173,4 +192,4 @@ async def register_node(
     session.add(server)
     await session.commit()
     await session.refresh(server)
-    return {"ok": True, "server_id": server.id, "message": f"Сервер '{body.name}' успешно зарегистрирован (ID: {server.id})"}
+    return {"ok": True, "server_id": server.id, "message": f"Сервер '{body.name}' зарегистрирован (ID: {server.id})"}
