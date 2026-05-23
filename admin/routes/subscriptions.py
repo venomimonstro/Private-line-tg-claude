@@ -157,10 +157,14 @@ async def retry_activation(
     if tariff is None:
         raise HTTPException(status_code=400, detail="Tariff not found")
 
-    # Reset attempt counter so activation can proceed
+    # Reset attempt counter and circuit breakers so activation can proceed
     sub.activation_attempts = 0
     sub.status = SubscriptionStatus.activation_error
     await session.flush()
+
+    from app.services.circuit_breaker import _registry, reset_circuit
+    for sid in list(_registry.keys()):
+        reset_circuit(sid)
 
     from app.services.user_notifications import send_key_to_user
     vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)

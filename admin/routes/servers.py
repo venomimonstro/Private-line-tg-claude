@@ -154,6 +154,10 @@ async def test_server(
     finally:
         await client.aclose()
 
+    if ok:
+        from app.services.circuit_breaker import reset_circuit
+        reset_circuit(server_id)
+
     return {
         "ok": ok,
         "error": error,
