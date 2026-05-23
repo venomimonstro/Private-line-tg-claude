@@ -16,7 +16,7 @@ from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_server import VpnServer
 from app.services import vpn_key as vpn_key_service
-from app.services.subscription import extend_subscription
+from app.services.subscription import activate_subscription, extend_subscription
 
 router = APIRouter(prefix="/subscriptions")
 templates = Jinja2Templates(directory="admin/templates")
@@ -132,6 +132,45 @@ async def disable_subscription(
         action="disable_subscription",
         target_entity="subscription",
         target_entity_id=sub_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/retry")
+async def retry_activation(
+    sub_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    result = await session.execute(
+        select(Subscription).options(selectinload(Subscription.tariff)).where(Subscription.id == sub_id)
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404)
+
+    tariff = sub.tariff
+    if tariff is None:
+        raise HTTPException(status_code=400, detail="Tariff not found")
+
+    # Reset attempt counter so activation can proceed
+    sub.activation_attempts = 0
+    sub.status = SubscriptionStatus.activation_error
+    await session.flush()
+
+    from app.services.user_notifications import send_key_to_user
+    vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="retry_activation",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        details={"success": vpn_key is not None},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)

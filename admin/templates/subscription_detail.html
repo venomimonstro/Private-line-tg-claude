@@ -7,13 +7,26 @@
       <table class="table table-sm">
         <tr><td>Пользователь</td><td><a href="/admin/users/{{ sub.user_id }}">{{ sub.user_id }}</a></td></tr>
         <tr><td>Тариф</td><td>{{ sub.tariff.slug if sub.tariff else "—" }}</td></tr>
-        <tr><td>Статус</td><td><span class="badge bg-secondary">{{ sub.status.value }}</span></td></tr>
+        <tr><td>Статус</td><td>
+          <span class="badge {% if sub.status.value == 'active' %}bg-success{% elif sub.status.value == 'activation_error' %}bg-danger{% else %}bg-secondary{% endif %}">
+            {{ sub.status.value }}
+          </span>
+        </td></tr>
         <tr><td>Начало</td><td>{{ sub.started_at.strftime('%d.%m.%Y') if sub.started_at else '—' }}</td></tr>
         <tr><td>Истекает</td><td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td></tr>
         <tr><td>Лимит трафика</td><td>{{ sub.tariff.traffic_limit_gb if sub.tariff else "—" }} ГБ</td></tr>
         <tr><td>Устройств</td><td>{{ sub.tariff.max_keys if sub.tariff else "—" }}</td></tr>
+        {% if sub.activation_attempts %}<tr><td>Попыток активации</td><td>{{ sub.activation_attempts }}</td></tr>{% endif %}
       </table>
-      <div class="border-top pt-3 d-flex gap-2">
+      {% if sub.last_activation_error %}
+      <div class="alert alert-danger py-2 small mb-2">⚠️ Ошибка: {{ sub.last_activation_error }}</div>
+      {% endif %}
+      <div class="border-top pt-3 d-flex gap-2 flex-wrap">
+        {% if sub.status.value == 'activation_error' %}
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/retry">
+          <button class="btn btn-sm btn-warning" onclick="return confirm('Повторить активацию и отправить ключ пользователю?')">🔄 Повторить активацию</button>
+        </form>
+        {% endif %}
         <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable">
           <button class="btn btn-sm btn-danger" onclick="return confirm('Отключить подписку?')">Отключить</button>
         </form>
