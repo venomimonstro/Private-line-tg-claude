@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Private Line VPN Bot — VPN Node Installer (Marzban + XRay VLESS)
+# Private Line VPN Bot — VPN Node Installer (Marzban + XRay VLESS Reality)
 # Usage (copy from Admin Panel → VPN Серверы):
 #   ADMIN_URL=http://your-server NODE_TOKEN=xxx bash <(curl -fsSL http://your-server/admin/api/install-script)
 set -euo pipefail
@@ -43,7 +43,7 @@ section "Установка зависимостей"
 
 apt-get update -qq
 
-for pkg in curl wget ufw jq python3; do
+for pkg in curl wget ufw jq python3 openssl; do
     if ! command -v "$pkg" &>/dev/null; then
         apt-get install -y -qq "$pkg" >/dev/null 2>&1
         success "$pkg установлен"
@@ -87,25 +87,28 @@ SERVER_NAME="${COUNTRY// /-}-${LAST_OCTET}"
 success "Страна: $COUNTRY (${COUNTRY_CODE:-?}) $FLAG_EMOJI"
 success "Имя ноды: $SERVER_NAME"
 
-# ─── Install Marzban (XRay + VLESS panel) ────────────────────────────────────
-section "Установка Marzban (XRay VLESS)"
+# ─── Install Marzban (XRay + VLESS Reality) ───────────────────────────────────
+section "Установка Marzban (XRay VLESS Reality)"
 
 MARZBAN_DIR="/opt/marzban"
 MARZBAN_DATA="/var/lib/marzban"
 MARZBAN_PORT=8000
 VPN_PORT=10443
+PROXY_PORT=2096
 MARZBAN_USER="admin"
 MARZBAN_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+REALITY_SNI="www.microsoft.com"
+REALITY_DEST="www.microsoft.com:443"
 
 mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
-# XRay config with VLESS TCP inbound
+# Temporary plain config — Reality keys generated after container starts
 cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
     "tag": "VLESS-TCP",
-    "listen": "${SERVER_IP}",
+    "listen": "0.0.0.0",
     "port": ${VPN_PORT},
     "protocol": "vless",
     "settings": {"clients": [], "decryption": "none"},
@@ -155,7 +158,7 @@ for i in $(seq 1 24); do
     if curl -sf -X POST "${API_URL}/api/admin/token" \
         -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
         >/dev/null 2>&1; then
-        success "Marzban API готов (${i})"
+        success "Marzban API готов (попытка ${i})"
         break
     fi
     sleep 5
@@ -164,23 +167,119 @@ for i in $(seq 1 24); do
     fi
 done
 
-# Verify credentials work
+# ─── Generate VLESS Reality keys ──────────────────────────────────────────────
+section "Генерация VLESS Reality ключей"
+
+CONTAINER_ID=$(docker compose -f "$MARZBAN_DIR/docker-compose.yml" ps -q marzban 2>/dev/null | head -1 || echo "")
+XRAY_KEYS=""
+if [[ -n "$CONTAINER_ID" ]]; then
+    XRAY_KEYS=$(docker exec "$CONTAINER_ID" xray x25519 2>/dev/null || echo "")
+fi
+if [[ -z "$XRAY_KEYS" ]]; then
+    XRAY_KEYS=$(docker run --rm --entrypoint xray gozargah/marzban:latest x25519 2>/dev/null || echo "")
+fi
+if [[ -z "$XRAY_KEYS" ]]; then
+    die "Не удалось сгенерировать Reality ключи. Убедитесь что контейнер marzban запущен."
+fi
+
+PRIVATE_KEY=$(echo "$XRAY_KEYS" | grep "Private key" | awk '{print $3}')
+PUBLIC_KEY=$(echo "$XRAY_KEYS" | grep "Public key" | awk '{print $3}')
+SHORT_ID=$(openssl rand -hex 8)
+
+[[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || die "Не удалось извлечь Reality ключи"
+
+success "Reality Public Key: $PUBLIC_KEY"
+success "Short ID: $SHORT_ID"
+
+# Write final XRay config with Reality
+cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "tag": "VLESS-TCP",
+    "listen": "0.0.0.0",
+    "port": ${VPN_PORT},
+    "protocol": "vless",
+    "settings": {"clients": [], "decryption": "none"},
+    "streamSettings": {
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {
+        "show": false,
+        "dest": "${REALITY_DEST}",
+        "serverNames": ["${REALITY_SNI}"],
+        "privateKey": "${PRIVATE_KEY}",
+        "shortIds": ["${SHORT_ID}"]
+      }
+    }
+  }],
+  "outbounds": [
+    {"tag": "direct", "protocol": "freedom"},
+    {"tag": "block", "protocol": "blackhole"}
+  ],
+  "routing": {
+    "rules": [
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}
+    ]
+  }
+}
+XRAYEOF
+
+success "XRay конфиг с Reality записан"
+
+# Restart Marzban to apply Reality config
+info "Перезапускаю Marzban с Reality конфигом..."
+cd "$MARZBAN_DIR" && docker compose restart
+sleep 10
+
+# Wait for API again
+for i in $(seq 1 12); do
+    if curl -sf -X POST "${API_URL}/api/admin/token" \
+        -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
+        >/dev/null 2>&1; then
+        success "Marzban API готов после перезапуска"
+        break
+    fi
+    sleep 5
+done
+
+# Get token
 TOKEN=$(curl -sf -X POST "${API_URL}/api/admin/token" \
     -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
     2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
 
+# Configure Marzban hosts so links include Reality params
 if [[ -n "$TOKEN" ]]; then
-    success "Аутентификация Marzban прошла успешно"
-else
-    warn "Не удалось получить токен Marzban. Продолжаю регистрацию..."
+    HOSTS_PAYLOAD=$(python3 - << PYEOF
+import json
+print(json.dumps({
+    "VLESS-TCP": [{
+        "remark": "Private Line VPN",
+        "address": "${SERVER_IP}",
+        "port": ${VPN_PORT},
+        "sni": "${REALITY_SNI}",
+        "host": "",
+        "path": "",
+        "security": "reality",
+        "alpn": "",
+        "fingerprint": "chrome",
+        "allowinsecure": False,
+        "is_disabled": False,
+        "mux_enable": False,
+        "fragment_setting": "",
+        "noise_setting": "",
+        "random_user_agent": False
+    }]
+}))
+PYEOF
+)
+    curl -sf -X PUT "${API_URL}/api/hosts" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$HOSTS_PAYLOAD" >/dev/null 2>&1 \
+        && success "Marzban hosts настроены" \
+        || warn "Не удалось настроить Marzban hosts — ссылки будут сгенерированы автоматически"
 fi
-
-# ─── Firewall ─────────────────────────────────────────────────────────────────
-section "Настройка файерволла"
-
-ufw --force reset >/dev/null 2>&1
-ufw default deny incoming >/dev/null 2>&1
-PROXY_PORT=2096
 
 # ─── Firewall ─────────────────────────────────────────────────────────────────
 section "Настройка файерволла"
@@ -189,10 +288,10 @@ ufw --force reset >/dev/null 2>&1
 ufw default deny incoming >/dev/null 2>&1
 ufw default allow outgoing >/dev/null 2>&1
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
-ufw allow "${VPN_PORT}/tcp" comment "VLESS VPN" >/dev/null 2>&1
+ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1
 ufw allow "${PROXY_PORT}/tcp" comment "Marzban API proxy" >/dev/null 2>&1
 ufw --force enable >/dev/null 2>&1
-success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS), $PROXY_PORT (API)"
+success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS Reality), $PROXY_PORT (API)"
 
 # ─── Socat proxy: expose Marzban API externally ───────────────────────────────
 section "Настройка внешнего доступа к API"
@@ -220,23 +319,22 @@ success "API прокси запущен на порту $PROXY_PORT"
 # ─── Register node in admin panel ─────────────────────────────────────────────
 section "Регистрация ноды в Admin Panel"
 
-# Use public IP + proxy port for API URL
 PUBLIC_API_URL="http://${SERVER_IP}:${PROXY_PORT}"
 info "Регистрирую: $PUBLIC_API_URL"
 
 PAYLOAD=$(python3 - << PYEOF
 import json
 print(json.dumps({
-    "name":              "${SERVER_NAME}",
-    "country":           "${COUNTRY}",
-    "city":              "${CITY}",
-    "country_code":      "${COUNTRY_CODE}",
-    "flag_emoji":        "${FLAG_EMOJI}",
-    "provider":          "marzban",
-    "api_url":           "${PUBLIC_API_URL}",
-    "marzban_username":  "${MARZBAN_USER}",
-    "marzban_password":  "${MARZBAN_PASS}",
-    "max_users":         200
+    "name":             "${SERVER_NAME}",
+    "country":          "${COUNTRY}",
+    "city":             "${CITY}",
+    "country_code":     "${COUNTRY_CODE}",
+    "flag_emoji":       "${FLAG_EMOJI}",
+    "provider":         "marzban",
+    "api_url":          "${PUBLIC_API_URL}",
+    "marzban_username": "${MARZBAN_USER}",
+    "marzban_password": "${MARZBAN_PASS}",
+    "max_users":        200
 }))
 PYEOF
 )
@@ -265,40 +363,43 @@ fi
 # ─── Save info ────────────────────────────────────────────────────────────────
 INFO_FILE="/root/marzban_node_info.txt"
 cat > "$INFO_FILE" << EOF
-=== Private Line VPN Node (Marzban) ===
+=== Private Line VPN Node (Marzban + VLESS Reality) ===
 Установлено: $(date '+%Y-%m-%d %H:%M:%S')
 Имя:     $SERVER_NAME
 Страна:  $COUNTRY ($COUNTRY_CODE)
 IP:      $SERVER_IP
 
+=== VLESS Reality ===
+SNI (маскировка): $REALITY_SNI
+Public Key:  $PUBLIC_KEY
+Short ID:    $SHORT_ID
+VPN Port:    $VPN_PORT
+
 === Marzban API ===
 URL:      $PUBLIC_API_URL
 Логин:    $MARZBAN_USER
 Пароль:   $MARZBAN_PASS
-Веб-UI:   $PUBLIC_API_URL (откройте в браузере)
-
-=== Порты ===
-VLESS VPN:   $VPN_PORT/tcp
-Marzban API: $MARZBAN_PORT/tcp
 EOF
 
 success "Конфигурация сохранена: $INFO_FILE"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo
-echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║   Private Line Node — Установка завершена!   ║${RESET}"
-echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════╝${RESET}"
+echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${GREEN}║  Private Line Node — Установка завершена! ✅     ║${RESET}"
+echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════╝${RESET}"
 echo
-echo -e "  Нода:    ${CYAN}$SERVER_NAME${RESET}  |  IP: ${CYAN}$SERVER_IP${RESET}"
-echo -e "  Страна:  ${CYAN}$COUNTRY $FLAG_EMOJI${RESET}"
-echo -e "  VLESS:   порт ${CYAN}$VPN_PORT${RESET}"
+echo -e "  Нода:      ${CYAN}$SERVER_NAME${RESET}  |  IP: ${CYAN}$SERVER_IP${RESET}"
+echo -e "  Страна:    ${CYAN}$COUNTRY $FLAG_EMOJI${RESET}"
+echo -e "  Протокол:  ${GREEN}VLESS Reality${RESET} (маскировка под ${REALITY_SNI})"
+echo -e "  VPN Порт:  ${CYAN}$VPN_PORT${RESET}"
+echo -e "  Public Key: ${CYAN}$PUBLIC_KEY${RESET}"
 if [[ "${REGISTERED:-false}" == "true" ]]; then
-    echo -e "  Статус:  ${GREEN}✅ Зарегистрирована в Admin Panel${RESET}"
+    echo -e "  Статус:    ${GREEN}✅ Зарегистрирована в Admin Panel${RESET}"
 else
-    echo -e "  Статус:  ${YELLOW}⚠️  Требуется ручная регистрация${RESET}"
-    echo -e "  API URL: ${YELLOW}$PUBLIC_API_URL${RESET}"
-    echo -e "  Логин:   ${YELLOW}$MARZBAN_USER${RESET} / Пароль: ${YELLOW}$MARZBAN_PASS${RESET}"
+    echo -e "  Статус:    ${YELLOW}⚠️  Требуется ручная регистрация${RESET}"
+    echo -e "  API URL:   ${YELLOW}$PUBLIC_API_URL${RESET}"
+    echo -e "  Логин:     ${YELLOW}$MARZBAN_USER${RESET} / Пароль: ${YELLOW}$MARZBAN_PASS${RESET}"
 fi
 echo
 echo -e "${BOLD}📊 Статус Marzban:${RESET}"

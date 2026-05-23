@@ -67,6 +67,20 @@ class MarzbanClient:
         links: list[str] = data.get("links", [])
         vless_links = [lnk for lnk in links if lnk.startswith("vless://")]
 
+        # If Marzban returned no links, try fetching from subscription URL
+        if not vless_links:
+            sub_path = data.get("subscription_url", "")
+            if sub_path:
+                full_sub = sub_path if sub_path.startswith("http") else f"{self._base}{sub_path}"
+                try:
+                    sub_resp = await self._client.get(full_sub, headers=headers)
+                    if sub_resp.status_code == 200:
+                        import base64 as _b64
+                        decoded = _b64.b64decode(sub_resp.text.strip()).decode("utf-8")
+                        vless_links = [ln for ln in decoded.strip().split("\n") if ln.startswith("vless://")]
+                except Exception:
+                    pass
+
         if vless_links:
             access_url = vless_links[0]
             # Fix 0.0.0.0 — Marzban uses bind address instead of public IP
@@ -76,21 +90,15 @@ class MarzbanClient:
                 if m:
                     access_url = _re.sub(r'@0\.0\.0\.0:', f'@{m.group(1)}:', access_url)
         else:
-            # No links returned — build from UUID if present
+            # Last resort — build minimal VLESS URL from UUID
             uuid = data.get("proxies", {}).get("vless", {}).get("id", "")
             if uuid:
                 import re as _re
                 m = _re.match(r'https?://([^:/]+)', self._base)
                 host = m.group(1) if m else "unknown"
-                port = 10443
-                for lnk in links:
-                    pm = _re.search(r'@[^:]+:(\d+)', lnk)
-                    if pm:
-                        port = int(pm.group(1))
-                        break
-                access_url = f"vless://{uuid}@{host}:{port}?type=tcp&security=none#{safe_name}"
+                access_url = f"vless://{uuid}@{host}:10443?type=tcp&security=none#{safe_name}"
             else:
-                access_url = links[0] if links else ""
+                access_url = ""
 
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
 
