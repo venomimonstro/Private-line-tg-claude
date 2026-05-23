@@ -24,7 +24,7 @@ async def get_provider_db(name: str, session) -> PaymentProviderBase:
     cred_keys = [
         "YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY",
         "YOOMONEY_WALLET", "YOOMONEY_NOTIFICATION_SECRET",
-        "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_1", "FREEKASSA_SECRET_2",
+        "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_1", "FREEKASSA_SECRET_2", "FREEKASSA_API_KEY",
         "LAVA_PROJECT_ID", "LAVA_SECRET_KEY",
         "ROBOKASSA_MERCHANT_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2",
         "PRODAMUS_API_URL", "PRODAMUS_WEBHOOK_SECRET",
@@ -52,7 +52,12 @@ def _build_with_creds(name: str, g) -> PaymentProviderBase:
 
     if name == "freekassa":
         from app.payments.providers.freekassa import FreeKassaProvider
-        return FreeKassaProvider(g("FREEKASSA_MERCHANT_ID"), g("FREEKASSA_SECRET_1"), g("FREEKASSA_SECRET_2"))
+        return FreeKassaProvider(
+            merchant_id=g("FREEKASSA_MERCHANT_ID"),
+            secret_2=g("FREEKASSA_SECRET_2"),
+            api_key=g("FREEKASSA_API_KEY"),
+            secret_1=g("FREEKASSA_SECRET_1"),
+        )
 
     if name == "lava":
         from app.payments.providers.lava import LavaProvider

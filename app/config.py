@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     FREEKASSA_MERCHANT_ID: str = ""
     FREEKASSA_SECRET_1: str = ""
     FREEKASSA_SECRET_2: str = ""
+    FREEKASSA_API_KEY: str = ""
 
     # LAVA
     LAVA_PROJECT_ID: str = ""

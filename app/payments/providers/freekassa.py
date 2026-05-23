@@ -2,27 +2,38 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from urllib.parse import parse_qs
+
+import httpx
 
 from app.payments.provider_base import IncomingPayment, PaymentProviderBase, PaymentResult
 
 
 class FreeKassaProvider(PaymentProviderBase):
-    """FreeKassa classic URL-based integration.
+    """FreeKassa API v2 integration.
 
-    Config: FREEKASSA_MERCHANT_ID, FREEKASSA_SECRET_1, FREEKASSA_SECRET_2
+    Required config keys: FREEKASSA_MERCHANT_ID, FREEKASSA_SECRET_2, FREEKASSA_API_KEY
+    Docs: https://docs.freekassa.net/
     """
 
-    _CHECKOUT_URL = "https://pay.freekassa.ru/"
+    _API_URL = "https://api.freekassa.net/v1"
 
-    def __init__(self, merchant_id: str, secret_1: str, secret_2: str) -> None:
+    def __init__(
+        self,
+        merchant_id: str,
+        secret_2: str,
+        api_key: str,
+        secret_1: str = "",  # kept for backward compat, not used in v2
+    ) -> None:
         self._merchant_id = merchant_id
-        self._secret_1 = secret_1
         self._secret_2 = secret_2
+        self._api_key = api_key
+        self._client = httpx.AsyncClient(timeout=15.0)
 
-    def _sign_request(self, amount: float, order_id: int) -> str:
-        raw = f"{self._merchant_id}:{amount:.2f}:{self._secret_1}:RUB:{order_id}"
-        return hashlib.md5(raw.encode("utf-8")).hexdigest()
+    def _sign_order(self, nonce: int) -> str:
+        msg = f"{self._merchant_id}|{nonce}".encode("utf-8")
+        return hmac.new(self._api_key.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
     def _sign_notification(self, amount: str, order_id: str) -> str:
         raw = f"{self._merchant_id}:{amount}:{self._secret_2}:{order_id}"
@@ -36,19 +47,25 @@ class FreeKassaProvider(PaymentProviderBase):
         description: str,
         user_id: int,
     ) -> PaymentResult:
-        sign = self._sign_request(amount, our_payment_id)
-        url = (
-            f"{self._CHECKOUT_URL}"
-            f"?m={self._merchant_id}"
-            f"&oa={amount:.2f}"
-            f"&currency=RUB"
-            f"&o={our_payment_id}"
-            f"&s={sign}"
-            f"&lang=ru"
-        )
+        nonce = int(time.time())
+        payload = {
+            "shopId": int(self._merchant_id),
+            "nonce": nonce,
+            "paymentId": str(our_payment_id),
+            "i": 0,
+            "email": f"user{user_id}@order.local",
+            "ip": "127.0.0.1",
+            "amount": round(amount, 2),
+            "currency": "RUB",
+            "signature": self._sign_order(nonce),
+        }
+        resp = await self._client.post(f"{self._API_URL}/orders/create", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        location: str = data.get("location", "") or data.get("orderUrl", "")
         return PaymentResult(
-            provider_payment_id=str(our_payment_id),
-            payment_url=url,
+            provider_payment_id=str(data.get("orderId", our_payment_id)),
+            payment_url=location or None,
         )
 
     async def verify_webhook(
@@ -72,3 +89,6 @@ class FreeKassaProvider(PaymentProviderBase):
             )
         except Exception:
             return None
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

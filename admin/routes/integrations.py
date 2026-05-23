@@ -31,6 +31,7 @@ _SETTINGS_META: list[dict] = [
     {"section": "FreeKassa",       "key": "FREEKASSA_MERCHANT_ID",          "label": "ID магазина",               "type": "text",     "placeholder": "123456"},
     {"section": "FreeKassa",       "key": "FREEKASSA_SECRET_1",             "label": "Секрет 1 (для платежей)",   "type": "password", "placeholder": ""},
     {"section": "FreeKassa",       "key": "FREEKASSA_SECRET_2",             "label": "Секрет 2 (для уведомлений)","type": "password", "placeholder": ""},
+    {"section": "FreeKassa",       "key": "FREEKASSA_API_KEY",              "label": "API-ключ (v2)",              "type": "password", "placeholder": ""},
     # LAVA
     {"section": "LAVA",            "key": "LAVA_ENABLED",                   "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "LAVA",            "key": "LAVA_PROJECT_ID",                "label": "ID проекта",                "type": "text",     "placeholder": ""},
@@ -75,7 +76,7 @@ _PROVIDER_ENABLED_KEYS: dict[str, str] = {
 _PROVIDER_CREDENTIAL_KEYS: dict[str, list[str]] = {
     "YooKassa":        ["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"],
     "ЮMoney":          ["YOOMONEY_WALLET", "YOOMONEY_NOTIFICATION_SECRET"],
-    "FreeKassa":       ["FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_1", "FREEKASSA_SECRET_2"],
+    "FreeKassa":       ["FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_2", "FREEKASSA_API_KEY"],
     "LAVA":            ["LAVA_PROJECT_ID", "LAVA_SECRET_KEY"],
     "Robokassa":       ["ROBOKASSA_MERCHANT_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2"],
     "Prodamus":        ["PRODAMUS_API_URL", "PRODAMUS_WEBHOOK_SECRET"],
