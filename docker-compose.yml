@@ -8,6 +8,12 @@ services:
     environment:
       - PYTHONPATH=/app
     volumes:
+      - ./app:/app/app
+      - ./bot:/app/bot
+      - ./backup_manager:/app/backup_manager
+      - ./health_monitor:/app/health_monitor
+      - ./update_manager:/app/update_manager
+      - ./alembic:/app/alembic
       - ./data:/app/data
       - ./backups:/app/backups
       - ./logs:/app/logs
@@ -24,6 +30,13 @@ services:
     environment:
       - PYTHONPATH=/app
     volumes:
+      - ./app:/app/app
+      - ./admin:/app/admin
+      - ./bot:/app/bot
+      - ./backup_manager:/app/backup_manager
+      - ./health_monitor:/app/health_monitor
+      - ./update_manager:/app/update_manager
+      - ./alembic:/app/alembic
       - ./data:/app/data
       - ./backups:/app/backups
       - ./logs:/app/logs
