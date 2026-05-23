@@ -47,6 +47,7 @@ class MarzbanClient:
         body: dict = {
             "username": safe_name,
             "proxies": {"vless": {}},
+            "inbounds": {"vless": ["VLESS-TCP"]},
             "status": "active",
             "data_limit_reset_strategy": "no_reset",
         }
