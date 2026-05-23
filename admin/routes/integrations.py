@@ -52,9 +52,10 @@ _SETTINGS_META: list[dict] = [
     {"section": "Telegram Stars",  "key": "STARS_ENABLED",                  "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "Telegram Stars",  "key": "STARS_PER_RUB",                  "label": "Звёзд за 1 RUB",            "type": "text",     "placeholder": "0.5"},
     # Общие
-    {"section": "Общие",           "key": "PAYMENT_PROVIDER",               "label": "Активный провайдер (код)",  "type": "text",     "placeholder": "yookassa"},
+    {"section": "Общие",           "key": "PAYMENT_PROVIDER",               "label": "Активный провайдер (код)",  "type": "text",     "placeholder": "freekassa"},
     {"section": "Общие",           "key": "PAYMENT_CURRENCY",               "label": "Валюта по умолчанию",       "type": "text",     "placeholder": "RUB"},
     {"section": "Общие",           "key": "PAYMENT_DESCRIPTION_TEMPLATE",   "label": "Шаблон описания платежа",   "type": "text",     "placeholder": "Подписка Private Line — {tariff}"},
+    {"section": "Общие",           "key": "WEBHOOK_BASE_URL",               "label": "Базовый URL вебхуков",      "type": "text",     "placeholder": "http://155.212.224.153.nip.io"},
 ]
 
 _SECTIONS = [
@@ -110,12 +111,16 @@ async def _load_settings(session: AsyncSession) -> dict[str, str]:
 
 def _build_context(request, admin, values: dict, saved: bool) -> dict:
     provider_status = {s: _provider_status(s, values) for s in _SECTIONS}
-    base_url = str(request.base_url).rstrip("/")
+    # Use configured WEBHOOK_BASE_URL if set, otherwise fall back to request base URL
+    webhook_base = (
+        values.get("WEBHOOK_BASE_URL", "").rstrip("/")
+        or str(request.base_url).rstrip("/")
+    )
     return {
         "request": request, "admin": admin, "page_title": "Интеграции",
         "sections": _SECTIONS, "settings_meta": _SETTINGS_META,
         "values": values, "saved": saved, "provider_status": provider_status,
-        "base_url": base_url,
+        "base_url": webhook_base,
     }
 
 
