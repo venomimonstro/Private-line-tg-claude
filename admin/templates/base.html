@@ -28,29 +28,30 @@
   <div class="row">
     <nav class="col-md-2 d-none d-md-block sidebar py-3">
       <div class="text-white fw-bold fs-5 px-3 mb-4">🔐 Private Line</div>
+      {% set p = request.url.path %}
       <ul class="nav flex-column gap-1">
-        <li class="nav-item"><a class="nav-link" href="/admin/"><i class="bi bi-speedometer2"></i>Дашборд</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/users"><i class="bi bi-people"></i>Пользователи</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/subscriptions"><i class="bi bi-calendar-check"></i>Подписки</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/payments"><i class="bi bi-credit-card"></i>Платежи</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/vpn-keys"><i class="bi bi-key"></i>VPN-ключи</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/servers"><i class="bi bi-server"></i>VPN-серверы</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/tariffs"><i class="bi bi-tags"></i>Тарифы</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/referrals"><i class="bi bi-share"></i>Рефералы</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/refund-requests"><i class="bi bi-arrow-counterclockwise"></i>Возвраты</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/promo-codes"><i class="bi bi-ticket-perforated"></i>Промокоды</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/bulk"><i class="bi bi-lightning"></i>Массовые действия</a></li>
+        <li class="nav-item"><a class="nav-link{% if p == '/' %} active{% endif %}" href="/admin/"><i class="bi bi-speedometer2"></i>Дашборд</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/users') %} active{% endif %}" href="/admin/users"><i class="bi bi-people"></i>Пользователи</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/subscriptions') %} active{% endif %}" href="/admin/subscriptions"><i class="bi bi-calendar-check"></i>Подписки</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/payments') %} active{% endif %}" href="/admin/payments"><i class="bi bi-credit-card"></i>Платежи</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/vpn-keys') %} active{% endif %}" href="/admin/vpn-keys"><i class="bi bi-key"></i>VPN-ключи</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/servers') %} active{% endif %}" href="/admin/servers"><i class="bi bi-server"></i>VPN-серверы</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/tariffs') %} active{% endif %}" href="/admin/tariffs"><i class="bi bi-tags"></i>Тарифы</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/referrals') %} active{% endif %}" href="/admin/referrals"><i class="bi bi-share"></i>Рефералы</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/refund-requests') %} active{% endif %}" href="/admin/refund-requests"><i class="bi bi-arrow-counterclockwise"></i>Возвраты</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/promo-codes') %} active{% endif %}" href="/admin/promo-codes"><i class="bi bi-ticket-perforated"></i>Промокоды</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/bulk') %} active{% endif %}" href="/admin/bulk"><i class="bi bi-lightning"></i>Массовые действия</a></li>
         <hr class="text-secondary">
-        <li class="nav-item"><a class="nav-link" href="/admin/analytics"><i class="bi bi-bar-chart"></i>Бизнес-аналитика</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/load"><i class="bi bi-activity"></i>Нагрузка</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/health"><i class="bi bi-heart-pulse"></i>Состояние</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/analytics') %} active{% endif %}" href="/admin/analytics"><i class="bi bi-bar-chart"></i>Бизнес-аналитика</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/load') %} active{% endif %}" href="/admin/load"><i class="bi bi-activity"></i>Нагрузка</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/health') %} active{% endif %}" href="/admin/health"><i class="bi bi-heart-pulse"></i>Состояние</a></li>
         <hr class="text-secondary">
-        <li class="nav-item"><a class="nav-link" href="/admin/updates"><i class="bi bi-cloud-upload"></i>Обновления</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/backups"><i class="bi bi-archive"></i>Бэкапы</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/filtering"><i class="bi bi-shield-exclamation"></i>Фильтрация</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/abuse"><i class="bi bi-exclamation-triangle"></i>Abuse</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/logs"><i class="bi bi-journal-text"></i>Логи</a></li>
-        <li class="nav-item"><a class="nav-link" href="/admin/integrations"><i class="bi bi-plug"></i>Интеграции</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/updates') %} active{% endif %}" href="/admin/updates"><i class="bi bi-cloud-upload"></i>Обновления</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/backups') %} active{% endif %}" href="/admin/backups"><i class="bi bi-archive"></i>Бэкапы</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/filtering') %} active{% endif %}" href="/admin/filtering"><i class="bi bi-shield-exclamation"></i>Фильтрация</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/abuse') %} active{% endif %}" href="/admin/abuse"><i class="bi bi-exclamation-triangle"></i>Abuse</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/logs') %} active{% endif %}" href="/admin/logs"><i class="bi bi-journal-text"></i>Логи</a></li>
+        <li class="nav-item"><a class="nav-link{% if p.startswith('/integrations') %} active{% endif %}" href="/admin/integrations"><i class="bi bi-plug"></i>Интеграции</a></li>
         <hr class="text-secondary">
         <li class="nav-item"><a class="nav-link text-danger" href="/admin/logout"><i class="bi bi-box-arrow-right"></i>Выход</a></li>
       </ul>

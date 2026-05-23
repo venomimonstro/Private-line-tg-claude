@@ -102,6 +102,15 @@ ok "Python OK: $CHECKED файлов проверено"
 log "🔄 Перезапускаю сервисы..."
 docker compose restart admin bot 2>&1 | sed 's/^/    /'
 
+# ── reload nginx (graceful — applies new config without downtime) ─────────────
+log "🔄 Перезагружаю nginx..."
+if docker compose exec -T nginx nginx -s reload 2>&1 | sed 's/^/    /'; then
+    ok "nginx перезагружен"
+else
+    warn "nginx reload не удался — пробую restart..."
+    docker compose restart nginx 2>&1 | sed 's/^/    /' || true
+fi
+
 # ── health check ──────────────────────────────────────────────────────────────
 log "⏳ Жду запуска admin..."
 sleep 5
