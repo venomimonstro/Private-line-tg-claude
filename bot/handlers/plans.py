@@ -455,7 +455,13 @@ async def _do_create_payment(
         )
     elif payment_result.display_data.get("stars_flow"):
         from bot.handlers.stars_payment import send_stars_invoice
-        await callback.message.delete()  # type: ignore[union-attr]
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            f"⭐ <b>Оплата через Telegram Stars</b>\n\n"
+            f"Тариф: {tariff.name}\n"
+            f"Заявка: #{payment.id}\n\n"
+            "Счёт отправлен ниже — нажмите <b>Pay ⭐</b> для оплаты.",
+            parse_mode="HTML",
+        )
         await send_stars_invoice(
             callback.bot,
             db_user.telegram_id,

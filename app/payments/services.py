@@ -32,25 +32,48 @@ _PROVIDER_ENABLED_MAP: dict[str, str] = {
     "STARS_ENABLED":      "stars",
 }
 
+# Credential keys that MUST be non-empty for the provider to be usable
+_PROVIDER_CRED_KEYS: dict[str, list[str]] = {
+    "yookassa":  ["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"],
+    "yoomoney":  ["YOOMONEY_WALLET", "YOOMONEY_NOTIFICATION_SECRET"],
+    "freekassa": ["FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_1", "FREEKASSA_SECRET_2"],
+    "lava":      ["LAVA_PROJECT_ID", "LAVA_SECRET_KEY"],
+    "robokassa": ["ROBOKASSA_MERCHANT_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2"],
+    "prodamus":  ["PRODAMUS_API_URL", "PRODAMUS_WEBHOOK_SECRET"],
+    "crypto":    ["CRYPTO_BOT_TOKEN"],
+    "stars":     [],   # no credentials needed — built into Telegram
+    "manual":    [],
+}
+
 
 async def get_enabled_providers(session: AsyncSession) -> list[str]:
-    """Return list of enabled provider codes from DB, falling back to PAYMENT_PROVIDER env."""
+    """Return enabled provider codes that have all credentials configured."""
+    from app.config import settings
     from app.models.app_setting import AppSetting
 
+    all_keys = list(_PROVIDER_ENABLED_MAP.keys()) + [
+        k for keys in _PROVIDER_CRED_KEYS.values() for k in keys
+    ]
     result = await session.execute(
-        select(AppSetting).where(AppSetting.key.in_(list(_PROVIDER_ENABLED_MAP.keys())))
+        select(AppSetting).where(AppSetting.key.in_(all_keys))
     )
-    db_vals = {row.key: (row.value or "").lower() for row in result.scalars().all()}
+    db_vals = {row.key: (row.value or "") for row in result.scalars().all()}
+
+    def get_val(key: str) -> str:
+        return db_vals.get(key) or getattr(settings, key, "")
+
+    def has_credentials(provider: str) -> bool:
+        return all(get_val(k).strip() for k in _PROVIDER_CRED_KEYS.get(provider, []))
 
     enabled = [
         code
         for key, code in _PROVIDER_ENABLED_MAP.items()
-        if db_vals.get(key, "") in ("true", "1", "yes")
+        if get_val(key).lower() in ("true", "1", "yes") and has_credentials(code)
     ]
 
     if not enabled:
-        from app.config import settings
-        enabled = [settings.PAYMENT_PROVIDER]
+        fallback = settings.PAYMENT_PROVIDER
+        enabled = [fallback]
 
     return enabled
 
