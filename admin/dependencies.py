@@ -49,6 +49,6 @@ async def require_super_admin(
 
 def _redirect_to_login() -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        status_code=status.HTTP_303_SEE_OTHER,
         headers={"Location": "/admin/login"},
     )
