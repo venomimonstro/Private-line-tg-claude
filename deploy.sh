@@ -66,6 +66,7 @@ NEW_COMMIT=$(git rev-parse HEAD)
 
 if [ "$PREV_COMMIT" = "$NEW_COMMIT" ]; then
     ok "Изменений нет — уже актуальная версия"
+    docker compose exec -T nginx nginx -s reload 2>/dev/null || true
     rm -rf "$SPRINT_PATH"
     exit 0
 fi
