@@ -151,8 +151,8 @@ cd "$MARZBAN_DIR" && docker compose up -d
 # Wait for Marzban API to become ready (up to 120s)
 info "Жду готовности API..."
 for i in $(seq 1 24); do
-    if curl -sf "http://127.0.0.1:${MARZBAN_PORT}/api/docs" >/dev/null 2>&1; then
-        success "Marzban API готов"
+    if curl -sf "http://127.0.0.1:${MARZBAN_PORT}/docs" >/dev/null 2>&1; then
+        success "Marzban API готов (${i})"
         break
     fi
     sleep 5
