@@ -145,6 +145,53 @@ async def test_server(
     return {"ok": ok, "error": error, "url": server.api_url}
 
 
+@router.post("/{server_id}/edit")
+async def edit_server(
+    server_id: int,
+    request: Request,
+    name: str = Form(...),
+    country: str = Form(...),
+    city: str = Form(""),
+    flag_emoji: str = Form(""),
+    max_users: int = Form(200),
+    api_url: str = Form(""),
+    marzban_username: str = Form(""),
+    marzban_password: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse:
+    import json as _json
+    result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
+    server = result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404)
+
+    server.name = name
+    server.country = country
+    server.city = city or None
+    server.flag_emoji = flag_emoji or None
+    server.max_users = max_users
+    if api_url:
+        server.api_url = api_url
+
+    if marzban_password:
+        username = marzban_username or "admin"
+        creds = _json.dumps({"protocol": "marzban", "username": username, "password": marzban_password})
+        server.api_secret_encrypted = encrypt(creds)
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="edit_server",
+        target_entity="server",
+        target_entity_id=server_id,
+        details={"name": name, "country": country},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse("/admin/servers", status_code=303)
+
+
 @router.post("/{server_id}/update-creds")
 async def update_server_creds(
     server_id: int,
