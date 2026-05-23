@@ -38,6 +38,18 @@
   </form>
 </div>
 
+<div class="card p-3 mt-3 border-warning">
+  <h6 class="fw-bold mb-2">⚡ Миграция Outline → VLESS</h6>
+  <p class="text-muted small mb-2">
+    Заменяет все активные Outline-ключи на VLESS. Каждый пользователь получит новый ключ в боте.
+    Outline-серверы будут отключены, новые пользователи будут идти на Marzban.
+  </p>
+  <div id="migrateResult" class="mb-2 d-none"></div>
+  <button class="btn btn-warning btn-sm" onclick="migrateToVless(this)">
+    🔄 Мигрировать всех на VLESS
+  </button>
+</div>
+
 <div class="card p-3 mt-3">
   <h6 class="fw-bold mb-2">Добавить новую ноду — одна команда</h6>
   {% if node_register_token %}
@@ -70,6 +82,21 @@ async function testServer(id, btn) {
     btn.textContent = d.ok ? '✅ Доступен' : '❌ Недоступен';
   } catch(e) { btn.textContent = '❌ Ошибка'; }
   setTimeout(() => { btn.disabled=false; btn.textContent='Проверить соединение'; }, 3000);
+}
+async function migrateToVless(btn) {
+  if (!confirm('Мигрировать всех пользователей с Outline на VLESS?\nКаждый получит новый ключ в боте. Outline-серверы будут отключены.')) return;
+  btn.disabled = true; btn.textContent = '⏳ Выполняю...';
+  try {
+    const r = await fetch('/admin/servers/migrate-to-vless', {method: 'POST'});
+    const d = await r.json();
+    const box = document.getElementById('migrateResult');
+    box.className = 'mb-2 alert ' + (r.ok ? 'alert-success' : 'alert-danger');
+    box.textContent = d.message || JSON.stringify(d);
+    box.classList.remove('d-none');
+  } catch(e) {
+    alert('Ошибка: ' + e);
+  }
+  btn.disabled = false; btn.textContent = '🔄 Мигрировать всех на VLESS';
 }
 function copyInstallCmd() {
   const inp = document.getElementById('installCmd');

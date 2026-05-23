@@ -147,6 +147,95 @@ async def disable_server(
     return RedirectResponse("/admin/servers", status_code=303)
 
 
+@router.post("/migrate-to-vless")
+async def migrate_outline_to_vless(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> dict:
+    """Migrate all active Outline keys to the first available Marzban server."""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    from app.enums import VpnKeyStatus
+    from app.models.vpn_key import VpnKey
+    from app.services.vpn_key import _server_protocol, create_vpn_key, disable_vpn_key
+    from app.services.user_notifications import send_key_to_user
+
+    servers_result = await session.execute(
+        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+    )
+    all_servers = list(servers_result.scalars().all())
+
+    marzban_servers = [s for s in all_servers if _server_protocol(s) == "marzban"]
+    if not marzban_servers:
+        raise HTTPException(
+            status_code=400,
+            detail="Нет Marzban-серверов. Сначала установите ноду с помощью команды из этой страницы.",
+        )
+    target = marzban_servers[0]
+
+    outline_servers = {s.id: s for s in all_servers if _server_protocol(s) == "outline"}
+    if not outline_servers:
+        return {"migrated": 0, "failed": 0, "message": "Outline-серверов не найдено — миграция не нужна."}
+
+    keys_result = await session.execute(
+        select(VpnKey).where(
+            VpnKey.server_id.in_(list(outline_servers.keys())),
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    old_keys = list(keys_result.scalars().all())
+
+    migrated = 0
+    failed = 0
+
+    for old_key in old_keys:
+        old_server = outline_servers[old_key.server_id]
+        try:
+            # Disable Outline key first (clears idempotency check)
+            await disable_vpn_key(old_key, old_server, session)
+            old_server.current_users = max(0, old_server.current_users - 1)
+
+            # Create VLESS key on Marzban
+            new_key = await create_vpn_key(
+                user_id=old_key.user_id,
+                subscription_id=old_key.subscription_id,
+                server=target,
+                traffic_limit_gb=old_key.traffic_limit_gb,
+                label=old_key.label,
+                session=session,
+            )
+            target.current_users += 1
+            await session.flush()
+
+            # Send new key to user
+            await send_key_to_user(old_key.user_id, new_key)
+            migrated += 1
+        except Exception as exc:
+            logger.error("Migration failed for key %d: %s", old_key.id, exc)
+            failed += 1
+
+    # Disable the old Outline servers so new subscriptions go to Marzban
+    for s in outline_servers.values():
+        s.status = VpnServerStatus.disabled
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="migrate_outline_to_vless",
+        details={"migrated": migrated, "failed": failed},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+
+    return {
+        "migrated": migrated,
+        "failed": failed,
+        "message": f"✅ Мигрировано {migrated} ключей, ошибок: {failed}. Outline-серверы отключены.",
+    }
+
+
 # ── Node auto-registration API ─────────────────────────────────────────────────
 
 class NodeRegistrationRequest(BaseModel):
