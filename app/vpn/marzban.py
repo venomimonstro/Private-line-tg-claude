@@ -169,22 +169,31 @@ class MarzbanClient:
             else:
                 access_url = ""
 
-        # Guarantee Reality params are present.
-        # Marzban omits pbk/sid when the hosts API hasn't been configured yet
-        # or when the user was created before Reality was set up.
-        if access_url and "pbk=" not in access_url:
+        # ALWAYS fetch Reality params from server and inject them.
+        # We never trust Marzban's link generation because:
+        #   - hosts API may not be configured → pbk/sid/sni missing
+        #   - flow=xtls-rprx-vision may be omitted even when server requires it
+        #   - security=none may appear instead of security=reality
+        # Deriving params from /api/core/config is the single source of truth.
+        if access_url:
             reality = await self.get_reality_params()
             if reality:
                 public_key, short_id, sni = reality
                 access_url = self._inject_reality(access_url, public_key, short_id, sni)
                 logger.info(
-                    "Injected Reality params into VLESS link for %s (pbk=%s...)",
-                    safe_name, public_key[:8],
+                    "Applied Reality params for %s: pbk=%s... sid=%s sni=%s flow=xtls-rprx-vision",
+                    safe_name, public_key[:8], short_id, sni,
                 )
             else:
+                # Couldn't reach /api/core/config — at least force flow if security=reality is present
+                if "security=reality" in access_url and "flow=" not in access_url:
+                    parsed = urlparse(access_url)
+                    qs = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
+                    qs["flow"] = "xtls-rprx-vision"
+                    access_url = urlunparse(parsed._replace(query=urlencode(qs)))
                 logger.warning(
-                    "VLESS link for %s is missing Reality params and server config is unavailable. "
-                    "Run fix_reality.sh on the node.",
+                    "Could not fetch Reality params from server for %s — "
+                    "verify Marzban is running and /api/core/config is accessible.",
                     safe_name,
                 )
 

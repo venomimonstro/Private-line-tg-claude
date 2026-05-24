@@ -120,7 +120,8 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
   ],
   "routing": {
     "rules": [
-      {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+      {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
     ]
   }
 }
@@ -219,7 +220,8 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
   ],
   "routing": {
     "rules": [
-      {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+      {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
     ]
   }
 }

@@ -71,7 +71,10 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
     {"tag": "block", "protocol": "blackhole"}
   ],
   "routing": {
-    "rules": [{"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}]
+    "rules": [
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+      {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
+    ]
   }
 }
 XRAYEOF

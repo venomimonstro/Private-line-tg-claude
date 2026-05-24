@@ -66,6 +66,72 @@ async def get_fix_reality_script() -> PlainTextResponse:
     return PlainTextResponse(content, media_type="text/x-sh")
 
 
+@api_router.get("/servers/{server_id}/reality-debug")
+async def reality_debug(
+    server_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> dict:
+    """Diagnose Reality configuration for a Marzban server."""
+    import json as _json
+    result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
+    server = result.scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404)
+
+    from app.encryption import decrypt as _decrypt
+    from app.services.vpn_key import _server_protocol
+    if _server_protocol(server) != "marzban":
+        return {"error": "Not a Marzban server"}
+
+    from app.vpn.marzban import MarzbanClient
+    creds = _json.loads(_decrypt(server.api_secret_encrypted))
+    client = MarzbanClient(server.api_url, creds["username"], creds["password"])
+
+    try:
+        reality = await client.get_reality_params()
+    except Exception as exc:
+        await client.aclose()
+        return {"error": f"Failed to connect to Marzban: {exc}", "api_url": server.api_url}
+
+    if reality is None:
+        # Try to get raw config for debugging
+        try:
+            headers = await client._headers()
+            resp = await client._client.get(f"{client._base}/api/core/config", headers=headers)
+            raw = resp.text[:2000]
+        except Exception as exc:
+            raw = str(exc)
+        await client.aclose()
+        return {
+            "ok": False,
+            "error": "No Reality config found in /api/core/config (no inbound with security=reality)",
+            "api_url": server.api_url,
+            "raw_config_snippet": raw,
+        }
+
+    public_key, short_id, sni = reality
+
+    # Build a sample URL to verify format
+    sample_url = (
+        f"vless://EXAMPLE-UUID@SERVER_IP:10443"
+        f"?type=tcp&security=reality&flow=xtls-rprx-vision"
+        f"&pbk={public_key}&sid={short_id}&sni={sni}&fp=chrome#PrivateLine"
+    )
+
+    await client.aclose()
+    return {
+        "ok": True,
+        "api_url": server.api_url,
+        "public_key": public_key,
+        "short_id": short_id,
+        "sni": sni,
+        "flow": "xtls-rprx-vision",
+        "fingerprint": "chrome",
+        "sample_url": sample_url,
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 async def list_servers(
     request: Request,
