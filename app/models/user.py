@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, Enum as SAEnum, ForeignKey, Integer, String
+from decimal import Decimal
+
+from sqlalchemy import BigInteger, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -44,6 +46,9 @@ class User(Base):
     admin_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     admin_locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rules_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    referral_balance: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
 
     subscriptions: Mapped[list[Subscription]] = relationship(
         "Subscription", back_populates="user", lazy="select"

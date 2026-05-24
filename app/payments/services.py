@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.enums import PaymentStatus, ReferralStatus, SubscriptionStatus
 from app.models.payment import Payment
 from app.models.referral import Referral
+from app.models.referral_transaction import ReferralTransaction
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
+from app.models.user import User
 from app.payments.provider_base import PaymentResult
 from app.services import subscription as subscription_service
 from app.services.notification import notify_admin
@@ -229,33 +231,57 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
             subscription, tariff, session, send_key_callback=send_key_to_user,
         )
 
-    await _process_referral_reward(payment.user_id, session)
+    await _process_referral_reward(payment.user_id, session, payment=payment)
 
 
-async def _process_referral_reward(user_id: int, session: AsyncSession) -> None:
+_REVSHARE_PERCENT = Decimal("0.10")
+_MIN_REVSHARE_AMOUNT = Decimal("0.01")
+
+
+async def _process_referral_reward(user_id: int, session: AsyncSession, payment: Payment | None = None) -> None:
     result = await session.execute(
-        select(Referral).where(
-            Referral.invited_user_id == user_id,
-            Referral.status == ReferralStatus.pending,
-        )
+        select(Referral).where(Referral.invited_user_id == user_id)
     )
     referral = result.scalar_one_or_none()
     if referral is None:
         return
 
-    referrer_sub_result = await session.execute(
-        select(Subscription).where(
-            Subscription.user_id == referral.referrer_id,
-            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
-        ).order_by(Subscription.expires_at.desc())
-    )
-    sub = referrer_sub_result.scalars().first()
-    if sub is not None:
-        await subscription_service.extend_subscription(sub, referral.bonus_days_awarded, session)
+    # First payment: award bonus days and mark referral as activated
+    if referral.status == ReferralStatus.pending:
+        referrer_sub_result = await session.execute(
+            select(Subscription).where(
+                Subscription.user_id == referral.referrer_id,
+                Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+            ).order_by(Subscription.expires_at.desc())
+        )
+        sub = referrer_sub_result.scalars().first()
+        if sub is not None:
+            await subscription_service.extend_subscription(sub, referral.bonus_days_awarded, session)
+        referral.status = ReferralStatus.activated
+        referral.activated_at = datetime.utcnow()
+        await session.flush()
 
-    referral.status = ReferralStatus.activated
-    referral.activated_at = datetime.utcnow()
-    await session.flush()
+    # Rev-share: credit 10% of payment to referrer's balance on every payment
+    if payment is not None and payment.amount and payment.amount >= _MIN_REVSHARE_AMOUNT:
+        # Check this payment hasn't already been credited
+        existing_tx = await session.execute(
+            select(ReferralTransaction).where(ReferralTransaction.payment_id == payment.id)
+        )
+        if existing_tx.scalar_one_or_none() is None:
+            earn = (payment.amount * _REVSHARE_PERCENT).quantize(Decimal("0.01"))
+            referrer = await session.get(User, referral.referrer_id)
+            if referrer is not None:
+                referrer.referral_balance = (referrer.referral_balance or Decimal("0")) + earn
+                tx = ReferralTransaction(
+                    referrer_id=referral.referrer_id,
+                    payer_user_id=user_id,
+                    payment_id=payment.id,
+                    amount_rub=earn,
+                    payment_amount_rub=payment.amount,
+                    created_at=datetime.utcnow(),
+                )
+                session.add(tx)
+                await session.flush()
 
 
 async def cancel_payment(payment: Payment, admin_id: int, session: AsyncSession) -> None:

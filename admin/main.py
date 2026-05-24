@@ -35,6 +35,7 @@ from admin.routes import (
     updates,
     users,
     vpn_keys,
+    withdrawals,
 )
 from app.database import get_async_session
 from app.models.user import User
@@ -111,6 +112,7 @@ app.include_router(servers.router)
 app.include_router(servers.api_router)
 app.include_router(tariffs.router)
 app.include_router(referrals.router)
+app.include_router(withdrawals.router)
 app.include_router(refund_requests.router)
 app.include_router(analytics.router)
 app.include_router(load_analytics.router)

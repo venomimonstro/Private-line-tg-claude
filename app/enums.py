@@ -116,6 +116,12 @@ class RefundStatus(str, Enum):
     auto_approved = "auto_approved"
 
 
+class WithdrawalStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class AdminAction(str, Enum):
     bulk_extend_subscriptions = "bulk_extend_subscriptions"
     bulk_disable_subscriptions = "bulk_disable_subscriptions"
