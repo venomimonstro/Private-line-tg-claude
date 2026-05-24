@@ -92,9 +92,13 @@ async def subscription_detail(
             "access_url": access_url,
         })
 
+    tariffs_result = await session.execute(select(Tariff).order_by(Tariff.price_monthly))
+    tariffs = tariffs_result.scalars().all()
+
     return templates.TemplateResponse("subscription_detail.html", {
         "request": request, "admin": admin, "sub": sub,
         "key_details": key_details,
+        "tariffs": tariffs,
         "page_title": f"Подписка #{sub_id}",
     })
 
@@ -119,6 +123,41 @@ async def extend_subscription_route(
         target_entity="subscription",
         target_entity_id=sub_id,
         details={"days": days},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/change-tariff")
+async def change_tariff(
+    sub_id: int,
+    request: Request,
+    tariff_id: int = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    result = await session.execute(
+        select(Subscription).options(selectinload(Subscription.vpn_keys)).where(Subscription.id == sub_id)
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404)
+
+    tariff = await session.get(Tariff, tariff_id)
+    if tariff is None:
+        raise HTTPException(status_code=400, detail="Tariff not found")
+
+    old_tariff_id = sub.tariff_id
+    sub.tariff_id = tariff.id
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="change_tariff",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        details={"old_tariff_id": old_tariff_id, "new_tariff_id": tariff.id, "new_tariff_slug": tariff.slug},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)

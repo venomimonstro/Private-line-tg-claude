@@ -106,16 +106,31 @@ async def create_payment(
     else:
         amount = float(tariff.price_monthly)
 
-    subscription = Subscription(
-        user_id=user_id,
-        tariff_id=tariff.id,
-        status=SubscriptionStatus.pending_payment,
-        auto_renew=False,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+    # One subscription per user: reuse existing instead of creating a new one.
+    existing_result = await session.execute(
+        select(Subscription).where(Subscription.user_id == user_id).limit(1)
     )
-    session.add(subscription)
-    await session.flush()
+    existing = existing_result.scalar_one_or_none()
+
+    if existing is not None:
+        existing.tariff_id = tariff.id
+        existing.updated_at = datetime.utcnow()
+        # Don't touch active subscriptions (renewal path keeps them live until payment confirms).
+        if existing.status not in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
+            existing.status = SubscriptionStatus.pending_payment
+        await session.flush()
+        subscription = existing
+    else:
+        subscription = Subscription(
+            user_id=user_id,
+            tariff_id=tariff.id,
+            status=SubscriptionStatus.pending_payment,
+            auto_renew=False,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(subscription)
+        await session.flush()
 
     payment = Payment(
         user_id=user_id,
@@ -189,18 +204,29 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         return
 
     subscription = await session.get(Subscription, payment.subscription_id)
-    if subscription is None or subscription.status != SubscriptionStatus.pending_payment:
-        logger.error("No pending subscription for payment %d", payment.id)
+    if subscription is None:
+        logger.error("No subscription for payment %d", payment.id)
         return
 
-    # Load tariff for duration info
     tariff = await session.get(Tariff, payment.tariff_id)
     if tariff is None:
         logger.error("Tariff %d not found for payment %d", payment.tariff_id, payment.id)
         return
 
     from app.services.user_notifications import send_key_to_user
-    await subscription_service.activate_subscription(subscription, tariff, session, send_key_callback=send_key_to_user)
+
+    if subscription.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
+        # Renewal on an already-active subscription: just extend the expiry date.
+        subscription.tariff_id = tariff.id
+        await subscription_service.extend_subscription(subscription, tariff.duration_days, session)
+        logger.info("Extended subscription %d by %d days (renewal)", subscription.id, tariff.duration_days)
+    else:
+        # Fresh activation (pending_payment, expired, disabled, activation_error).
+        subscription.status = SubscriptionStatus.pending_payment
+        await subscription_service.activate_subscription(
+            subscription, tariff, session, send_key_callback=send_key_to_user,
+        )
+
     await _process_referral_reward(payment.user_id, session)
 
 

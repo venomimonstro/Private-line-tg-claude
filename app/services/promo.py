@@ -95,16 +95,9 @@ async def create_trial_subscription(
     from app.models.subscription import Subscription
     from app.models.tariff import Tariff
 
-    # Verify user has no existing subscriptions
+    # Trial is only for users who have never had any subscription.
     result = await session.execute(
-        select(Subscription).where(
-            Subscription.user_id == user_id,
-            Subscription.status.in_([
-                SubscriptionStatus.active,
-                SubscriptionStatus.expires_soon,
-                SubscriptionStatus.expired,
-            ]),
-        ).limit(1)
+        select(Subscription).where(Subscription.user_id == user_id).limit(1)
     )
     if result.scalar_one_or_none() is not None:
         return None

@@ -32,6 +32,22 @@
         </form>
       </div>
       <div class="border-top pt-3 mt-2">
+        <h6>Сменить тариф</h6>
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/change-tariff" class="row g-2 align-items-center"
+              onsubmit="return confirm('Сменить тариф на выбранный?')">
+          <div class="col-auto">
+            <select name="tariff_id" class="form-select form-select-sm">
+              {% for t in tariffs %}
+              <option value="{{ t.id }}" {% if t.id == sub.tariff_id %}selected{% endif %}>
+                {{ t.slug }} — {{ t.price_monthly }} ₽/мес, {{ t.duration_days }}д
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-auto"><button type="submit" class="btn btn-sm btn-outline-secondary">Сменить</button></div>
+        </form>
+      </div>
+      <div class="border-top pt-3 mt-2">
         <h6>Продлить подписку</h6>
         <form method="post" action="/admin/subscriptions/{{ sub.id }}/extend" class="row g-2">
           <div class="col-auto"><input type="number" name="days" class="form-control" placeholder="Дней" min="1" max="365"></div>

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -27,6 +29,21 @@ templates = Jinja2Templates(directory="admin/templates")
 
 _TOKEN_KEY = "node_register_token"
 
+# Simple in-memory rate limiter for unauthenticated node API endpoints.
+# Keyed by client IP; stores list of request timestamps within the window.
+_rate_registry: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW_SEC = 60
+_RATE_LIMIT = 10  # requests per window per IP
+
+
+def _check_rate_limit(ip: str) -> bool:
+    now = time.time()
+    _rate_registry[ip] = [t for t in _rate_registry[ip] if now - t < _RATE_WINDOW_SEC]
+    if len(_rate_registry[ip]) >= _RATE_LIMIT:
+        return False
+    _rate_registry[ip].append(now)
+    return True
+
 
 async def _get_or_create_token(session: AsyncSession) -> str:
     """Return the node registration token, auto-generating it on first call."""
@@ -47,7 +64,9 @@ async def _get_or_create_token(session: AsyncSession) -> str:
 
 
 @api_router.get("/install-script", response_class=PlainTextResponse)
-async def get_install_script() -> PlainTextResponse:
+async def get_install_script(request: Request) -> PlainTextResponse:
+    if not _check_rate_limit(request.client.host if request.client else ""):
+        raise HTTPException(status_code=429, detail="Too many requests")
     script_path = os.path.join(settings.APP_DIR, "install_node.sh")
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail="install_node.sh not found")
@@ -57,7 +76,9 @@ async def get_install_script() -> PlainTextResponse:
 
 
 @api_router.get("/fix-reality-script", response_class=PlainTextResponse)
-async def get_fix_reality_script() -> PlainTextResponse:
+async def get_fix_reality_script(request: Request) -> PlainTextResponse:
+    if not _check_rate_limit(request.client.host if request.client else ""):
+        raise HTTPException(status_code=429, detail="Too many requests")
     script_path = os.path.join(settings.APP_DIR, "fix_reality.sh")
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail="fix_reality.sh not found")
@@ -514,6 +535,9 @@ async def register_node(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     import json as _json
+    client_ip = request.client.host if request.client else ""
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many requests")
     stored_token = await _get_or_create_token(session)
     incoming_token = request.headers.get("X-Node-Token", "")
     if not incoming_token or incoming_token != stored_token:
