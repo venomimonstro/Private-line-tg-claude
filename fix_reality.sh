@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Private Line — Fix VLESS Reality on existing node
 # Regenerates x25519 keys, writes full XRay config with DNS-over-HTTPS,
-# 8 shortIds, sniffing, and restarts Marzban.
+# 8 shortIds, sniffing disabled, and restarts Marzban.
 # Usage: bash /app/fix_reality.sh   (run inside admin container or on node directly)
 set -euo pipefail
 
@@ -69,10 +69,7 @@ config = {
         "port": int(os.environ["VPN_PORT_VAL"]),
         "protocol": "vless",
         "settings": {"clients": [], "decryption": "none"},
-        "sniffing": {
-            "enabled": True,
-            "destOverride": ["http", "tls", "quic"]
-        },
+        "sniffing": {"enabled": False},
         "streamSettings": {
             "network": "tcp",
             "security": "reality",
@@ -110,9 +107,14 @@ success "xray_config.json записан (порт $VPN_PORT, 8 shortIds, DoH DN
 echo -e "\n${BOLD}${GREEN}══ Обновление файерволла ══${RESET}"
 
 if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    # Remove old VPN port if it was 10443
+    ufw delete allow 10443/tcp >/dev/null 2>&1 && warn "Удалил старое правило 10443/tcp" || true
+    ufw delete allow 10443 >/dev/null 2>&1 || true
+    # Open new port
     ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1 \
         && success "Порт $VPN_PORT открыт в ufw" \
         || warn "Не удалось открыть порт $VPN_PORT в ufw"
+    ufw status | grep -E "443|22|ssh" | head -10
 fi
 
 echo -e "\n${BOLD}${GREEN}══ Перезапуск Marzban ══${RESET}"

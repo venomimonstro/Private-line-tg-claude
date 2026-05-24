@@ -217,10 +217,7 @@ config = {
         "port": int(os.environ["VPN_PORT_VAL"]),
         "protocol": "vless",
         "settings": {"clients": [], "decryption": "none"},
-        "sniffing": {
-            "enabled": True,
-            "destOverride": ["http", "tls", "quic"]
-        },
+        "sniffing": {"enabled": False},
         "streamSettings": {
             "network": "tcp",
             "security": "reality",
