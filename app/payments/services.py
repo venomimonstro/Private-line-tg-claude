@@ -107,8 +107,10 @@ async def create_payment(
         amount = float(tariff.price_monthly)
 
     # One subscription per user: reuse existing instead of creating a new one.
+    # Order by id desc so we always pick the most recent (and most likely active) one.
     existing_result = await session.execute(
-        select(Subscription).where(Subscription.user_id == user_id).limit(1)
+        select(Subscription).where(Subscription.user_id == user_id)
+        .order_by(Subscription.id.desc()).limit(1)
     )
     existing = existing_result.scalar_one_or_none()
 

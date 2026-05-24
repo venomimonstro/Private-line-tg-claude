@@ -13,7 +13,11 @@
       <span class="badge {% if server.status.value == 'active' %}bg-success{% else %}bg-secondary{% endif %}">{{ server.status.value }}</span>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-sm btn-outline-primary" onclick="testServer({{ server.id }}, this)">Проверить</button>
+      <button class="btn btn-sm btn-outline-primary" onclick="testServer({{ server.id }}, this)">🔍 Проверить</button>
+      <button class="btn btn-sm btn-success" onclick="fixVlessKeys({{ server.id }}, this)"
+              title="Перевыпустить все активные ключи с актуальными Reality-параметрами. Запускать после fix_reality.sh на ноде.">
+        🔧 Починить VLESS
+      </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="toggleEdit({{ server.id }})">✏️ Изменить</button>
       <form method="post" action="/admin/servers/{{ server.id }}/disable">
         <button class="btn btn-sm btn-outline-warning" onclick="return confirm('Отключить сервер?')">Откл.</button>
@@ -22,6 +26,7 @@
         <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Удалить {{ server.name }}? Все ключи этого сервера тоже удалятся.')">Удалить</button>
       </form>
     </div>
+    <div id="fix-result-{{ server.id }}" class="mt-2 d-none small"></div>
 
     <div id="edit-{{ server.id }}" class="mt-3 d-none border-top pt-3">
       <form method="post" action="/admin/servers/{{ server.id }}/edit">
@@ -161,6 +166,28 @@ async function testServer(id, btn) {
     }
   } catch(e) { btn.textContent = '❌ ' + e; }
   setTimeout(() => { btn.disabled=false; btn.textContent='Проверить'; }, 5000);
+}
+async function fixVlessKeys(id, btn) {
+  if (!confirm('Перевыпустить все активные VLESS-ключи на этом сервере?\n\nКаждый пользователь получит новый ключ в Telegram.\nЗапускайте после fix_reality.sh на ноде.')) return;
+  btn.disabled = true; btn.textContent = '⏳ Перевыпускаю...';
+  const resultBox = document.getElementById('fix-result-' + id);
+  try {
+    const r = await fetch('/admin/servers/' + id + '/fix-vless-keys', {method: 'POST'});
+    const d = await r.json();
+    resultBox.className = 'mt-2 small alert ' + (d.ok ? 'alert-success' : 'alert-danger');
+    if (d.ok) {
+      resultBox.innerHTML = `✅ Исправлено: <strong>${d.fixed}</strong> из ${d.total} ключей. Пользователи получили новые ключи.` +
+        (d.errors.length ? `<br><small class="text-danger">Ошибки: ${d.errors.join('; ')}</small>` : '');
+    } else {
+      resultBox.textContent = '❌ ' + (d.error || JSON.stringify(d));
+    }
+    resultBox.classList.remove('d-none');
+  } catch(e) {
+    resultBox.className = 'mt-2 small alert alert-danger';
+    resultBox.textContent = '❌ Ошибка: ' + e;
+    resultBox.classList.remove('d-none');
+  }
+  btn.disabled = false; btn.textContent = '🔧 Починить VLESS';
 }
 async function migrateToVless(btn) {
   if (!confirm('Мигрировать всех пользователей с Outline на VLESS?\nКаждый получит новый ключ в боте. Outline-серверы будут отключены.')) return;

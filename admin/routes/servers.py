@@ -133,9 +133,22 @@ async def reality_debug(
 
     public_key, short_id, sni = reality
 
-    # Build a sample URL to verify format
+    # Extract VPN port from server config for accurate sample URL
+    _vpn_port = 443
+    try:
+        _cfg = await client.get_core_config() if hasattr(client, "get_core_config") else None
+        if _cfg is None:
+            import json as _j2
+            _raw2 = (await client._client.get(
+                f"{client._base}/api/core/config",
+                headers=await client._headers(),
+            )).json()
+            _vpn_port = _raw2.get("inbounds", [{}])[0].get("port", 443)
+    except Exception:
+        pass
+
     sample_url = (
-        f"vless://EXAMPLE-UUID@SERVER_IP:10443"
+        f"vless://EXAMPLE-UUID@SERVER_IP:{_vpn_port}"
         f"?type=tcp&security=reality&flow=xtls-rprx-vision"
         f"&pbk={public_key}&sid={short_id}&sni={sni}&fp=chrome#PrivateLine"
     )
@@ -263,6 +276,104 @@ async def test_server(
         "username": creds.get("username", ""),
         "has_password": bool(creds.get("password")),
     }
+
+
+@router.post("/{server_id}/fix-vless-keys")
+async def fix_vless_keys(
+    server_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> dict:
+    """Reissue every active VPN key on this server with fresh Reality params.
+
+    Call after running fix_reality.sh on the node (which changes the x25519
+    keypair). Stored VLESS URLs in the DB will have an outdated pbk — this
+    endpoint creates new Marzban users, stores fresh URLs, and sends new
+    keys to users via Telegram.
+    """
+    from app.encryption import decrypt as _decrypt
+    from app.enums import VpnKeyStatus
+    from app.models.subscription import Subscription
+    from app.models.tariff import Tariff
+    from app.models.vpn_key import VpnKey
+    from app.services.vpn_key import _make_client, _server_protocol, create_vpn_key, disable_vpn_key
+
+    server = await session.get(VpnServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404)
+
+    if _server_protocol(server) != "marzban":
+        return {"ok": False, "error": "Not a Marzban server"}
+
+    keys_result = await session.execute(
+        select(VpnKey).where(
+            VpnKey.server_id == server_id,
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    keys = keys_result.scalars().all()
+
+    fixed = 0
+    errors: list[str] = []
+
+    for key in keys:
+        try:
+            sub = await session.get(Subscription, key.subscription_id)
+            tariff = await session.get(Tariff, sub.tariff_id) if sub else None
+            traffic_gb = tariff.traffic_limit_gb if tariff else None
+            saved_label = key.label
+            saved_user_id = key.user_id
+            saved_sub_id = key.subscription_id
+
+            # Revoke old key on Marzban + mark disabled in DB
+            await disable_vpn_key(key, server, session)
+            key.status = VpnKeyStatus.reissued  # override disabled → reissued
+
+            # Create fresh key — create_key() calls get_reality_params() which
+            # fetches the new x25519 public key from /api/core/config and
+            # injects it into the VLESS URL automatically.
+            new_key = await create_vpn_key(
+                user_id=saved_user_id,
+                subscription_id=saved_sub_id,
+                server=server,
+                traffic_limit_gb=traffic_gb,
+                label=saved_label,
+                session=session,
+            )
+
+            # Notify user in Telegram
+            user_result = await session.execute(select(User).where(User.id == new_key.user_id))
+            key_user = user_result.scalar_one_or_none()
+            if key_user:
+                from app.services.user_notifications import send_key_to_user
+                try:
+                    await send_key_to_user(key_user.telegram_id, new_key)
+                except Exception as notify_exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Could not notify user %s after fix-vless-keys: %s",
+                        key_user.telegram_id, notify_exc,
+                    )
+
+            fixed += 1
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).error("fix-vless-keys key %s: %s", key.id, exc)
+            errors.append(f"key {key.id}: {str(exc)[:120]}")
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="fix_vless_keys",
+        target_entity="vpn_server",
+        target_entity_id=server_id,
+        details={"fixed": fixed, "total": len(keys), "errors": errors},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+
+    return {"ok": True, "fixed": fixed, "total": len(keys), "errors": errors}
 
 
 @router.post("/{server_id}/edit")
