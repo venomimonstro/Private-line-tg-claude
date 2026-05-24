@@ -54,15 +54,7 @@ import json, os
 
 config = {
     "log": {"loglevel": "warning"},
-    # DoH servers so XRay resolves DNS via HTTPS (port 443), not plain UDP/853.
-    # This intercepts NekoBox's DoT queries that would fail on blocked port 853.
-    "dns": {
-        "servers": [
-            {"address": "https://1.1.1.1/dns-query", "domains": []},
-            {"address": "https://8.8.8.8/dns-query", "domains": []},
-            "localhost"
-        ]
-    },
+    "dns": {"servers": ["1.1.1.1", "8.8.8.8", "localhost"]},
     "inbounds": [{
         "tag": "VLESS-TCP",
         "listen": "0.0.0.0",
@@ -78,24 +70,18 @@ config = {
                 "dest": os.environ["REALITY_DEST_VAL"],
                 "serverNames": [os.environ["REALITY_SNI_VAL"]],
                 "privateKey": os.environ["PRIVATE_KEY_VAL"],
-                # 8 shortIds make fingerprinting the Reality handshake much harder
                 "shortIds": [os.urandom(8).hex() for _ in range(8)]
             }
         }
     }],
     "outbounds": [
         {"tag": "direct", "protocol": "freedom"},
-        {"tag": "block", "protocol": "blackhole"},
-        {"tag": "dns-out", "protocol": "dns"}
+        {"tag": "block",  "protocol": "blackhole"},
     ],
     "routing": {
         "rules": [
-            {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
-            # Redirect port 853 (DoT) and port 53 (DNS) to XRay's dns-out
-            # so they are resolved via DoH internally, not sent over the tunnel.
-            {"type": "field", "port": "853", "outboundTag": "dns-out"},
-            {"type": "field", "port": "53", "network": "udp", "outboundTag": "dns-out"},
-            {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
+            {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
+            {"type": "field", "network": "udp,tcp",    "outboundTag": "direct"}
         ]
     }
 }

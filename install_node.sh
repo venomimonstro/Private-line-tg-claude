@@ -116,12 +116,11 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
   }],
   "outbounds": [
     {"tag": "direct", "protocol": "freedom"},
-    {"tag": "block", "protocol": "blackhole"},
-    {"tag": "dns-out", "protocol": "dns"}
+    {"tag": "block", "protocol": "blackhole"}
   ],
   "routing": {
     "rules": [
-      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
       {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
     ]
   }
@@ -193,8 +192,7 @@ success "Reality Public Key: $PUBLIC_KEY"
 
 # Write final XRay config with Reality via Python:
 #  - 8 random shortIds (defeats Reality handshake fingerprinting)
-#  - DNS-over-HTTPS (fixes NekoBox DoT/port-853 failures from VPS)
-#  - sniffing for protocol detection
+#  - plain UDP DNS (1.1.1.1, 8.8.8.8)
 VPN_PORT_VAL=$VPN_PORT \
 PRIVATE_KEY_VAL="$PRIVATE_KEY" \
 REALITY_SNI_VAL="$REALITY_SNI" \
@@ -204,13 +202,7 @@ import json, os
 
 config = {
     "log": {"loglevel": "warning"},
-    "dns": {
-        "servers": [
-            {"address": "https://1.1.1.1/dns-query", "domains": []},
-            {"address": "https://8.8.8.8/dns-query", "domains": []},
-            "localhost"
-        ]
-    },
+    "dns": {"servers": ["1.1.1.1", "8.8.8.8", "localhost"]},
     "inbounds": [{
         "tag": "VLESS-TCP",
         "listen": "0.0.0.0",
@@ -232,22 +224,19 @@ config = {
     }],
     "outbounds": [
         {"tag": "direct", "protocol": "freedom"},
-        {"tag": "block", "protocol": "blackhole"},
-        {"tag": "dns-out", "protocol": "dns"}
+        {"tag": "block",  "protocol": "blackhole"},
     ],
     "routing": {
         "rules": [
-            {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
-            {"type": "field", "port": "853", "outboundTag": "dns-out"},
-            {"type": "field", "port": "53", "network": "udp", "outboundTag": "dns-out"},
-            {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
+            {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
+            {"type": "field", "network": "udp,tcp",    "outboundTag": "direct"}
         ]
     }
 }
 print(json.dumps(config, indent=2))
 PYEOF
 
-success "XRay конфиг с Reality записан (порт $VPN_PORT, 8 shortIds, DoH DNS)"
+success "XRay конфиг с Reality записан (порт $VPN_PORT, 8 shortIds)"
 
 # Restart Marzban to apply Reality config
 info "Перезапускаю Marzban с Reality конфигом..."
