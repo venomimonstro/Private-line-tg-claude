@@ -65,7 +65,7 @@
         {% if wr.status == 'pending' %}
         <div class="d-flex flex-column gap-1">
           <form method="post" action="/admin/withdrawals/{{ wr.id }}/approve"
-                onsubmit="return confirm('Одобрить вывод {{ '%.2f'|format(wr.amount_rub) }} ₽ ({{ wr.stars_amount }} Stars)?\nНе забудьте вручную отправить Stars пользователю TG ID: {{ wr.user.telegram_id if wr.user else \"?\" }}')">
+                onsubmit="return confirm('Одобрить вывод {{ wr.amount_rub }} руб. ({{ wr.stars_amount }} Stars)? Не забудьте отправить Stars пользователю TG ID: {{ wr.user.telegram_id if wr.user }}!')">
             <input type="text" name="admin_note" class="form-control form-control-sm mb-1"
                    placeholder="Комментарий (необязательно)">
             <button class="btn btn-sm btn-success w-100">
