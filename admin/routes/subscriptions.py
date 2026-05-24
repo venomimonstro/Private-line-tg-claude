@@ -294,7 +294,7 @@ async def admin_reissue_key(
         raise HTTPException(status_code=404, detail="Server not found")
 
     try:
-        await vpn_key_service.reissue_vpn_key(
+        new_key = await vpn_key_service.reissue_vpn_key(
             key, server, sub.tariff.slug, sub.tariff.traffic_limit_gb, session
         )
     except ValueError as exc:
@@ -313,4 +313,21 @@ async def admin_reissue_key(
     )
     session.add(log)
     await session.commit()
+
+    # Notify the user in Telegram with their new key
+    if new_key is not None:
+        from app.services.user_notifications import send_key_to_user
+        try:
+            user_result = await session.execute(
+                select(User).where(User.id == new_key.user_id)
+            )
+            key_user = user_result.scalar_one_or_none()
+            if key_user:
+                await send_key_to_user(key_user.telegram_id, new_key)
+        except Exception as _notify_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Failed to notify user after admin reissue: %s", _notify_exc
+            )
+
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)

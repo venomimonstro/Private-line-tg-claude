@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import logging
+import re
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -25,6 +28,7 @@ class MarzbanClient:
         self._password = password
         self._token: str | None = None
         self._client = httpx.AsyncClient(verify=False, timeout=15.0)
+        self._reality_cache: tuple[str, str, str] | None = None  # (pubkey, short_id, sni)
 
     async def _auth(self) -> str:
         resp = await self._client.post(
@@ -40,9 +44,65 @@ class MarzbanClient:
             await self._auth()
         return {"Authorization": f"Bearer {self._token}"}
 
+    async def get_reality_params(self) -> tuple[str, str, str] | None:
+        """Return (public_key, short_id, sni) from the server's XRay config.
+
+        Calls /api/core/config, finds the first inbound with security=reality,
+        derives the x25519 public key from the stored private key, and returns
+        everything needed to build a valid Reality VLESS link.
+        """
+        if self._reality_cache is not None:
+            return self._reality_cache
+        try:
+            headers = await self._headers()
+            resp = await self._client.get(f"{self._base}/api/core/config", headers=headers)
+            if resp.status_code != 200:
+                return None
+            config = resp.json()
+            for inbound in config.get("inbounds", []):
+                stream = inbound.get("streamSettings", {})
+                if stream.get("security") != "reality":
+                    continue
+                reality = stream.get("realitySettings", {})
+                priv_b64 = reality.get("privateKey", "")
+                short_ids = reality.get("shortIds", [])
+                server_names = reality.get("serverNames", [])
+                if not priv_b64 or not short_ids:
+                    continue
+
+                from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+                # XRay encodes keys as base64url without padding
+                padded = priv_b64 + "=" * (-len(priv_b64) % 4)
+                priv_key = X25519PrivateKey.from_private_bytes(base64.urlsafe_b64decode(padded))
+                pub_bytes = priv_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+                public_key = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+
+                short_id = next((s for s in short_ids if s), "")
+                sni = server_names[0] if server_names else "www.microsoft.com"
+
+                self._reality_cache = (public_key, short_id, sni)
+                return self._reality_cache
+        except Exception as exc:
+            logger.warning("Could not fetch Reality params from Marzban: %s", exc)
+        return None
+
+    def _inject_reality(self, url: str, public_key: str, short_id: str, sni: str) -> str:
+        """Return url with security=reality and pbk/sid/sni/fp query params set."""
+        parsed = urlparse(url)
+        qs = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
+        qs["security"] = "reality"
+        qs["pbk"] = public_key
+        qs["sni"] = sni
+        qs.setdefault("fp", "chrome")
+        qs.setdefault("type", "tcp")
+        if short_id:
+            qs["sid"] = short_id
+        return urlunparse(parsed._replace(query=urlencode(qs)))
+
     async def create_key(self, name: str, traffic_limit_gb: float | None = None) -> MarzbanKey:
         headers = await self._headers()
-        # Marzban usernames: 3-32 chars, alphanumeric + underscore
         safe_name = name[:32]
         body: dict = {
             "username": safe_name,
@@ -56,7 +116,7 @@ class MarzbanClient:
 
         resp = await self._client.post(f"{self._base}/api/user", headers=headers, json=body)
         if resp.status_code == 409:
-            # User already exists in Marzban — fetch their data instead
+            # User already exists — fetch current data
             get_resp = await self._client.get(f"{self._base}/api/user/{safe_name}", headers=headers)
             get_resp.raise_for_status()
             data = get_resp.json()
@@ -67,7 +127,7 @@ class MarzbanClient:
         links: list[str] = data.get("links", [])
         vless_links = [lnk for lnk in links if lnk.startswith("vless://")]
 
-        # If Marzban returned no links, try fetching from subscription URL
+        # Fallback: decode Marzban subscription URL (base64-encoded link list)
         if not vless_links:
             sub_path = data.get("subscription_url", "")
             if sub_path:
@@ -75,30 +135,46 @@ class MarzbanClient:
                 try:
                     sub_resp = await self._client.get(full_sub, headers=headers)
                     if sub_resp.status_code == 200:
-                        import base64 as _b64
-                        decoded = _b64.b64decode(sub_resp.text.strip()).decode("utf-8")
+                        decoded = base64.b64decode(sub_resp.text.strip()).decode("utf-8")
                         vless_links = [ln for ln in decoded.strip().split("\n") if ln.startswith("vless://")]
                 except Exception:
                     pass
 
         if vless_links:
             access_url = vless_links[0]
-            # Fix 0.0.0.0 — Marzban uses bind address instead of public IP
+            # Fix bind address 0.0.0.0 → server's public IP from API URL
             if "@0.0.0.0:" in access_url:
-                import re as _re
-                m = _re.match(r'https?://([^:/]+)', self._base)
+                m = re.match(r'https?://([^:/]+)', self._base)
                 if m:
-                    access_url = _re.sub(r'@0\.0\.0\.0:', f'@{m.group(1)}:', access_url)
+                    access_url = re.sub(r'@0\.0\.0\.0:', f'@{m.group(1)}:', access_url)
         else:
-            # Last resort — build minimal VLESS URL from UUID
+            # Last resort: build minimal URL from UUID
             uuid = data.get("proxies", {}).get("vless", {}).get("id", "")
             if uuid:
-                import re as _re
-                m = _re.match(r'https?://([^:/]+)', self._base)
+                m = re.match(r'https?://([^:/]+)', self._base)
                 host = m.group(1) if m else "unknown"
                 access_url = f"vless://{uuid}@{host}:10443?type=tcp&security=none#{safe_name}"
             else:
                 access_url = ""
+
+        # Guarantee Reality params are present.
+        # Marzban omits pbk/sid when the hosts API hasn't been configured yet
+        # or when the user was created before Reality was set up.
+        if access_url and "pbk=" not in access_url:
+            reality = await self.get_reality_params()
+            if reality:
+                public_key, short_id, sni = reality
+                access_url = self._inject_reality(access_url, public_key, short_id, sni)
+                logger.info(
+                    "Injected Reality params into VLESS link for %s (pbk=%s...)",
+                    safe_name, public_key[:8],
+                )
+            else:
+                logger.warning(
+                    "VLESS link for %s is missing Reality params and server config is unavailable. "
+                    "Run fix_reality.sh on the node.",
+                    safe_name,
+                )
 
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
 
