@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_session
 from app.enums import PaymentStatus
 from app.models.payment import Payment
-from app.payments.registry import get_provider
+from app.payments.registry import get_provider_db
 from app.payments.services import confirm_payment_auto
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -41,7 +41,7 @@ async def payment_webhook(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     try:
-        provider = get_provider(provider_name)
+        provider = await get_provider_db(provider_name, session)
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown provider")
 

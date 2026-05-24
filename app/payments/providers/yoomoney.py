@@ -52,7 +52,7 @@ class YooMoneyProvider(PaymentProviderBase):
         headers: dict[str, str],
     ) -> IncomingPayment | None:
         try:
-            params = {k: v[0] for k, v in parse_qs(body.decode()).items()}
+            params = {k: v[0].strip() for k, v in parse_qs(body.decode()).items()}
             notification_type = params.get("notification_type", "")
             operation_id = params.get("operation_id", "")
             amount = params.get("amount", "")
@@ -62,6 +62,10 @@ class YooMoneyProvider(PaymentProviderBase):
             codepro = params.get("codepro", "")
             label = params.get("label", "")
             sha1_hash = params.get("sha1_hash", "")
+            logger.info(
+                "YooMoney webhook received: type=%s label=%s amount=%s secret_len=%d",
+                notification_type, label, amount, len(self._secret),
+            )
 
             check_str = (
                 f"{notification_type}&{operation_id}&{amount}&{currency}"
@@ -84,5 +88,6 @@ class YooMoneyProvider(PaymentProviderBase):
                 amount=float(amount),
                 currency="RUB",
             )
-        except Exception:
+        except Exception as exc:
+            logger.error("YooMoney webhook parse error: %s", exc)
             return None
