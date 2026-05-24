@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+_MARKDOWN_LINK_RE = re.compile(r'\[([^\]]+)\]\([^)]*\)')
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -80,7 +82,10 @@ class MarzbanClient:
                 public_key = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
 
                 short_id = next((s for s in short_ids if s), "")
-                sni = server_names[0] if server_names else "www.microsoft.com"
+                raw_sni = server_names[0] if server_names else "www.microsoft.com"
+                # Strip markdown link formatting that can corrupt xray_config.json
+                # e.g. '[www.microsoft.com](https://...)' → 'www.microsoft.com'
+                sni = _MARKDOWN_LINK_RE.sub(r"\1", raw_sni)
 
                 self._reality_cache = (public_key, short_id, sni)
                 return self._reality_cache
