@@ -31,17 +31,35 @@
   </div>
   <div class="col-md-8">
     <div class="card p-3 mb-3">
-      <h6 class="fw-bold">Подписки</h6>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="fw-bold mb-0">Подписки</h6>
+        {% if user.subscriptions|length > 1 %}
+        <form method="post" action="/admin/subscriptions/cleanup-duplicates"
+              onsubmit="return confirm('Оставить только лучшую подписку для этого пользователя?')">
+          <button class="btn btn-outline-warning btn-sm">🧹 Слить дубликаты</button>
+        </form>
+        {% endif %}
+      </div>
       <table class="table table-sm">
-        <thead><tr><th>#</th><th>Тариф</th><th>Статус</th><th>До</th></tr></thead>
+        <thead><tr><th>#</th><th>Тариф</th><th>Статус</th><th>До</th><th></th></tr></thead>
         <tbody>
         {% for sub in user.subscriptions %}
         <tr>
-          <td>{{ sub.id }}</td><td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
-          <td><span class="badge bg-secondary">{{ sub.status.value }}</span></td>
+          <td>{{ sub.id }}</td>
+          <td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
+          <td>
+            {% if sub.status.value == 'active' %}<span class="badge bg-success">активна</span>
+            {% elif sub.status.value == 'expires_soon' %}<span class="badge bg-warning text-dark">истекает</span>
+            {% elif sub.status.value == 'expired' %}<span class="badge bg-secondary">истекла</span>
+            {% elif sub.status.value == 'disabled' %}<span class="badge bg-danger">отключена</span>
+            {% elif sub.status.value == 'activation_error' %}<span class="badge bg-danger">ошибка</span>
+            {% elif sub.status.value == 'pending_payment' %}<span class="badge bg-warning text-dark">ожидает оплаты</span>
+            {% else %}<span class="badge bg-secondary">{{ sub.status.value }}</span>{% endif %}
+          </td>
           <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
+          <td><a href="/admin/subscriptions/{{ sub.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
         </tr>
-        {% else %}<tr><td colspan="4" class="text-muted text-center">Нет подписок</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="5" class="text-muted text-center">Нет подписок</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>

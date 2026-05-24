@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,6 +55,72 @@ async def list_subscriptions(
         "status_filter": status_filter, "statuses": list(SubscriptionStatus),
         "page_title": "Подписки",
     })
+
+
+@router.post("/cleanup-duplicates")
+async def cleanup_duplicate_subscriptions(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    """For every user with >1 subscription: keep the best one, delete the rest."""
+    from app.models.vpn_key import VpnKey
+
+    _STATUS_PRIORITY = {
+        SubscriptionStatus.active: 0,
+        SubscriptionStatus.expires_soon: 1,
+        SubscriptionStatus.activation_error: 2,
+        SubscriptionStatus.pending_payment: 3,
+        SubscriptionStatus.expired: 4,
+        SubscriptionStatus.disabled: 5,
+    }
+
+    dup_result = await session.execute(
+        select(Subscription.user_id)
+        .group_by(Subscription.user_id)
+        .having(func.count() > 1)
+    )
+    user_ids = [row[0] for row in dup_result.all()]
+
+    removed = 0
+    for user_id in user_ids:
+        subs_result = await session.execute(
+            select(Subscription)
+            .options(selectinload(Subscription.vpn_keys))
+            .where(Subscription.user_id == user_id)
+        )
+        subs = list(subs_result.scalars().all())
+        if len(subs) <= 1:
+            continue
+
+        best = min(subs, key=lambda s: (_STATUS_PRIORITY.get(s.status, 99), -s.id))
+        for sub in subs:
+            if sub.id == best.id:
+                continue
+            for key in sub.vpn_keys:
+                if key.status == VpnKeyStatus.active:
+                    srv = await session.get(VpnServer, key.server_id)
+                    if srv:
+                        try:
+                            await vpn_key_service.disable_vpn_key(key, srv, session)
+                            srv.current_users = max(0, srv.current_users - 1)
+                        except Exception:
+                            pass
+            await session.execute(sa_delete(VpnKey).where(VpnKey.subscription_id == sub.id))
+            await session.delete(sub)
+            removed += 1
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="cleanup_duplicate_subscriptions",
+        target_entity="subscription",
+        target_entity_id=0,
+        details={"users_cleaned": len(user_ids), "removed": removed},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions?msg=Удалено+дубликатов%3A+{removed}", status_code=303)
 
 
 @router.get("/{sub_id}", response_class=HTMLResponse)
@@ -158,6 +224,70 @@ async def change_tariff(
         target_entity="subscription",
         target_entity_id=sub_id,
         details={"old_tariff_id": old_tariff_id, "new_tariff_id": tariff.id, "new_tariff_slug": tariff.slug},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/activate")
+async def admin_activate_subscription(
+    sub_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    """Force-activate any subscription: disable existing keys, create fresh key, send to user."""
+    result = await session.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff), selectinload(Subscription.vpn_keys))
+        .where(Subscription.id == sub_id)
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404)
+    if sub.tariff is None:
+        raise HTTPException(status_code=400, detail="Тариф не найден")
+
+    from datetime import datetime as _dt
+    from app.models.vpn_key import VpnKey
+
+    # Disable all existing active keys cleanly
+    for key in sub.vpn_keys:
+        if key.status == VpnKeyStatus.active:
+            srv = await session.get(VpnServer, key.server_id)
+            if srv:
+                try:
+                    await vpn_key_service.disable_vpn_key(key, srv, session)
+                    srv.current_users = max(0, srv.current_users - 1)
+                except Exception:
+                    key.status = VpnKeyStatus.disabled
+                    key.disabled_at = _dt.utcnow()
+            else:
+                key.status = VpnKeyStatus.disabled
+                key.disabled_at = _dt.utcnow()
+
+    sub.activation_attempts = 0
+    sub.status = SubscriptionStatus.pending_payment
+    await session.flush()
+
+    from app.services.user_notifications import send_key_to_user
+    try:
+        vpn_key = await activate_subscription(
+            sub, sub.tariff, session, send_key_callback=send_key_to_user,
+        )
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).error("Admin activate sub %d: %s", sub_id, exc)
+        raise HTTPException(status_code=503, detail=f"VPN сервер недоступен: {exc}")
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="admin_activate_subscription",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        details={"success": vpn_key is not None, "tariff": sub.tariff.slug},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)

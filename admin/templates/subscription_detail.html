@@ -6,40 +6,63 @@
       <h6 class="fw-bold">Подписка #{{ sub.id }}</h6>
       <table class="table table-sm">
         <tr><td>Пользователь</td><td><a href="/admin/users/{{ sub.user_id }}">{{ sub.user_id }}</a></td></tr>
-        <tr><td>Тариф</td><td>{{ sub.tariff.slug if sub.tariff else "—" }}</td></tr>
+        <tr><td>Тариф</td><td><strong>{{ sub.tariff.name if sub.tariff else "—" }}</strong> <small class="text-muted">({{ sub.tariff.slug if sub.tariff else "" }})</small></td></tr>
         <tr><td>Статус</td><td>
-          <span class="badge {% if sub.status.value == 'active' %}bg-success{% elif sub.status.value == 'activation_error' %}bg-danger{% else %}bg-secondary{% endif %}">
-            {{ sub.status.value }}
-          </span>
+          {% if sub.status.value == 'active' %}<span class="badge bg-success">активна</span>
+          {% elif sub.status.value == 'expires_soon' %}<span class="badge bg-warning text-dark">истекает</span>
+          {% elif sub.status.value == 'expired' %}<span class="badge bg-secondary">истекла</span>
+          {% elif sub.status.value == 'disabled' %}<span class="badge bg-danger">отключена</span>
+          {% elif sub.status.value == 'activation_error' %}<span class="badge bg-danger">ошибка активации</span>
+          {% elif sub.status.value == 'pending_payment' %}<span class="badge bg-warning text-dark">ожидает оплаты</span>
+          {% else %}<span class="badge bg-secondary">{{ sub.status.value }}</span>{% endif %}
         </td></tr>
         <tr><td>Начало</td><td>{{ sub.started_at.strftime('%d.%m.%Y') if sub.started_at else '—' }}</td></tr>
         <tr><td>Истекает</td><td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td></tr>
-        <tr><td>Лимит трафика</td><td>{{ sub.tariff.traffic_limit_gb if sub.tariff else "—" }} ГБ</td></tr>
-        <tr><td>Устройств</td><td>{{ sub.tariff.max_keys if sub.tariff else "—" }}</td></tr>
+        <tr><td>Трафик</td><td>{{ sub.tariff.traffic_limit_gb if sub.tariff else "—" }} ГБ</td></tr>
+        <tr><td>Создана</td><td>{{ sub.created_at.strftime('%d.%m.%Y %H:%M') if sub.created_at else '—' }}</td></tr>
         {% if sub.activation_attempts %}<tr><td>Попыток активации</td><td>{{ sub.activation_attempts }}</td></tr>{% endif %}
       </table>
+
       {% if sub.last_activation_error %}
-      <div class="alert alert-danger py-2 small mb-2">⚠️ Ошибка: {{ sub.last_activation_error }}</div>
+      <div class="alert alert-danger py-2 small mb-2">⚠️ {{ sub.last_activation_error }}</div>
       {% endif %}
+
       <div class="border-top pt-3 d-flex gap-2 flex-wrap">
-        {% if sub.status.value not in ('active', 'disabled', 'expired') %}
-        <form method="post" action="/admin/subscriptions/{{ sub.id }}/retry">
-          <button class="btn btn-sm btn-warning" onclick="return confirm('Повторить активацию и отправить ключ пользователю?')">🔄 Повторить активацию</button>
+        {# Activate: for any non-active subscription #}
+        {% if sub.status.value != 'active' %}
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/activate"
+              onsubmit="return confirm('Активировать подписку и отправить ключ пользователю?')">
+          <button class="btn btn-sm btn-success">▶ Активировать</button>
         </form>
         {% endif %}
-        <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable">
-          <button class="btn btn-sm btn-danger" onclick="return confirm('Отключить подписку?')">Отключить</button>
+
+        {# Retry: for activation errors/pending only (softer re-try without disable) #}
+        {% if sub.status.value in ('activation_error', 'pending_payment') %}
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/retry"
+              onsubmit="return confirm('Повторить активацию?')">
+          <button class="btn btn-sm btn-warning">🔄 Повторить</button>
         </form>
+        {% endif %}
+
+        {# Disable: only if active #}
+        {% if sub.status.value in ('active', 'expires_soon') %}
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable"
+              onsubmit="return confirm('Отключить подписку?')">
+          <button class="btn btn-sm btn-danger">Отключить</button>
+        </form>
+        {% endif %}
       </div>
+
       <div class="border-top pt-3 mt-2">
-        <h6>Сменить тариф</h6>
-        <form method="post" action="/admin/subscriptions/{{ sub.id }}/change-tariff" class="row g-2 align-items-center"
-              onsubmit="return confirm('Сменить тариф на выбранный?')">
-          <div class="col-auto">
+        <h6 class="mb-2">Сменить тариф</h6>
+        <form method="post" action="/admin/subscriptions/{{ sub.id }}/change-tariff"
+              class="row g-2 align-items-center"
+              onsubmit="return confirm('Сменить тариф?')">
+          <div class="col">
             <select name="tariff_id" class="form-select form-select-sm">
               {% for t in tariffs %}
               <option value="{{ t.id }}" {% if t.id == sub.tariff_id %}selected{% endif %}>
-                {{ t.slug }} — {{ t.price_monthly }} ₽/мес, {{ t.duration_days }}д
+                {{ t.name }} — {{ t.price_monthly }} ₽/мес, {{ t.duration_days }}д, {{ t.traffic_limit_gb }}ГБ
               </option>
               {% endfor %}
             </select>
@@ -47,52 +70,54 @@
           <div class="col-auto"><button type="submit" class="btn btn-sm btn-outline-secondary">Сменить</button></div>
         </form>
       </div>
+
       <div class="border-top pt-3 mt-2">
-        <h6>Продлить подписку</h6>
+        <h6 class="mb-2">Продлить подписку</h6>
         <form method="post" action="/admin/subscriptions/{{ sub.id }}/extend" class="row g-2">
-          <div class="col-auto"><input type="number" name="days" class="form-control" placeholder="Дней" min="1" max="365"></div>
-          <div class="col-auto"><button type="submit" class="btn btn-success">Продлить</button></div>
+          <div class="col-auto"><input type="number" name="days" class="form-control form-control-sm" placeholder="Дней" min="1" max="365" style="width:90px"></div>
+          <div class="col-auto"><button type="submit" class="btn btn-sm btn-success">Продлить</button></div>
         </form>
       </div>
     </div>
   </div>
+
   <div class="col-md-6">
     <div class="card p-3">
       <h6 class="fw-bold">VPN-ключи</h6>
       {% for kd in key_details %}
       {% set key = kd.key %}
       {% set server = kd.server %}
-      <div class="mb-3 p-2 border rounded {% if key.status.value == 'active' %}border-success{% endif %}">
+      <div class="mb-3 p-2 border rounded {% if key.status.value == 'active' %}border-success bg-light{% endif %}">
         <div class="d-flex justify-content-between align-items-start mb-1">
-          <div>
-            <span class="fw-semibold small">
-              {% if server %}{{ server.flag_emoji or '🌐' }} {{ server.country }}{% if server.city %}, {{ server.city }}{% endif %}{% else %}Сервер #{{ key.server_id }}{% endif %}
-            </span>
-            <span class="badge ms-1 {% if key.status.value == 'active' %}bg-success{% elif key.status.value == 'disabled' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ key.status.value }}</span>
+          <span class="fw-semibold small">
+            {% if server %}{{ server.flag_emoji or '🌐' }} {{ server.country }}{% if server.city %}, {{ server.city }}{% endif %}{% else %}Сервер #{{ key.server_id }}{% endif %}
+          </span>
+          <div class="d-flex align-items-center gap-2">
+            <span class="badge {% if key.status.value == 'active' %}bg-success{% elif key.status.value == 'disabled' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ key.status.value }}</span>
+            <small class="text-muted">ID: {{ key.id }}</small>
           </div>
-          <small class="text-muted">ID: {{ key.id }}</small>
         </div>
-        <div class="text-muted small mb-1">Трафик: {{ "%.2f"|format(key.traffic_used_gb) }} ГБ | Создан: {{ key.created_at.strftime('%d.%m.%Y') }}</div>
+        <div class="text-muted small mb-1">Трафик: {{ "%.2f"|format(key.traffic_used_gb) }} ГБ &nbsp;|&nbsp; {{ key.created_at.strftime('%d.%m.%Y') }}</div>
         {% if kd.access_url %}
-        <div class="mb-2">
-          <code class="small d-block text-break bg-light p-1 rounded" style="font-size:0.7rem;word-break:break-all">{{ kd.access_url }}</code>
-        </div>
+        <code class="small d-block text-break bg-white p-1 rounded mb-2" style="font-size:0.68rem;word-break:break-all">{{ kd.access_url }}</code>
         {% else %}
-        <div class="text-danger small mb-2">⚠️ Ключ пустой — нажмите «Перевыпустить»</div>
+        <div class="text-danger small mb-2">⚠️ URL пустой — перевыпустите ключ</div>
         {% endif %}
         {% if key.status.value == 'active' %}
         <div class="d-flex gap-1 flex-wrap">
-          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/disable">
-            <button class="btn btn-sm btn-outline-warning" onclick="return confirm('Отключить ключ?')">Отключить</button>
+          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/reissue"
+                onsubmit="return confirm('Перевыпустить? Пользователю придёт новый ключ.')">
+            <button class="btn btn-sm btn-outline-primary">🔄 Перевыпустить</button>
           </form>
-          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/reissue">
-            <button class="btn btn-sm btn-outline-primary" onclick="return confirm('Перевыпустить ключ? Старый перестанет работать.')">🔄 Перевыпустить</button>
+          <form method="post" action="/admin/subscriptions/{{ sub.id }}/keys/{{ key.id }}/disable"
+                onsubmit="return confirm('Отключить этот ключ?')">
+            <button class="btn btn-sm btn-outline-warning">Отключить ключ</button>
           </form>
         </div>
         {% endif %}
       </div>
       {% else %}
-      <p class="text-muted">VPN-ключей нет</p>
+      <p class="text-muted small">VPN-ключей нет — нажмите «Активировать»</p>
       {% endfor %}
     </div>
   </div>

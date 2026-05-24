@@ -54,8 +54,10 @@ async def activate_subscription(
     created_keys: list[VpnKey] = []
     last_exc: Exception | None = None
 
-    # Create one key per server so user can connect to any of them
-    for server in servers:
+    # Create one key on the least-loaded available server.
+    # We cap at 1 regardless of tariff.max_keys — one active subscription,
+    # one active key keeps things clean and debuggable.
+    for server in servers[:1]:
         label = f"{server.flag_emoji or '🌍'} {server.country}"
         try:
             key = await vpn_key_service.create_vpn_key(
