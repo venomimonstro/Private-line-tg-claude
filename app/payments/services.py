@@ -102,7 +102,7 @@ async def create_payment(
     tariff_result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
     tariff = tariff_result.scalar_one()
 
-    if tariff.slug == _START_TARIFF_SLUG and tariff.price_first_month is not None:
+    if tariff.price_first_month is not None:
         is_first = await _is_first_payment(user_id, session)
         amount = float(tariff.price_first_month if is_first else tariff.price_monthly)
     else:

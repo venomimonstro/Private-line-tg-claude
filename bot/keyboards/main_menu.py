@@ -18,10 +18,13 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 
 
 def tariff_selection_keyboard(tariffs: list) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=f"{t.name} — {int(t.price_monthly)} ₽/мес", callback_data=f"tariff:{t.slug}")]
-        for t in tariffs
-    ]
+    buttons = []
+    for t in tariffs:
+        if t.price_first_month is not None:
+            label = f"{t.name} — {int(t.price_first_month)} ₽ (1-й мес.) / {int(t.price_monthly)} ₽"
+        else:
+            label = f"{t.name} — {int(t.price_monthly)} ₽/мес"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"tariff:{t.slug}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

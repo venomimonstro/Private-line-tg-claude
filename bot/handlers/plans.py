@@ -131,9 +131,17 @@ async def _load_providers() -> list[str]:
 
 def _tariff_summary(tariff: Tariff) -> str:
     traffic = f"{tariff.traffic_limit_gb} ГБ/мес" if tariff.traffic_limit_gb else "Безлимит"
+    if tariff.price_first_month is not None:
+        price_line = (
+            f"💰 <s>{int(tariff.price_monthly)} ₽</s> → <b>{int(tariff.price_first_month)} ₽</b> в первый месяц\n"
+            f"   затем {int(tariff.price_monthly)} ₽/мес"
+        )
+    else:
+        price_line = f"💰 <b>{int(tariff.price_monthly)} ₽/мес</b>"
+    desc_line = f"\n📝 {tariff.description}" if tariff.description else ""
     return (
-        f"<b>Тариф «{tariff.name}»</b>\n"
-        f"💰 {int(tariff.price_monthly)} ₽/мес\n"
+        f"<b>Тариф «{tariff.name}»</b>{desc_line}\n\n"
+        f"{price_line}\n"
         f"📦 Трафик: {traffic}\n"
         f"📱 Устройств: {tariff.max_keys}"
     )
