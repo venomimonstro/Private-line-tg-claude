@@ -331,3 +331,49 @@ async def admin_reissue_key(
             )
 
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
+
+
+@router.post("/{sub_id}/delete")
+async def delete_subscription(
+    sub_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    from app.models.vpn_key import VpnKey
+    from sqlalchemy import delete as sa_delete
+
+    result = await session.execute(
+        select(Subscription).options(selectinload(Subscription.vpn_keys)).where(Subscription.id == sub_id)
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404)
+
+    if sub.status == SubscriptionStatus.active:
+        raise HTTPException(status_code=400, detail="Нельзя удалить активную подписку. Сначала отключите её.")
+
+    # Disable active keys on VPN server before removing from DB
+    for key in sub.vpn_keys:
+        if key.status == VpnKeyStatus.active:
+            server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
+            server = server_result.scalar_one_or_none()
+            if server:
+                try:
+                    await vpn_key_service.disable_vpn_key(key, server, session)
+                except Exception:
+                    pass
+
+    await session.execute(sa_delete(VpnKey).where(VpnKey.subscription_id == sub_id))
+    await session.delete(sub)
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="delete_subscription",
+        target_entity="subscription",
+        target_entity_id=sub_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse("/admin/subscriptions", status_code=303)

@@ -28,20 +28,29 @@ _PAGE_SIZE = 25
 async def list_vpn_keys(
     request: Request,
     page: int = 1,
+    status_filter: str = "active",
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    total_result = await session.execute(select(func.count(VpnKey.id)))
+    query = select(VpnKey)
+    if status_filter:
+        try:
+            query = query.where(VpnKey.status == VpnKeyStatus(status_filter))
+        except ValueError:
+            pass
+
+    total_result = await session.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar_one() or 0
     offset = (page - 1) * _PAGE_SIZE
     result = await session.execute(
-        select(VpnKey).order_by(VpnKey.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
+        query.order_by(VpnKey.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
     )
     keys = result.scalars().all()
 
     return templates.TemplateResponse("vpn_keys_list.html", {
         "request": request, "admin": admin, "keys": keys,
         "page": page, "total": total, "page_size": _PAGE_SIZE,
+        "status_filter": status_filter,
         "page_title": "VPN-ключи",
     })
 
