@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import urllib.parse
 from urllib.parse import parse_qs
 
 from app.payments.provider_base import IncomingPayment, PaymentProviderBase, PaymentResult
+
+logger = logging.getLogger(__name__)
 
 
 class YooMoneyProvider(PaymentProviderBase):
@@ -66,6 +69,10 @@ class YooMoneyProvider(PaymentProviderBase):
             )
             expected = hashlib.sha1(check_str.encode("utf-8")).hexdigest()
             if not hmac.compare_digest(expected, sha1_hash):
+                logger.error(
+                    "YooMoney signature mismatch: expected=%s got=%s label=%s amount=%s",
+                    expected, sha1_hash, label, amount,
+                )
                 return None
 
             if not label.startswith("pl_"):
