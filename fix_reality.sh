@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Private Line — Fix VLESS Reality on existing node
-# Generates valid x25519 keys and restarts Marzban
-# Usage: bash <(curl -fsSL http://YOUR_ADMIN/admin/api/fix-reality-script)
+# Regenerates x25519 keys, writes full XRay config with DNS-over-HTTPS,
+# 8 shortIds, sniffing, and restarts Marzban.
+# Usage: bash /app/fix_reality.sh   (run inside admin container or on node directly)
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -16,26 +17,23 @@ die()     { echo -e "${RED}[ERR]${RESET}  $*" >&2; exit 1; }
 
 MARZBAN_DIR="/opt/marzban"
 MARZBAN_DATA="/var/lib/marzban"
-VPN_PORT=10443
+VPN_PORT=443
 REALITY_SNI="www.microsoft.com"
 REALITY_DEST="www.microsoft.com:443"
 
 echo -e "\n${BOLD}${GREEN}══ Генерация VLESS Reality ключей ══${RESET}"
 
-# Generate keys using docker image
 info "Генерирую x25519 ключи..."
 XRAY_KEYS=$(docker run --rm --entrypoint xray gozargah/marzban:latest x25519 2>/dev/null) \
     || die "Не удалось сгенерировать ключи. Убедитесь что Docker установлен."
 
 PRIVATE_KEY=$(echo "$XRAY_KEYS" | grep "Private key" | awk '{print $3}')
 PUBLIC_KEY=$(echo "$XRAY_KEYS" | grep "Public key" | awk '{print $3}')
-SHORT_ID=$(openssl rand -hex 8)
 
 [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || die "Не удалось извлечь ключи из вывода xray."
 
 success "Private Key: ${PRIVATE_KEY:0:8}..."
 success "Public Key:  $PUBLIC_KEY"
-success "Short ID:    $SHORT_ID"
 
 # Detect server IP
 SERVER_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null \
@@ -45,41 +43,77 @@ success "IP сервера: $SERVER_IP"
 
 echo -e "\n${BOLD}${GREEN}══ Обновление XRay конфига ══${RESET}"
 
-cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [{
-    "tag": "VLESS-TCP",
-    "listen": "0.0.0.0",
-    "port": ${VPN_PORT},
-    "protocol": "vless",
-    "settings": {"clients": [], "decryption": "none"},
-    "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "show": false,
-        "dest": "${REALITY_DEST}",
-        "serverNames": ["${REALITY_SNI}"],
-        "privateKey": "${PRIVATE_KEY}",
-        "shortIds": ["${SHORT_ID}"]
-      }
-    }
-  }],
-  "outbounds": [
-    {"tag": "direct", "protocol": "freedom"},
-    {"tag": "block", "protocol": "blackhole"}
-  ],
-  "routing": {
-    "rules": [
-      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
-      {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
-    ]
-  }
-}
-XRAYEOF
+# Write XRay config via Python to get proper JSON, 8 random shortIds,
+# DNS-over-HTTPS section (fixes DoT/853 failures in NekoBox), and sniffing.
+VPN_PORT_VAL=$VPN_PORT \
+PRIVATE_KEY_VAL="$PRIVATE_KEY" \
+REALITY_SNI_VAL="$REALITY_SNI" \
+REALITY_DEST_VAL="$REALITY_DEST" \
+python3 << 'PYEOF' > "$MARZBAN_DATA/xray_config.json"
+import json, os
 
-success "xray_config.json записан"
+config = {
+    "log": {"loglevel": "warning"},
+    # DoH servers so XRay resolves DNS via HTTPS (port 443), not plain UDP/853.
+    # This intercepts NekoBox's DoT queries that would fail on blocked port 853.
+    "dns": {
+        "servers": [
+            {"address": "https://1.1.1.1/dns-query", "domains": []},
+            {"address": "https://8.8.8.8/dns-query", "domains": []},
+            "localhost"
+        ]
+    },
+    "inbounds": [{
+        "tag": "VLESS-TCP",
+        "listen": "0.0.0.0",
+        "port": int(os.environ["VPN_PORT_VAL"]),
+        "protocol": "vless",
+        "settings": {"clients": [], "decryption": "none"},
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"]
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": False,
+                "dest": os.environ["REALITY_DEST_VAL"],
+                "serverNames": [os.environ["REALITY_SNI_VAL"]],
+                "privateKey": os.environ["PRIVATE_KEY_VAL"],
+                # 8 shortIds make fingerprinting the Reality handshake much harder
+                "shortIds": [os.urandom(8).hex() for _ in range(8)]
+            }
+        }
+    }],
+    "outbounds": [
+        {"tag": "direct", "protocol": "freedom"},
+        {"tag": "block", "protocol": "blackhole"},
+        {"tag": "dns-out", "protocol": "dns"}
+    ],
+    "routing": {
+        "rules": [
+            {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+            # Redirect port 853 (DoT) and port 53 (DNS) to XRay's dns-out
+            # so they are resolved via DoH internally, not sent over the tunnel.
+            {"type": "field", "port": "853", "outboundTag": "dns-out"},
+            {"type": "field", "port": "53", "network": "udp", "outboundTag": "dns-out"},
+            {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
+        ]
+    }
+}
+print(json.dumps(config, indent=2))
+PYEOF
+
+success "xray_config.json записан (порт $VPN_PORT, 8 shortIds, DoH DNS)"
+
+echo -e "\n${BOLD}${GREEN}══ Обновление файерволла ══${RESET}"
+
+if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1 \
+        && success "Порт $VPN_PORT открыт в ufw" \
+        || warn "Не удалось открыть порт $VPN_PORT в ufw"
+fi
 
 echo -e "\n${BOLD}${GREEN}══ Перезапуск Marzban ══${RESET}"
 
@@ -109,7 +143,7 @@ done
 
 [[ -n "$TOKEN" ]] || die "Marzban не стартовал за 60с. Проверьте: docker compose logs"
 
-echo -e "\n${BOLD}${GREEN}══ Настройка Marzban hosts (Reality параметры) ══${RESET}"
+echo -e "\n${BOLD}${GREEN}══ Настройка Marzban hosts ══${RESET}"
 
 HOSTS_PAYLOAD=$(python3 - << PYEOF
 import json
@@ -144,7 +178,6 @@ curl -sf -X PUT "${API_URL}/api/hosts" \
 
 echo -e "\n${BOLD}${GREEN}══ Исправление существующих пользователей ══${RESET}"
 
-# Get all users and fix their inbounds
 USERS=$(curl -sf "${API_URL}/api/users?limit=1000" \
     -H "Authorization: Bearer $TOKEN" 2>/dev/null \
     | python3 -c "import sys,json; [print(u['username']) for u in json.load(sys.stdin).get('users',[])]" 2>/dev/null || echo "")
@@ -171,8 +204,9 @@ cat >> /root/marzban_node_info.txt << EOF
 
 === Reality Update $(date '+%Y-%m-%d %H:%M:%S') ===
 Public Key: $PUBLIC_KEY
-Short ID:   $SHORT_ID
 SNI:        $REALITY_SNI
+Port:       $VPN_PORT
+ShortIds:   8 (см. /var/lib/marzban/xray_config.json)
 EOF
 
 echo
@@ -181,10 +215,11 @@ echo -e "${BOLD}${GREEN}║  VLESS Reality — Настройка заверше
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════╝${RESET}"
 echo
 echo -e "  Public Key: ${CYAN}$PUBLIC_KEY${RESET}"
-echo -e "  Short ID:   ${CYAN}$SHORT_ID${RESET}"
 echo -e "  SNI:        ${CYAN}$REALITY_SNI${RESET}"
-echo -e "  Port:       ${CYAN}$VPN_PORT${RESET}"
+echo -e "  Port:       ${CYAN}$VPN_PORT${RESET}  (443 — максимальная совместимость)"
+echo -e "  Short IDs:  ${CYAN}8 случайных${RESET} (см. xray_config.json)"
+echo -e "  DNS:        ${CYAN}DoH через 1.1.1.1 и 8.8.8.8${RESET} (порт 853/53 → внутренний резолвер)"
 echo
-echo -e "  ${YELLOW}После этого в Admin Panel → Подписки → нажмите «Перевыпустить ключ»${RESET}"
-echo -e "  ${YELLOW}чтобы пользователь получил новый Reality VLESS ключ.${RESET}"
+echo -e "  ${YELLOW}В Admin Panel → Подписки → нажмите «Перевыпустить ключ»${RESET}"
+echo -e "  ${YELLOW}чтобы пользователь получил обновлённый VLESS ключ.${RESET}"
 echo

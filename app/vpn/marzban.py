@@ -165,7 +165,7 @@ class MarzbanClient:
             if uuid:
                 m = re.match(r'https?://([^:/]+)', self._base)
                 host = m.group(1) if m else "unknown"
-                access_url = f"vless://{uuid}@{host}:10443?type=tcp&security=none#{safe_name}"
+                access_url = f"vless://{uuid}@{host}:443?type=tcp&security=none#{safe_name}"
             else:
                 access_url = ""
 

@@ -93,7 +93,7 @@ section "Установка Marzban (XRay VLESS Reality)"
 MARZBAN_DIR="/opt/marzban"
 MARZBAN_DATA="/var/lib/marzban"
 MARZBAN_PORT=8000
-VPN_PORT=10443
+VPN_PORT=443
 PROXY_PORT=2096
 MARZBAN_USER="admin"
 MARZBAN_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
@@ -116,7 +116,8 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
   }],
   "outbounds": [
     {"tag": "direct", "protocol": "freedom"},
-    {"tag": "block", "protocol": "blackhole"}
+    {"tag": "block", "protocol": "blackhole"},
+    {"tag": "dns-out", "protocol": "dns"}
   ],
   "routing": {
     "rules": [
@@ -185,49 +186,71 @@ fi
 
 PRIVATE_KEY=$(echo "$XRAY_KEYS" | grep "Private key" | awk '{print $3}')
 PUBLIC_KEY=$(echo "$XRAY_KEYS" | grep "Public key" | awk '{print $3}')
-SHORT_ID=$(openssl rand -hex 8)
 
 [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || die "Не удалось извлечь Reality ключи"
 
 success "Reality Public Key: $PUBLIC_KEY"
-success "Short ID: $SHORT_ID"
 
-# Write final XRay config with Reality
-cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [{
-    "tag": "VLESS-TCP",
-    "listen": "0.0.0.0",
-    "port": ${VPN_PORT},
-    "protocol": "vless",
-    "settings": {"clients": [], "decryption": "none"},
-    "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "show": false,
-        "dest": "${REALITY_DEST}",
-        "serverNames": ["${REALITY_SNI}"],
-        "privateKey": "${PRIVATE_KEY}",
-        "shortIds": ["${SHORT_ID}"]
-      }
+# Write final XRay config with Reality via Python:
+#  - 8 random shortIds (defeats Reality handshake fingerprinting)
+#  - DNS-over-HTTPS (fixes NekoBox DoT/port-853 failures from VPS)
+#  - sniffing for protocol detection
+VPN_PORT_VAL=$VPN_PORT \
+PRIVATE_KEY_VAL="$PRIVATE_KEY" \
+REALITY_SNI_VAL="$REALITY_SNI" \
+REALITY_DEST_VAL="$REALITY_DEST" \
+python3 << 'PYEOF' > "$MARZBAN_DATA/xray_config.json"
+import json, os
+
+config = {
+    "log": {"loglevel": "warning"},
+    "dns": {
+        "servers": [
+            {"address": "https://1.1.1.1/dns-query", "domains": []},
+            {"address": "https://8.8.8.8/dns-query", "domains": []},
+            "localhost"
+        ]
+    },
+    "inbounds": [{
+        "tag": "VLESS-TCP",
+        "listen": "0.0.0.0",
+        "port": int(os.environ["VPN_PORT_VAL"]),
+        "protocol": "vless",
+        "settings": {"clients": [], "decryption": "none"},
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"]
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": False,
+                "dest": os.environ["REALITY_DEST_VAL"],
+                "serverNames": [os.environ["REALITY_SNI_VAL"]],
+                "privateKey": os.environ["PRIVATE_KEY_VAL"],
+                "shortIds": [os.urandom(8).hex() for _ in range(8)]
+            }
+        }
+    }],
+    "outbounds": [
+        {"tag": "direct", "protocol": "freedom"},
+        {"tag": "block", "protocol": "blackhole"},
+        {"tag": "dns-out", "protocol": "dns"}
+    ],
+    "routing": {
+        "rules": [
+            {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+            {"type": "field", "port": "853", "outboundTag": "dns-out"},
+            {"type": "field", "port": "53", "network": "udp", "outboundTag": "dns-out"},
+            {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
+        ]
     }
-  }],
-  "outbounds": [
-    {"tag": "direct", "protocol": "freedom"},
-    {"tag": "block", "protocol": "blackhole"}
-  ],
-  "routing": {
-    "rules": [
-      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
-      {"type": "field", "network": "udp,tcp", "outboundTag": "direct"}
-    ]
-  }
 }
-XRAYEOF
+print(json.dumps(config, indent=2))
+PYEOF
 
-success "XRay конфиг с Reality записан"
+success "XRay конфиг с Reality записан (порт $VPN_PORT, 8 shortIds, DoH DNS)"
 
 # Restart Marzban to apply Reality config
 info "Перезапускаю Marzban с Reality конфигом..."
@@ -374,8 +397,8 @@ IP:      $SERVER_IP
 === VLESS Reality ===
 SNI (маскировка): $REALITY_SNI
 Public Key:  $PUBLIC_KEY
-Short ID:    $SHORT_ID
-VPN Port:    $VPN_PORT
+ShortIds:    8 случайных (см. /var/lib/marzban/xray_config.json)
+VPN Port:    $VPN_PORT (443 — максимальная совместимость)
 
 === Marzban API ===
 URL:      $PUBLIC_API_URL
