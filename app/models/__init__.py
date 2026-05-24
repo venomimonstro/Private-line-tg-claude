@@ -18,6 +18,8 @@ from app.models.key_delivery_log import KeyDeliveryLog
 from app.models.pending_operation import PendingOperation, PendingOperationType
 from app.models.promo_code import PromoCode
 from app.models.app_setting import AppSetting
+from app.models.referral_transaction import ReferralTransaction
+from app.models.withdrawal_request import WithdrawalRequest
 
 __all__ = [
     "User",
@@ -41,4 +43,6 @@ __all__ = [
     "PendingOperationType",
     "PromoCode",
     "AppSetting",
+    "ReferralTransaction",
+    "WithdrawalRequest",
 ]
