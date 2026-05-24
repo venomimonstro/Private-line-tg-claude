@@ -17,6 +17,7 @@
         <th>Дней</th>
         <th>Трафик ГБ</th>
         <th>Ключей</th>
+        <th>Устройств</th>
         <th>Скорость</th>
         <th>Активен</th>
         <th>Виден</th>
@@ -34,6 +35,7 @@
       <td>{{ t.duration_days }}</td>
       <td>{{ t.traffic_limit_gb if t.traffic_limit_gb is not none else '∞' }}</td>
       <td>{{ t.max_keys }}</td>
+      <td>{{ t.max_devices if t.max_devices else '∞' }}</td>
       <td>{{ t.speed_limit_mbps ~ ' Мбит/с' if t.speed_limit_mbps is not none else '∞' }}</td>
       <td>
         <span class="badge {% if t.is_active %}bg-success{% else %}bg-secondary{% endif %}">

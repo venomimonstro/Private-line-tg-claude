@@ -94,13 +94,23 @@
           </div>
 
           <div class="col-md-4">
+            <label class="form-label fw-semibold">Макс. устройств одновременно</label>
+            <input type="number" name="max_devices" class="form-control"
+                   value="{{ tariff.max_devices if tariff and tariff.max_devices else 0 }}"
+                   min="0" placeholder="0 = без лимита">
+            <div class="form-text text-muted">
+              Сколько устройств могут использовать один ключ одновременно.
+              0 = без ограничений. Рекомендуется: 1–3. Поддерживается Marzban-нодами.
+            </div>
+          </div>
+
+          <div class="col-md-4">
             <label class="form-label fw-semibold">Лимит скорости (Мбит/с)</label>
             <input type="number" name="speed_limit_mbps" class="form-control"
                    value="{{ tariff.speed_limit_mbps if tariff and tariff.speed_limit_mbps is not none else '' }}"
                    min="0" placeholder="Оставить пустым = без лимита">
             <div class="form-text text-muted">
               Рекомендуется: 50–100 Мбит/с для дешёвых тарифов, без лимита для Premium.
-              Помогает снизить нагрузку на сервер при безлимитном трафике.
             </div>
           </div>
 

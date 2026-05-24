@@ -109,7 +109,7 @@ class MarzbanClient:
             qs["sid"] = short_id
         return urlunparse(parsed._replace(query=urlencode(qs)))
 
-    async def create_key(self, name: str, traffic_limit_gb: float | None = None) -> MarzbanKey:
+    async def create_key(self, name: str, traffic_limit_gb: float | None = None, ip_limit: int = 0) -> MarzbanKey:
         headers = await self._headers()
         safe_name = name[:32]
         body: dict = {
@@ -119,6 +119,8 @@ class MarzbanClient:
             "status": "active",
             "data_limit_reset_strategy": "no_reset",
         }
+        if ip_limit > 0:
+            body["ip_limit"] = ip_limit
         if traffic_limit_gb and traffic_limit_gb > 0:
             body["data_limit"] = int(traffic_limit_gb * 1024 ** 3)
 

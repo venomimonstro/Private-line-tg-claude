@@ -67,6 +67,7 @@ async def activate_subscription(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 label=label,
                 session=session,
+                ip_limit=getattr(tariff, "max_devices", 0) or 0,
             )
             server.current_users += 1
             created_keys.append(key)

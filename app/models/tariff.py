@@ -21,6 +21,7 @@ class Tariff(Base):
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     traffic_limit_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_keys: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_devices: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

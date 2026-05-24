@@ -57,33 +57,26 @@ async def create_vpn_key(
     traffic_limit_gb: int | None,
     session: AsyncSession,
     label: str | None = None,
+    ip_limit: int = 0,
 ) -> VpnKey:
-    # Idempotency: return existing active key for same subscription + server
-    existing_result = await session.execute(
-        select(VpnKey).where(
-            VpnKey.subscription_id == subscription_id,
-            VpnKey.server_id == server.id,
-            VpnKey.status == VpnKeyStatus.active,
-        )
+    # Purge ALL old keys for this subscription (any server, any status).
+    # One subscription = one key always. Old keys take up space and confuse users.
+    old_keys_result = await session.execute(
+        select(VpnKey).where(VpnKey.subscription_id == subscription_id)
     )
-    existing_key = existing_result.scalars().first()
-    if existing_key is not None:
-        from app.encryption import decrypt as _decrypt
-        try:
-            existing_url = _decrypt(existing_key.access_url_encrypted)
-        except Exception:
-            existing_url = ""
-        if existing_url:
-            logger.info(
-                "Returning existing active key %d for subscription %d on server %d",
-                existing_key.id, subscription_id, server.id,
-            )
-            return existing_key
-        # Key exists but has empty URL — disable it and create fresh
-        existing_key.status = VpnKeyStatus.disabled
-        from datetime import datetime as _dt
-        existing_key.disabled_at = _dt.utcnow()
-        await session.flush()
+    for old_key in old_keys_result.scalars().all():
+        if old_key.status == VpnKeyStatus.active:
+            # Best-effort: remove from VPN server
+            try:
+                old_server_result = await session.get(VpnServer, old_key.server_id)
+                if old_server_result is not None:
+                    await disable_vpn_key(old_key, old_server_result, session)
+            except Exception as exc:
+                logger.warning("Could not disable old key %d: %s", old_key.id, exc)
+                old_key.status = VpnKeyStatus.disabled
+                old_key.disabled_at = datetime.utcnow()
+        await session.delete(old_key)
+    await session.flush()
 
     client = _make_client(server)
     cb = get_circuit_breaker(server.id)
@@ -94,7 +87,7 @@ async def create_vpn_key(
             if protocol == "marzban":
                 assert isinstance(client, MarzbanClient)
                 name = _marzban_username(user_id, subscription_id)
-                return await client.create_key(name=name, traffic_limit_gb=traffic_limit_gb)
+                return await client.create_key(name=name, traffic_limit_gb=traffic_limit_gb, ip_limit=ip_limit)
             else:
                 assert isinstance(client, OutlineClient)
                 key_name = f"user_{user_id}_sub_{subscription_id}"

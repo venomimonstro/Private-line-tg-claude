@@ -78,6 +78,7 @@ async def create_tariff(
     duration_days: str = Form(default=""),
     traffic_limit_gb: str = Form(default=""),
     max_keys: str = Form(default="1"),
+    max_devices: str = Form(default="0"),
     speed_limit_mbps: str = Form(default=""),
     sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
@@ -88,6 +89,7 @@ async def create_tariff(
     try:
         dur = _parse_int_field(duration_days, "Срок действия (дней)")
         keys = _parse_int_field(max_keys or "1", "Макс. ключей")
+        devices = int(max_devices.strip() or "0")
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
     except (ValueError, Exception) as exc:
@@ -107,6 +109,7 @@ async def create_tariff(
         duration_days=dur,
         traffic_limit_gb=int(traffic_limit_gb.strip()) if traffic_limit_gb.strip() else None,
         max_keys=keys,
+        max_devices=devices,
         speed_limit_mbps=int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None,
         sort_order=order,
         is_active=is_active,
@@ -161,6 +164,7 @@ async def update_tariff(
     duration_days: str = Form(default=""),
     traffic_limit_gb: str = Form(default=""),
     max_keys: str = Form(default="1"),
+    max_devices: str = Form(default="0"),
     speed_limit_mbps: str = Form(default=""),
     sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
@@ -182,6 +186,7 @@ async def update_tariff(
     try:
         dur = _parse_int_field(duration_days, "Срок действия (дней)")
         keys = _parse_int_field(max_keys or "1", "Макс. ключей")
+        devices = int(max_devices.strip() or "0")
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
     except (ValueError, Exception) as exc:
@@ -202,6 +207,7 @@ async def update_tariff(
     tariff.duration_days = dur
     tariff.traffic_limit_gb = int(traffic_limit_gb.strip()) if traffic_limit_gb.strip() else None
     tariff.max_keys = keys
+    tariff.max_devices = devices
     tariff.speed_limit_mbps = int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None
     tariff.sort_order = order
     tariff.is_active = is_active
