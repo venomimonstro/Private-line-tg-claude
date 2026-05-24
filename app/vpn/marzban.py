@@ -89,14 +89,17 @@ class MarzbanClient:
         return None
 
     def _inject_reality(self, url: str, public_key: str, short_id: str, sni: str) -> str:
-        """Return url with security=reality and pbk/sid/sni/fp query params set."""
+        """Return url with all Reality params set, including required flow."""
+        if not url or not url.startswith("vless://"):
+            return url
         parsed = urlparse(url)
         qs = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
         qs["security"] = "reality"
         qs["pbk"] = public_key
         qs["sni"] = sni
-        qs.setdefault("fp", "chrome")
-        qs.setdefault("type", "tcp")
+        qs["fp"] = "chrome"
+        qs["type"] = "tcp"
+        qs["flow"] = "xtls-rprx-vision"
         if short_id:
             qs["sid"] = short_id
         return urlunparse(parsed._replace(query=urlencode(qs)))
@@ -106,7 +109,7 @@ class MarzbanClient:
         safe_name = name[:32]
         body: dict = {
             "username": safe_name,
-            "proxies": {"vless": {}},
+            "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
             "inbounds": {"vless": ["VLESS-TCP"]},
             "status": "active",
             "data_limit_reset_strategy": "no_reset",
@@ -116,7 +119,16 @@ class MarzbanClient:
 
         resp = await self._client.post(f"{self._base}/api/user", headers=headers, json=body)
         if resp.status_code == 409:
-            # User already exists — fetch current data
+            # User already exists — update config to ensure flow+inbound are correct, then fetch
+            await self._client.put(
+                f"{self._base}/api/user/{safe_name}",
+                headers=headers,
+                json={
+                    "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
+                    "inbounds": {"vless": ["VLESS-TCP"]},
+                    "status": "active",
+                },
+            )
             get_resp = await self._client.get(f"{self._base}/api/user/{safe_name}", headers=headers)
             get_resp.raise_for_status()
             data = get_resp.json()

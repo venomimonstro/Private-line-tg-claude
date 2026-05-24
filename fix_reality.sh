@@ -152,7 +152,7 @@ if [[ -n "$USERS" ]]; then
         RESULT=$(curl -sf -X PUT "${API_URL}/api/user/${username}" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"inbounds": {"vless": ["VLESS-TCP"]}}' 2>/dev/null | python3 -c "
+            -d '{"inbounds": {"vless": ["VLESS-TCP"]}, "proxies": {"vless": {"flow": "xtls-rprx-vision"}}, "status": "active"}' 2>/dev/null | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
 links=d.get('links',[])
