@@ -104,6 +104,17 @@ PYEOF
 
 success "xray_config.json записан (порт $VPN_PORT, 8 shortIds, DoH DNS)"
 
+# Sanity check: dest/serverNames must be plain strings, not markdown links
+python3 -c "
+import json, sys
+c = json.load(open('$MARZBAN_DATA/xray_config.json'))
+rs = c['inbounds'][0]['streamSettings']['realitySettings']
+dest = rs['dest']; sni = rs['serverNames'][0]
+if '](http' in dest or '](http' in sni:
+    print('CORRUPT: markdown links in config!', dest, sni); sys.exit(1)
+print('Config OK: dest=%s sni=%s' % (dest, sni))
+" || die "xray_config.json содержит markdown-ссылки вместо plain-строк!"
+
 echo -e "\n${BOLD}${GREEN}══ Обновление файерволла ══${RESET}"
 
 if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
