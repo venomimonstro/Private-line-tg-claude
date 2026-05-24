@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import logging
 from datetime import datetime
 
@@ -33,22 +32,22 @@ async def list_withdrawals(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    query = select(WithdrawalRequest).options(
-        selectinload(WithdrawalRequest.user),
-        selectinload(WithdrawalRequest.processed_by),
-    )
+    filters = []
     if status:
-        query = query.where(WithdrawalRequest.status == status)
+        filters.append(WithdrawalRequest.status == status)
 
-    total_result = await session.execute(
-        select(func.count()).select_from(
-            query.subquery()
-        )
+    count_result = await session.execute(
+        select(func.count(WithdrawalRequest.id)).where(*filters)
     )
-    total = total_result.scalar_one() or 0
+    total = count_result.scalar_one() or 0
     offset = (page - 1) * _PAGE_SIZE
     result = await session.execute(
-        query.order_by(WithdrawalRequest.created_at.desc()).offset(offset).limit(_PAGE_SIZE)
+        select(WithdrawalRequest)
+        .options(selectinload(WithdrawalRequest.user), selectinload(WithdrawalRequest.processed_by))
+        .where(*filters)
+        .order_by(WithdrawalRequest.created_at.desc())
+        .offset(offset)
+        .limit(_PAGE_SIZE)
     )
     withdrawals = result.scalars().all()
 
