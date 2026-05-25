@@ -33,6 +33,7 @@ _SETTINGS_META: list[dict] = [
     {"section": "FreeKassa",       "key": "FREEKASSA_SECRET_1",             "label": "Секрет 1 (для платежей)",   "type": "password", "placeholder": ""},
     {"section": "FreeKassa",       "key": "FREEKASSA_SECRET_2",             "label": "Секрет 2 (для уведомлений)","type": "password", "placeholder": ""},
     {"section": "FreeKassa",       "key": "FREEKASSA_API_KEY",              "label": "API-ключ (необязательно)",   "type": "password", "placeholder": ""},
+    {"section": "FreeKassa",       "key": "FREEKASSA_CURRENCY_ID",          "label": "ID валюты (параметр i)",    "type": "text",     "placeholder": "643"},
     # LAVA
     {"section": "LAVA",            "key": "LAVA_ENABLED",                   "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "LAVA",            "key": "LAVA_PROJECT_ID",                "label": "ID проекта",                "type": "text",     "placeholder": ""},
