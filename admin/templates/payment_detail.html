@@ -1,35 +1,106 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row g-3">
-  <div class="col-md-6">
-    <div class="card p-3">
-      <h6 class="fw-bold">Платёж #{{ payment.id }}</h6>
-      <table class="table table-sm">
-        <tr><td>Пользователь</td><td><a href="/admin/users/{{ payment.user_id }}">{{ payment.user_id }}</a></td></tr>
-        <tr><td>Тариф</td><td>{{ payment.tariff.slug if payment.tariff else "—" }}</td></tr>
-        <tr><td>Сумма</td><td><b>{{ payment.amount }} {{ payment.currency }}</b></td></tr>
-        <tr><td>Статус</td><td><span class="badge {% if payment.status.value == 'paid' %}bg-success{% elif payment.status.value == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ payment.status.value }}</span></td></tr>
-        <tr><td>Провайдер</td><td>{{ payment.provider }}</td></tr>
-        <tr><td>Создан</td><td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
-        {% if payment.confirmed_at %}<tr><td>Подтверждён</td><td>{{ payment.confirmed_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>{% endif %}
-        {% if payment.comment %}<tr><td>Комментарий</td><td>{{ payment.comment }}</td></tr>{% endif %}
-      </table>
 
-      {% if payment.status.value in ('pending', 'manual_review') %}
-      <div class="border-top pt-3 mt-2">
-        <h6>Подтвердить оплату</h6>
-        <form method="post" action="/admin/payments/{{ payment.id }}/confirm">
-          <div class="mb-2">
-            <textarea name="comment" class="form-control" rows="2" placeholder="Комментарий (необязательно)"></textarea>
-          </div>
-          <button type="submit" class="btn btn-success" onclick="return confirm('Подтвердить оплату и активировать подписку?')">✅ Подтвердить</button>
-        </form>
-        <form method="post" action="/admin/payments/{{ payment.id }}/cancel" class="mt-2">
-          <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Отменить платёж?')">Отменить</button>
-        </form>
-      </div>
-      {% endif %}
+{% set status_color = {
+  'paid':          'success',
+  'pending':       'warning',
+  'manual_review': 'info',
+  'failed':        'danger',
+  'cancelled':     'secondary',
+  'refunded':      'primary',
+  'created':       'light',
+} %}
+
+<div class="row g-3">
+  <div class="col-md-7">
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Платёж #{{ payment.id }}</h6>
+      <table class="table table-sm">
+        <tr><td class="text-muted" style="width:140px">Пользователь</td>
+            <td><a href="/admin/users/{{ payment.user_id }}">{{ payment.user_id }}</a></td></tr>
+        <tr><td class="text-muted">Тариф</td>
+            <td>{{ payment.tariff.slug if payment.tariff else "—" }}</td></tr>
+        <tr><td class="text-muted">Сумма</td>
+            <td><strong>{{ payment.amount }} {{ payment.currency }}</strong></td></tr>
+        <tr><td class="text-muted">Статус</td>
+            <td>
+              <span class="badge bg-{{ status_color.get(payment.status.value, 'secondary') }}
+                           {% if payment.status.value == 'pending' %}text-dark{% endif %}">
+                {{ status_labels.get(payment.status.value, payment.status.value) }}
+              </span>
+            </td></tr>
+        <tr><td class="text-muted">Провайдер</td>
+            <td>{{ payment.provider }}</td></tr>
+        {% if payment.provider_payment_id %}
+        <tr><td class="text-muted">ID у провайдера</td>
+            <td><code class="small">{{ payment.provider_payment_id }}</code></td></tr>
+        {% endif %}
+        <tr><td class="text-muted">Создан</td>
+            <td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+        {% if payment.confirmed_at %}
+        <tr><td class="text-muted">Подтверждён</td>
+            <td>{{ payment.confirmed_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+        {% endif %}
+        {% if payment.comment %}
+        <tr><td class="text-muted">Комментарий</td>
+            <td>{{ payment.comment }}</td></tr>
+        {% endif %}
+      </table>
     </div>
+  </div>
+
+  <div class="col-md-5 d-flex flex-column gap-3">
+
+    {# ── Быстрые действия ── #}
+    {% if payment.status.value in ('pending', 'manual_review') %}
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Быстрые действия</h6>
+      <form method="post" action="/admin/payments/{{ payment.id }}/confirm" class="mb-2">
+        <div class="mb-2">
+          <textarea name="comment" class="form-control form-control-sm" rows="2"
+                    placeholder="Комментарий (необязательно)"></textarea>
+        </div>
+        <button type="submit" class="btn btn-success btn-sm w-100"
+                onclick="return confirm('Подтвердить оплату и активировать подписку?')">
+          ✅ Подтвердить и активировать
+        </button>
+      </form>
+      <form method="post" action="/admin/payments/{{ payment.id }}/cancel">
+        <button type="submit" class="btn btn-outline-danger btn-sm w-100"
+                onclick="return confirm('Отменить платёж?')">
+          ✗ Отменить
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
+    {# ── Изменить статус вручную ── #}
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Изменить статус</h6>
+      <form method="post" action="/admin/payments/{{ payment.id }}/change-status">
+        <div class="mb-2">
+          <select name="new_status" class="form-select form-select-sm">
+            {% for s in statuses %}
+            <option value="{{ s.value }}" {% if s == payment.status %}selected{% endif %}>
+              {{ status_labels.get(s.value, s.value) }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-2">
+          <input type="text" name="comment" class="form-control form-control-sm"
+                 placeholder="Причина изменения (необязательно)">
+        </div>
+        <button type="submit" class="btn btn-outline-secondary btn-sm w-100"
+                onclick="return confirm('Изменить статус платежа?')">
+          Сохранить статус
+        </button>
+      </form>
+      <div class="form-text text-warning mt-1">
+        ⚠️ Смена статуса не активирует и не отключает подписку. Используйте «Подтвердить» для полной активации.
+      </div>
+    </div>
+
   </div>
 </div>
 {% endblock %}

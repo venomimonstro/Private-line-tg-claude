@@ -26,6 +26,22 @@
                    placeholder="Базовый 30 дней" required maxlength="255">
           </div>
 
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Тип тарифа <span class="text-danger">*</span></label>
+            <select name="payment_type" id="payment_type" class="form-select" onchange="onPaymentTypeChange()">
+              <option value="recurring" {% if not tariff or tariff.payment_type == 'recurring' %}selected{% endif %}>
+                🔄 Подписка (многоразовый)
+              </option>
+              <option value="one_time" {% if tariff and tariff.payment_type == 'one_time' %}selected{% endif %}>
+                1️⃣ Разовый доступ
+              </option>
+            </select>
+            <div class="form-text text-muted">
+              <strong>Подписка</strong> — пользователь платит каждый период для продления.
+              <strong>Разовый</strong> — оплата один раз, доступ на срок тарифа.
+            </div>
+          </div>
+
           <div class="col-12">
             <label class="form-label fw-semibold">Описание</label>
             <textarea name="description" class="form-control" rows="3"
@@ -33,7 +49,9 @@
           </div>
 
           <div class="col-md-4">
-            <label class="form-label fw-semibold">Цена в месяц <span class="text-danger">*</span></label>
+            <label class="form-label fw-semibold" id="price_label">
+              Цена <span class="text-danger">*</span>
+            </label>
             <div class="input-group">
               <input type="number" name="price_monthly" class="form-control"
                      value="{{ tariff.price_monthly if tariff else '' }}"
@@ -42,7 +60,7 @@
             </div>
           </div>
 
-          <div class="col-md-4">
+          <div class="col-md-4" id="price_first_month_block">
             <label class="form-label fw-semibold">Цена первого месяца</label>
             <div class="input-group">
               <input type="number" name="price_first_month" class="form-control"
@@ -168,5 +186,19 @@
       form.classList.add('was-validated');
     }, false);
   });
+
+  function onPaymentTypeChange() {
+    const pt = document.getElementById('payment_type').value;
+    const lbl = document.getElementById('price_label');
+    const block = document.getElementById('price_first_month_block');
+    if (pt === 'one_time') {
+      lbl.innerHTML = 'Цена (разовая) <span class="text-danger">*</span>';
+      block.style.display = 'none';
+    } else {
+      lbl.innerHTML = 'Цена в месяц <span class="text-danger">*</span>';
+      block.style.display = '';
+    }
+  }
+  onPaymentTypeChange();
 </script>
 {% endblock %}

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin, require_super_admin
 from app.database import get_async_session
-from app.enums import AdminAction, SubscriptionStatus
+from app.enums import AdminAction, SubscriptionStatus, TariffType
 from app.models.admin_log import AdminLog
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
@@ -31,7 +31,8 @@ async def list_tariffs(
     result = await session.execute(select(Tariff).order_by(Tariff.sort_order))
     tariffs = result.scalars().all()
     return templates.TemplateResponse("tariffs_list.html", {
-        "request": request, "admin": admin, "tariffs": tariffs, "page_title": "Тарифы",
+        "request": request, "admin": admin, "tariffs": tariffs,
+        "page_title": "Тарифы", "TariffType": TariffType,
     })
 
 
@@ -46,13 +47,14 @@ async def new_tariff_form(
         "tariff": None,
         "page_title": "Новый тариф",
         "error": None,
+        "TariffType": TariffType,
     })
 
 
 def _form_error(request, admin, error: str) -> HTMLResponse:
     return templates.TemplateResponse("tariff_form.html", {
         "request": request, "admin": admin, "tariff": None,
-        "page_title": "Новый тариф", "error": error,
+        "page_title": "Новый тариф", "error": error, "TariffType": TariffType,
     })
 
 
@@ -72,6 +74,7 @@ async def create_tariff(
     slug: str = Form(...),
     name: str = Form(...),
     description: str = Form(default=""),
+    payment_type: str = Form(default="recurring"),
     price_monthly: str = Form(...),
     price_first_month: str = Form(default=""),
     currency: str = Form(default="RUB"),
@@ -92,6 +95,7 @@ async def create_tariff(
         devices = int(max_devices.strip() or "0")
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
+        ptype = TariffType(payment_type) if payment_type in TariffType._value2member_map_ else TariffType.recurring
     except (ValueError, Exception) as exc:
         return _form_error(request, admin, str(exc))
 
@@ -103,6 +107,7 @@ async def create_tariff(
         slug=slug.strip(),
         name=name.strip(),
         description=description.strip() or None,
+        payment_type=ptype.value,
         price_monthly=price,
         price_first_month=Decimal(price_first_month.strip()) if price_first_month.strip() else None,
         currency=currency.strip() or "RUB",
@@ -148,6 +153,7 @@ async def edit_tariff_form(
         "tariff": tariff,
         "page_title": f"Редактировать тариф: {tariff.name}",
         "error": None,
+        "TariffType": TariffType,
     })
 
 
@@ -158,6 +164,7 @@ async def update_tariff(
     slug: str = Form(...),
     name: str = Form(...),
     description: str = Form(default=""),
+    payment_type: str = Form(default="recurring"),
     price_monthly: str = Form(...),
     price_first_month: str = Form(default=""),
     currency: str = Form(default="RUB"),
@@ -189,6 +196,7 @@ async def update_tariff(
         devices = int(max_devices.strip() or "0")
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
+        ptype = TariffType(payment_type) if payment_type in TariffType._value2member_map_ else TariffType.recurring
     except (ValueError, Exception) as exc:
         return edit_error(str(exc))
 
@@ -201,6 +209,7 @@ async def update_tariff(
     tariff.slug = slug.strip()
     tariff.name = name.strip()
     tariff.description = description.strip() or None
+    tariff.payment_type = ptype.value
     tariff.price_monthly = price
     tariff.price_first_month = Decimal(price_first_month.strip()) if price_first_month.strip() else None
     tariff.currency = currency.strip() or "RUB"

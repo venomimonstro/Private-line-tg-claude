@@ -122,6 +122,11 @@ class WithdrawalStatus(str, Enum):
     rejected = "rejected"
 
 
+class TariffType(str, Enum):
+    recurring = "recurring"
+    one_time = "one_time"
+
+
 class AdminAction(str, Enum):
     bulk_extend_subscriptions = "bulk_extend_subscriptions"
     bulk_disable_subscriptions = "bulk_disable_subscriptions"

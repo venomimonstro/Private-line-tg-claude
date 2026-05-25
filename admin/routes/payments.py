@@ -17,6 +17,16 @@ from app.models.payment import Payment
 from app.models.user import User
 from app.payments.services import cancel_payment, confirm_payment
 
+_STATUS_LABELS: dict[str, str] = {
+    "created":       "Создан",
+    "pending":       "Ожидает оплаты",
+    "manual_review": "На проверке",
+    "paid":          "Оплачен",
+    "failed":        "Ошибка",
+    "cancelled":     "Отменён",
+    "refunded":      "Возврат",
+}
+
 router = APIRouter(prefix="/payments")
 templates = Jinja2Templates(directory="admin/templates")
 
@@ -71,7 +81,10 @@ async def payment_detail(
         raise HTTPException(status_code=404)
 
     return templates.TemplateResponse("payment_detail.html", {
-        "request": request, "admin": admin, "payment": payment, "page_title": f"Платёж #{payment_id}",
+        "request": request, "admin": admin, "payment": payment,
+        "page_title": f"Платёж #{payment_id}",
+        "statuses": list(PaymentStatus),
+        "status_labels": _STATUS_LABELS,
     })
 
 
@@ -107,6 +120,44 @@ async def confirm_payment_route(
     session.add(log)
     await session.commit()
 
+    return RedirectResponse(f"/admin/payments/{payment_id}", status_code=303)
+
+
+@router.post("/{payment_id}/change-status")
+async def change_payment_status(
+    payment_id: int,
+    request: Request,
+    new_status: str = Form(...),
+    comment: str = Form(default=""),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    result = await session.execute(select(Payment).where(Payment.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if payment is None:
+        raise HTTPException(status_code=404)
+
+    try:
+        status = PaymentStatus(new_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Неверный статус")
+
+    old_status = payment.status.value
+    payment.status = status
+    payment.updated_at = datetime.utcnow()
+    if comment:
+        payment.comment = comment
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="change_payment_status",
+        target_entity="payment",
+        target_entity_id=payment_id,
+        details={"old_status": old_status, "new_status": status.value, "comment": comment},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
     return RedirectResponse(f"/admin/payments/{payment_id}", status_code=303)
 
 

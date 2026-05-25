@@ -12,7 +12,8 @@
       <tr>
         <th>Slug</th>
         <th>Название</th>
-        <th>Цена / мес.</th>
+        <th>Тип</th>
+        <th>Цена</th>
         <th>1-й мес.</th>
         <th>Дней</th>
         <th>Трафик ГБ</th>
@@ -30,6 +31,13 @@
     <tr>
       <td><code>{{ t.slug }}</code></td>
       <td>{{ t.name }}</td>
+      <td>
+        {% if t.payment_type == 'one_time' %}
+          <span class="badge bg-info text-dark">Разовый</span>
+        {% else %}
+          <span class="badge bg-secondary">Подписка</span>
+        {% endif %}
+      </td>
       <td>{{ t.price_monthly }} {{ t.currency }}</td>
       <td>{{ t.price_first_month ~ ' ' ~ t.currency if t.price_first_month is not none else '—' }}</td>
       <td>{{ t.duration_days }}</td>
@@ -74,7 +82,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="12" class="text-center text-muted py-4">Тарифы не найдены</td>
+      <td colspan="13" class="text-center text-muted py-4">Тарифы не найдены</td>
     </tr>
     {% endfor %}
     </tbody>
