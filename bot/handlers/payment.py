@@ -59,14 +59,13 @@ async def handle_renew(message: Message, db_user: User) -> None:
     if payment_result.payment_url:
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"recheck_payment:{payment.id}")],
         ])
         await message.answer(
             f"🔄 <b>Продление подписки</b>\n\n"
             f"Тариф: {tariff.name}\n"
             f"Действует до: {expires_str}\n"
             f"Сумма к оплате: <b>{int(payment.amount)} RUB</b>\n\n"
-            f"Нажмите кнопку ниже для оплаты:",
+            f"Нажмите кнопку для оплаты. После оплаты подписка продлится автоматически.",
             parse_mode="HTML",
             reply_markup=markup,
         )

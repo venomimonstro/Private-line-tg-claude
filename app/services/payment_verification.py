@@ -51,6 +51,8 @@ async def verify_pending_payments(session: AsyncSession) -> None:
                     confirmed = await check_payment_status_yookassa(payment, session, client)
                 elif payment.provider == "lava":
                     confirmed = await check_payment_status_lava(payment, session, client)
+                elif payment.provider == "yoomoney":
+                    confirmed = await check_payment_status_yoomoney(payment, session)
                 else:
                     continue
 
@@ -65,10 +67,33 @@ async def verify_pending_payments(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def check_payment_status_yoomoney(
+    payment: object,
+    session: AsyncSession,
+) -> bool:
+    from app.payments.registry import get_provider_db
+    from app.payments.services import confirm_payment_auto
+
+    p = payment  # type: ignore[assignment]
+    label = p.provider_payment_id
+    if not label:
+        return False
+    try:
+        provider = await get_provider_db("yoomoney", session)
+        op_id = await provider.check_payment_by_label(label, float(p.amount))  # type: ignore[attr-defined]
+        if op_id:
+            logger.info("YooMoney API confirmed payment %d (label=%s op=%s)", p.id, label, op_id)
+            await confirm_payment_auto(p, session)
+            return True
+    except Exception as exc:
+        logger.error("YooMoney status check failed for payment %d: %s", p.id, exc)
+    return False
+
+
 async def check_payment_status_yookassa(
     payment: object,
     session: AsyncSession,
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     from app.config import settings
     from app.payments.services import confirm_payment_auto
@@ -77,24 +102,29 @@ async def check_payment_status_yookassa(
     if not p.provider_payment_id:
         return False
 
-    try:
-        resp = await client.get(
+    async def _do(c: httpx.AsyncClient) -> bool:
+        resp = await c.get(
             f"https://api.yookassa.ru/v3/payments/{p.provider_payment_id}",
             auth=(settings.YOOKASSA_SHOP_ID, settings.YOOKASSA_SECRET_KEY),
         )
         resp.raise_for_status()
         data = resp.json()
-
         status = data.get("status")
         if status == "succeeded":
             logger.info("YooKassa payment %s succeeded, confirming payment %d", p.provider_payment_id, p.id)
             await confirm_payment_auto(p, session)
             return True
-        elif status in ("canceled", "cancelled"):
+        if status in ("canceled", "cancelled"):
             p.status = PaymentStatus.failed
             p.updated_at = datetime.utcnow()
             logger.info("YooKassa payment %s cancelled, marking payment %d as failed", p.provider_payment_id, p.id)
         return False
+
+    try:
+        if client is not None:
+            return await _do(client)
+        async with httpx.AsyncClient(timeout=10) as c:
+            return await _do(c)
     except Exception as exc:
         logger.error("YooKassa status check failed for payment %d: %s", p.id, exc)
         return False
@@ -103,7 +133,7 @@ async def check_payment_status_yookassa(
 async def check_payment_status_lava(
     payment: object,
     session: AsyncSession,
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     from app.config import settings
     from app.payments.services import confirm_payment_auto
@@ -112,7 +142,7 @@ async def check_payment_status_lava(
     if not p.provider_payment_id:
         return False
 
-    try:
+    async def _do(c: httpx.AsyncClient) -> bool:
         payload = {
             "shopId": settings.LAVA_PROJECT_ID,
             "invoiceId": p.provider_payment_id,
@@ -123,25 +153,29 @@ async def check_payment_status_lava(
             body.encode(),
             hashlib.sha256,
         ).hexdigest()
-
-        resp = await client.post(
+        resp = await c.post(
             "https://api.lava.ru/business/invoice/status",
             content=body.encode(),
             headers={"Signature": sign, "Content-Type": "application/json"},
         )
         resp.raise_for_status()
         data = resp.json()
-
         status = data.get("data", {}).get("status")
         if status == "success":
             logger.info("LAVA payment %s succeeded, confirming payment %d", p.provider_payment_id, p.id)
             await confirm_payment_auto(p, session)
             return True
-        elif status in ("fail", "expired"):
+        if status in ("fail", "expired"):
             p.status = PaymentStatus.failed
             p.updated_at = datetime.utcnow()
             logger.info("LAVA payment %s failed/expired, marking payment %d as failed", p.provider_payment_id, p.id)
         return False
+
+    try:
+        if client is not None:
+            return await _do(client)
+        async with httpx.AsyncClient(timeout=10) as c:
+            return await _do(c)
     except Exception as exc:
         logger.error("LAVA status check failed for payment %d: %s", p.id, exc)
         return False

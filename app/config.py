@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # YooMoney
     YOOMONEY_WALLET: str = ""
     YOOMONEY_NOTIFICATION_SECRET: str = ""
+    YOOMONEY_ACCESS_TOKEN: str = ""
 
     # FreeKassa
     FREEKASSA_MERCHANT_ID: str = ""

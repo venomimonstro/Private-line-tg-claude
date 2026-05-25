@@ -26,6 +26,7 @@ _SETTINGS_META: list[dict] = [
     {"section": "ЮMoney",          "key": "YOOMONEY_ENABLED",               "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "ЮMoney",          "key": "YOOMONEY_WALLET",                "label": "Номер кошелька",            "type": "text",     "placeholder": "4100118..."},
     {"section": "ЮMoney",          "key": "YOOMONEY_NOTIFICATION_SECRET",   "label": "Секрет уведомлений",        "type": "password", "placeholder": ""},
+    {"section": "ЮMoney",          "key": "YOOMONEY_ACCESS_TOKEN",          "label": "OAuth-токен (авто-проверка)", "type": "password", "placeholder": ""},
     # FreeKassa
     {"section": "FreeKassa",       "key": "FREEKASSA_ENABLED",              "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "FreeKassa",       "key": "FREEKASSA_MERCHANT_ID",          "label": "ID магазина",               "type": "text",     "placeholder": "123456"},
