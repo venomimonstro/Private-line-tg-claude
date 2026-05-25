@@ -4,7 +4,7 @@ import hashlib
 import hmac as hmac_module
 import logging
 import urllib.parse
-from urllib.parse import unquote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 import httpx
 
@@ -36,17 +36,6 @@ def _parse_body(body: bytes) -> dict[str, str]:
             result[unquote(pair)] = ""
     return result
 
-
-def _parse_body_raw(body: bytes) -> dict[str, str]:
-    """Parse x-www-form-urlencoded, values kept percent-encoded (as sent)."""
-    result: dict[str, str] = {}
-    for pair in body.decode("utf-8", errors="replace").split("&"):
-        if "=" in pair:
-            k, _, v = pair.partition("=")
-            result[unquote(k)] = v   # key decoded, value raw
-        elif pair:
-            result[unquote(pair)] = ""
-    return result
 
 
 class YooMoneyProvider(PaymentProviderBase):
@@ -98,8 +87,7 @@ class YooMoneyProvider(PaymentProviderBase):
 
     async def verify_webhook(self, body: bytes, headers: dict[str, str]) -> IncomingPayment | None:
         try:
-            params     = _parse_body(body)
-            params_raw = _parse_body_raw(body)
+            params = _parse_body(body)
 
             notification_type = params.get("notification_type", "")
             operation_id      = params.get("operation_id", "")
@@ -125,7 +113,7 @@ class YooMoneyProvider(PaymentProviderBase):
 
             # ── try NEW format first (sign / HMAC-SHA256) ────────────────────
             if "sign" in params:
-                if not self._verify_sign_new(params, params_raw):
+                if not self._verify_sign_new(params):
                     return None
             # ── fall back to OLD format (sha1_hash / SHA1) ───────────────────
             elif "sha1_hash" in params:
@@ -163,44 +151,35 @@ class YooMoneyProvider(PaymentProviderBase):
             logger.error("YooMoney webhook error: %s", exc, exc_info=True)
             return None
 
-    def _verify_sign_new(self, params: dict[str, str], params_raw: dict[str, str]) -> bool:
-        """NEW format: HMAC-SHA256. Try every plausible variant until one matches."""
+    def _verify_sign_new(self, params: dict[str, str]) -> bool:
+        """NEW format: HMAC-SHA256.
+
+        Formula (confirmed by brute-force on real notification):
+          - ALL params sorted alphabetically (including empty-value ones like bill_id= sender=)
+          - Values RFC 3986 percent-encoded (e.g. ':' in datetime → %3A)
+          - Joined as key=encoded_val&...
+          - HMAC-SHA256(secret, check_str) hex lowercase
+          - Compare with 'sign' field
+        """
         sign_got = params.get("sign", "").lower().strip()
-
-        def _hmac(s: str) -> str:
-            return hmac_module.new(
-                self._secret.encode("utf-8"), s.encode("utf-8"), hashlib.sha256
-            ).hexdigest()
-
-        # Build candidate sets: (label, check_str)
-        def make(src: dict[str, str], exclude_empty: bool) -> str:
-            items = sorted(
-                (k, v) for k, v in src.items()
-                if k != "sign" and (not exclude_empty or v != "")
-            )
-            return "&".join(f"{k}={v}" for k, v in items)
-
-        candidates = [
-            ("decoded+all",       make(params, exclude_empty=False)),
-            ("decoded+nonempty",  make(params, exclude_empty=True)),
-            ("raw+all",           make(params_raw, exclude_empty=False)),
-            ("raw+nonempty",      make(params_raw, exclude_empty=True)),
-        ]
-
-        for label, check_str in candidates:
-            h = _hmac(check_str)
-            if hmac_module.compare_digest(h, sign_got):
-                logger.info("YooMoney HMAC-SHA256 OK via %s: check_str=%r", label, check_str)
-                return True
-
-        # None matched — log all attempts to help diagnose
-        logger.error(
-            "YooMoney HMAC-SHA256 ALL variants failed. sign_got=%s secret_len=%d",
-            sign_got, len(self._secret),
+        items = sorted(
+            (k, quote(v, safe=""))
+            for k, v in params.items()
+            if k != "sign"
         )
-        for label, check_str in candidates:
-            logger.error("  [%s] expected=%s check_str=%r", label, _hmac(check_str), check_str)
-        return False
+        check_str = "&".join(f"{k}={v}" for k, v in items)
+        expected = hmac_module.new(
+            self._secret.encode("utf-8"),
+            check_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        ok = hmac_module.compare_digest(expected, sign_got)
+        if not ok:
+            logger.error(
+                "YooMoney HMAC-SHA256 mismatch: expected=%s got=%s secret_len=%d check_str=%r",
+                expected, sign_got, len(self._secret), check_str,
+            )
+        return ok
 
     def _verify_sign_old(self, params: dict[str, str]) -> bool:
         """OLD format: SHA1 of fixed-order fields."""
