@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
+import hmac as hmac_module
 import logging
 import urllib.parse
 from urllib.parse import unquote, urlencode
@@ -14,17 +14,21 @@ logger = logging.getLogger(__name__)
 
 _API_BASE = "https://yoomoney.ru/api"
 
-# SHA1 signature formula (YooMoney QuickPay notification):
-# SHA1("notification_type&operation_id&amount&currency&datetime&sender&codepro&secret&label")
-# Docs: https://yoomoney.ru/docs/payment-buttons/using-api/notifications
+# YooMoney sends notifications in TWO formats depending on account/LK version:
+#
+# OLD format: field sha1_hash, formula:
+#   SHA1("notification_type&operation_id&amount&currency&datetime&sender&codepro&secret&label")
+#
+# NEW format: field sign, formula:
+#   HMAC-SHA256(secret, "key1=val1&key2=val2&..." sorted alphabetically, all params except sign)
+#
+# Logs showed NEW format with bill_id, operation_label, sign — this is the current YooMoney API.
 
 
 def _parse_body(body: bytes) -> dict[str, str]:
-    """Parse x-www-form-urlencoded body.
-
-    Uses unquote() (not unquote_plus) so '+' in datetime timezone offsets
-    (sent as %2B by YooMoney) are decoded to '+', never to space.
+    """Parse application/x-www-form-urlencoded, keeping values decoded.
     Empty-valued fields (e.g. sender= for card payments) are kept as "".
+    Uses unquote() — not unquote_plus() — so %2B in datetime stays as '+'.
     """
     result: dict[str, str] = {}
     for pair in body.decode("utf-8", errors="replace").split("&"):
@@ -39,30 +43,19 @@ def _parse_body(body: bytes) -> dict[str, str]:
 class YooMoneyProvider(PaymentProviderBase):
     """YooMoney wallet-mode (QuickPay) provider.
 
-    Payment flow:
-      User clicks link → YooMoney QuickPay form (wallet OR card) →
-      YooMoney sends HTTP POST notification to our webhook URL.
-
-    REQUIRED setup in YooMoney LK (wallet.yoomoney.ru):
-      Настройки → Переводы → HTTP-уведомления
-        URL: http://<your-domain>/webhooks/payment/yoomoney
-        Тип: p2p (входящие переводы)
-        Секрет: any string — MUST match YOOMONEY_NOTIFICATION_SECRET here
+    REQUIRED one-time setup in YooMoney LK (yoomoney.ru → Настройки → Переводы → HTTP-уведомления):
+      URL:    http://<your-domain>/webhooks/payment/yoomoney
+      Секрет: any string — MUST match YOOMONEY_NOTIFICATION_SECRET in Admin → Integrations
 
     Config keys:
       YOOMONEY_WALLET               – wallet number (4100...)
       YOOMONEY_NOTIFICATION_SECRET  – secret set in YooMoney LK notification settings
-      YOOMONEY_ACCESS_TOKEN         – (optional) OAuth token for API status polling
+      YOOMONEY_ACCESS_TOKEN         – (optional) OAuth token for API status polling fallback
     """
 
-    def __init__(
-        self,
-        wallet: str,
-        notification_secret: str,
-        access_token: str = "",
-    ) -> None:
+    def __init__(self, wallet: str, notification_secret: str, access_token: str = "") -> None:
         self._wallet = wallet.strip()
-        self._secret = notification_secret.strip()   # strip is critical — extra whitespace breaks SHA1
+        self._secret = notification_secret.strip()  # strip is critical — whitespace breaks signatures
         self._access_token = access_token.strip()
 
     # ── payment creation ──────────────────────────────────────────────────────
@@ -78,11 +71,11 @@ class YooMoneyProvider(PaymentProviderBase):
         label = f"pl_{our_payment_id}"
         params = {
             "receiver":      self._wallet,
-            "quickpay-form": "shop",          # shows both wallet + bank card options
+            "quickpay-form": "shop",       # shows wallet + bank card options
             "targets":       f"Private Line #{our_payment_id}",
             "sum":           f"{amount:.2f}",
             "label":         label,
-            "successURL":    "https://t.me/",  # redirect back to Telegram after payment
+            "successURL":    "https://t.me/",
         }
         url = "https://yoomoney.ru/quickpay/confirm?" + urlencode(params, quote_via=urllib.parse.quote)
         logger.info("YooMoney payment URL: wallet=%s label=%s amount=%.2f", self._wallet, label, amount)
@@ -94,67 +87,51 @@ class YooMoneyProvider(PaymentProviderBase):
 
     # ── webhook verification ──────────────────────────────────────────────────
 
-    async def verify_webhook(
-        self,
-        body: bytes,
-        headers: dict[str, str],
-    ) -> IncomingPayment | None:
+    async def verify_webhook(self, body: bytes, headers: dict[str, str]) -> IncomingPayment | None:
         try:
             params = _parse_body(body)
 
             notification_type = params.get("notification_type", "")
             operation_id      = params.get("operation_id", "")
             amount            = params.get("amount", "")
-            currency          = params.get("currency", "")
-            dt                = params.get("datetime", "")
-            sender            = params.get("sender", "")      # empty for card payments
-            codepro           = params.get("codepro", "false")
             label             = params.get("label", "")
-            sha1_got          = params.get("sha1_hash", "").lower().strip()
             unaccepted        = params.get("unaccepted", "false").lower()
+            is_test           = "test_notification" in params
 
             logger.info(
-                "YooMoney webhook received: type=%s label=%s amount=%s operation=%s "
-                "unaccepted=%s codepro=%s secret_len=%d",
+                "YooMoney webhook: type=%s label=%s amount=%s operation=%s "
+                "unaccepted=%s test=%s fields=%s",
                 notification_type, label, amount, operation_id,
-                unaccepted, codepro, len(self._secret),
+                unaccepted, is_test, sorted(params.keys()),
             )
 
-            # ── Reject payments that are "unaccepted" (held by YooMoney, not yet released)
+            if is_test:
+                logger.info("YooMoney: test notification, skipping payment processing")
+                return None
+
             if unaccepted == "true":
-                logger.warning(
-                    "YooMoney: payment %s is unaccepted (held), skipping auto-confirm",
-                    operation_id,
-                )
+                logger.warning("YooMoney: payment %s is unaccepted (held), skipping", operation_id)
                 return None
 
-            # ── Validate SHA1 signature
-            if not sha1_got:
-                logger.error("YooMoney webhook: sha1_hash is missing. Params: %s", list(params.keys()))
-                return None
-
-            check_str = (
-                f"{notification_type}&{operation_id}&{amount}&{currency}"
-                f"&{dt}&{sender}&{codepro}&{self._secret}&{label}"
-            )
-            sha1_expected = hashlib.sha1(check_str.encode("utf-8")).hexdigest()
-
-            if not hmac.compare_digest(sha1_expected, sha1_got):
+            # ── try NEW format first (sign / HMAC-SHA256) ────────────────────
+            if "sign" in params:
+                if not self._verify_sign_new(params):
+                    return None
+            # ── fall back to OLD format (sha1_hash / SHA1) ───────────────────
+            elif "sha1_hash" in params:
+                if not self._verify_sign_old(params):
+                    return None
+            else:
                 logger.error(
-                    "YooMoney SHA1 mismatch: expected=%s got=%s | "
-                    "label=%s amount=%s secret_len=%d | "
-                    "check_str=%r",
-                    sha1_expected, sha1_got,
-                    label, amount, len(self._secret),
-                    check_str,
+                    "YooMoney webhook: no signature field (sign or sha1_hash). fields=%s",
+                    sorted(params.keys()),
                 )
                 return None
 
-            # ── Extract our payment ID from label (format: "pl_{id}")
+            # ── extract payment ID from label (format: pl_{id}) ──────────────
             if not label.startswith("pl_"):
                 logger.warning("YooMoney: unexpected label format %r, skipping", label)
                 return None
-
             try:
                 our_payment_id = int(label[3:])
             except ValueError:
@@ -173,21 +150,51 @@ class YooMoneyProvider(PaymentProviderBase):
             )
 
         except Exception as exc:
-            logger.error("YooMoney webhook parse error: %s", exc, exc_info=True)
+            logger.error("YooMoney webhook error: %s", exc, exc_info=True)
             return None
+
+    def _verify_sign_new(self, params: dict[str, str]) -> bool:
+        """NEW format: HMAC-SHA256 of all params except 'sign', sorted alphabetically."""
+        sign_got = params.get("sign", "").lower().strip()
+        filtered = sorted((k, v) for k, v in params.items() if k != "sign")
+        check_str = "&".join(f"{k}={v}" for k, v in filtered)
+        expected = hmac_module.new(
+            self._secret.encode("utf-8"),
+            check_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        ok = hmac_module.compare_digest(expected, sign_got)
+        if not ok:
+            logger.error(
+                "YooMoney HMAC-SHA256 mismatch: expected=%s got=%s secret_len=%d check_str=%r",
+                expected, sign_got, len(self._secret), check_str,
+            )
+        return ok
+
+    def _verify_sign_old(self, params: dict[str, str]) -> bool:
+        """OLD format: SHA1 of fixed-order fields."""
+        sha1_got = params.get("sha1_hash", "").lower().strip()
+        check_str = (
+            f"{params.get('notification_type','')}&{params.get('operation_id','')}&"
+            f"{params.get('amount','')}&{params.get('currency','')}&"
+            f"{params.get('datetime','')}&{params.get('sender','')}&"
+            f"{params.get('codepro','')}&{self._secret}&{params.get('label','')}"
+        )
+        expected = hashlib.sha1(check_str.encode("utf-8")).hexdigest()
+        ok = hmac_module.compare_digest(expected, sha1_got)
+        if not ok:
+            logger.error(
+                "YooMoney SHA1 mismatch: expected=%s got=%s secret_len=%d",
+                expected, sha1_got, len(self._secret),
+            )
+        return ok
 
     # ── fallback: API polling ─────────────────────────────────────────────────
 
     async def check_payment_by_label(self, label: str, expected_amount: float) -> str | None:
-        """Poll YooMoney operation-history API to find payment by label.
-
-        Requires YOOMONEY_ACCESS_TOKEN (OAuth).
-        Returns operation_id on success, None if not found or not confirmed.
-        """
         if not self._access_token:
             logger.warning("YooMoney: access_token not set — API polling skipped for label=%s", label)
             return None
-
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
@@ -199,26 +206,19 @@ class YooMoneyProvider(PaymentProviderBase):
                     },
                 )
             if resp.status_code != 200:
-                logger.error("YooMoney API error %d for label=%s: %s", resp.status_code, label, resp.text[:300])
+                logger.error("YooMoney API %d for label=%s: %s", resp.status_code, label, resp.text[:300])
                 return None
-
             data = resp.json()
-            ops = data.get("operations", [])
-            logger.debug("YooMoney API: found %d operations for label=%s", len(ops), label)
-
-            for op in ops:
+            for op in data.get("operations", []):
                 if (
                     op.get("label") == label
                     and op.get("status") == "success"
                     and op.get("direction") == "in"
-                    and float(op.get("amount", 0)) >= expected_amount * 0.97   # allow up to 3% fee
+                    and float(op.get("amount", 0)) >= expected_amount * 0.97
                 ):
                     op_id = op.get("operation_id", label)
-                    logger.info("YooMoney API confirmed: label=%s operation=%s amount=%s", label, op_id, op.get("amount"))
+                    logger.info("YooMoney API confirmed: label=%s op=%s", label, op_id)
                     return op_id
-
-            logger.info("YooMoney API: no confirmed payment for label=%s (ops=%d)", label, len(ops))
         except Exception as exc:
             logger.error("YooMoney API poll error label=%s: %s", label, exc)
-
         return None
