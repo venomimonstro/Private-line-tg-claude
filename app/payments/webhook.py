@@ -70,7 +70,16 @@ async def payment_webhook(
             return PlainTextResponse("YES")
         return {"status": "ok"}
 
+    logger.info(
+        "Webhook payment lookup: id=%d provider=%s status=%s amount=%s",
+        result.id, provider_name, result.status, result.amount,
+    )
+
     if result.status != PaymentStatus.pending:
+        logger.info(
+            "Payment %d already in status %s — skipping (provider: %s)",
+            result.id, result.status, provider_name,
+        )
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
             return PlainTextResponse("YES")
         return {"status": "already_processed"}

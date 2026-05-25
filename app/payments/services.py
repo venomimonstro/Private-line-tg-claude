@@ -197,9 +197,19 @@ async def confirm_payment_auto(
     payment.confirmed_at = datetime.utcnow()
     payment.updated_at = datetime.utcnow()
     await session.flush()
-
-    await _activate_from_payment(payment, session)
+    # Commit payment as paid FIRST — so retried webhooks see it as already_processed
+    # even if subscription activation below fails.
     await session.commit()
+    logger.info("Payment %d committed as paid", payment.id)
+
+    try:
+        await _activate_from_payment(payment, session)
+        await session.commit()
+    except Exception as exc:
+        logger.error(
+            "Payment %d confirmed but activation failed (will need manual resend): %s",
+            payment.id, exc, exc_info=True,
+        )
 
 
 async def _activate_from_payment(payment: Payment, session: AsyncSession) -> None:
