@@ -77,6 +77,12 @@ async def payment_webhook(
     return {"status": "ok"}
 
 
+@router.get("/payment/freekassa")
+async def freekassa_url_check() -> PlainTextResponse:
+    """FreeKassa validates the notification URL with a GET request expecting 'YES'."""
+    return PlainTextResponse("YES")
+
+
 @router.get("/payment/success", response_class=HTMLResponse)
 async def payment_success() -> HTMLResponse:
     return HTMLResponse(_SUCCESS_HTML)
