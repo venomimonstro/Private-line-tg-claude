@@ -54,10 +54,12 @@ async def payment_webhook(
     incoming = await provider.verify_webhook(body, headers)
     if incoming is None:
         logger.warning("Webhook signature verification failed for provider %s", provider_name)
-        # FreeKassa sends a test POST with fake data to validate the URL.
-        # Return YES so their validation passes; no payment is processed.
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
             return PlainTextResponse("YES")
+        # Return 200 for YooMoney — they retry on non-200, causing noise in logs.
+        # Returning 400 also breaks their URL validation check.
+        if provider_name == "yoomoney":
+            return {"status": "error", "detail": "invalid_signature"}
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     result = await session.get(Payment, incoming.our_payment_id)

@@ -89,6 +89,30 @@
           </div>
         </div>
       </div>
+      {% if section == 'ЮMoney' %}
+      <div class="card mb-4 border-warning">
+        <div class="card-header fw-semibold text-warning">⚠️ Обязательная настройка в личном кабинете ЮMoney</div>
+        <div class="card-body">
+          <p class="small text-muted mb-2">Чтобы оплаты автоматически подтверждались — нужно <strong>один раз</strong> настроить HTTP-уведомления в личном кабинете ЮMoney:</p>
+          <ol class="small mb-3">
+            <li>Зайдите на <strong>yoomoney.ru → Настройки → Переводы → HTTP-уведомления</strong></li>
+            <li>Включите уведомления, вставьте URL ниже</li>
+            <li>Введите произвольный секрет — и тот же секрет в поле «Секрет уведомлений» выше</li>
+            <li>Нажмите «Сохранить»</li>
+          </ol>
+          <table class="table table-sm table-bordered mb-0">
+            <tr>
+              <td class="text-nowrap fw-semibold">URL для HTTP-уведомлений</td>
+              <td><code id="ym-url-notify" class="small">{{ base_url }}/webhooks/payment/yoomoney</code></td>
+              <td><button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyUrl('ym-url-notify')">Копировать</button></td>
+            </tr>
+          </table>
+          <div class="alert alert-danger small mt-3 mb-0">
+            <strong>Без этой настройки</strong> деньги будут поступать на кошелёк, но бот никогда не узнает об оплате!
+          </div>
+        </div>
+      </div>
+      {% endif %}
       {% if section == 'FreeKassa' %}
       <div class="card mb-4 border-info">
         <div class="card-header fw-semibold text-info">📋 URL для настройки в личном кабинете FreeKassa</div>
