@@ -46,9 +46,6 @@ class FreeKassaProvider(PaymentProviderBase):
 
     @staticmethod
     def _fmt_amount(amount: float) -> str:
-        """Format amount: no trailing zeros for whole numbers (100 not 100.00)."""
-        if amount == int(amount):
-            return str(int(amount))
         return f"{amount:.2f}"
 
     async def create_payment(
@@ -61,6 +58,10 @@ class FreeKassaProvider(PaymentProviderBase):
     ) -> PaymentResult:
         amount_str = self._fmt_amount(amount)
         sign = self._sign_form(amount_str, str(our_payment_id))
+        logger.info(
+            "FreeKassa sign_form: merchant=%r amount=%r order=%r -> sign=%s",
+            self._merchant_id, amount_str, our_payment_id, sign,
+        )
         params: dict[str, str] = {
             "m": self._merchant_id,
             "oa": amount_str,
