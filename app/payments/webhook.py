@@ -37,7 +37,7 @@ h1{color:#dc3545}p{color:#555}a{color:#007bff}</style></head>
 <p><a href="https://t.me/">Открыть Telegram</a></p></body></html>"""
 
 
-@router.post("/payment/{provider_name}")
+@router.post("/payment/{provider_name}", response_model=None)
 async def payment_webhook(
     provider_name: str,
     request: Request,
