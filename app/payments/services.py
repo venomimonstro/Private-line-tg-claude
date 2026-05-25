@@ -217,13 +217,18 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         logger.error("Tariff %d not found for payment %d", payment.tariff_id, payment.id)
         return
 
-    from app.services.user_notifications import send_key_to_user
+    from app.services.user_notifications import send_key_to_user, notify_payment_confirmed
+
+    user = await session.get(User, payment.user_id)
+    telegram_id = user.telegram_id if user else None
 
     if subscription.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
         # Renewal on an already-active subscription: just extend the expiry date.
         subscription.tariff_id = tariff.id
         await subscription_service.extend_subscription(subscription, tariff.duration_days, session)
         logger.info("Extended subscription %d by %d days (renewal)", subscription.id, tariff.duration_days)
+        if telegram_id:
+            await notify_payment_confirmed(telegram_id, float(payment.amount), is_renewal=True, subscription=subscription)
     else:
         # Fresh activation (pending_payment, expired, disabled, activation_error).
         subscription.status = SubscriptionStatus.pending_payment

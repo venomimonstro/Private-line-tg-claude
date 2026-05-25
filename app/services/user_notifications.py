@@ -63,6 +63,40 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
         logger.error("send_key_to_user failed for user %d: %s", user_id, exc)
 
 
+async def notify_payment_confirmed(
+    telegram_id: int,
+    amount: float,
+    is_renewal: bool = False,
+    subscription: object = None,
+) -> None:
+    """Notify user that their payment was confirmed and subscription is active."""
+    from app.bot_instance import get_bot
+
+    bot = get_bot()
+    if bot is None:
+        return
+    try:
+        if is_renewal and subscription is not None:
+            expires_at = getattr(subscription, "expires_at", None)
+            expires_str = expires_at.strftime("%d.%m.%Y") if expires_at else "—"
+            text = (
+                f"✅ <b>Оплата получена!</b>\n\n"
+                f"Сумма: <b>{int(amount)} ₽</b>\n"
+                f"Подписка продлена до: <b>{expires_str}</b>\n\n"
+                "Ваш ключ доступа остаётся прежним — пользуйтесь!"
+            )
+        else:
+            text = (
+                f"✅ <b>Оплата получена!</b>\n\n"
+                f"Сумма: <b>{int(amount)} ₽</b>\n"
+                "Ваша подписка активируется в течение нескольких секунд.\n"
+                "Ключ доступа придёт следующим сообщением."
+            )
+        await bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML")
+    except Exception as exc:
+        logger.error("notify_payment_confirmed failed for telegram_id %d: %s", telegram_id, exc)
+
+
 async def notify_expiry(user_id: int) -> None:
     """Notify user that subscription expired."""
     from app.bot_instance import get_bot

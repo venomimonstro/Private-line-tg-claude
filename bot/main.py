@@ -55,9 +55,20 @@ async def main() -> None:
         await close_all()
 
     logger.info("Starting Private Line bot...")
+    scheduler = None
+    try:
+        from scheduler.tasks import create_scheduler
+        scheduler = create_scheduler()
+        scheduler.start()
+        logger.info("Scheduler started")
+    except Exception as exc:
+        logger.error("Failed to start scheduler: %s", exc)
+
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
         await shutdown(bot)
 
 
