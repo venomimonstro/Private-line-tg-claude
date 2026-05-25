@@ -57,9 +57,10 @@ async def handle_renew(message: Message, db_user: User) -> None:
     expires_str = current_sub.expires_at.strftime("%d.%m.%Y") if current_sub.expires_at else "—"
 
     if payment_result.payment_url:
-        markup = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)
-        ]])
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=payment_result.payment_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"recheck_payment:{payment.id}")],
+        ])
         await message.answer(
             f"🔄 <b>Продление подписки</b>\n\n"
             f"Тариф: {tariff.name}\n"

@@ -123,6 +123,9 @@ async def on_recheck_payment(callback: CallbackQuery, db_user: User) -> None:
 
         # Try to verify with payment provider
         confirmed = False
+        notify_admin_needed = False
+        provider_name = payment.provider
+        amount_val = float(payment.amount)
         try:
             if payment.provider == "yookassa":
                 from app.services.payment_verification import check_payment_status_yookassa
@@ -130,6 +133,9 @@ async def on_recheck_payment(callback: CallbackQuery, db_user: User) -> None:
             elif payment.provider == "lava":
                 from app.services.payment_verification import check_payment_status_lava
                 confirmed = await check_payment_status_lava(payment, session)
+            elif payment.provider == "yoomoney":
+                # YooMoney has no polling API — notify admin to confirm manually
+                notify_admin_needed = True
         except Exception as exc:
             logger.error("Recheck payment %d failed: %s", payment_id, exc)
 
@@ -137,11 +143,30 @@ async def on_recheck_payment(callback: CallbackQuery, db_user: User) -> None:
 
     if confirmed:
         await callback.answer("✅ Платёж подтверждён! Ваша подписка активируется.", show_alert=True)
-    else:
-        status_label = _STATUS_LABEL.get(payment.status, payment.status)
-        emoji = _STATUS_EMOJI.get(payment.status, "❓")
+        return
+
+    if notify_admin_needed:
+        try:
+            from app.services.notification import notify_admin
+            username = f"@{callback.from_user.username}" if callback.from_user.username else str(callback.from_user.id)
+            await notify_admin(
+                f"💛 ЮМани: пользователь {username} сообщил об оплате\n"
+                f"Платёж #{payment_id} на сумму {amount_val:.0f} ₽\n"
+                f"Подтвердить: /admin/payments"
+            )
+        except Exception as exc:
+            logger.error("Failed to notify admin about yoomoney payment %d: %s", payment_id, exc)
         await callback.answer(
-            f"{emoji} Текущий статус: {status_label}\n"
-            "Если платёж прошёл, он будет подтверждён автоматически в течение 15 минут.",
+            "✅ Уведомление об оплате отправлено!\n"
+            "Администратор проверит и активирует подписку в течение нескольких минут.",
             show_alert=True,
         )
+        return
+
+    status_label = _STATUS_LABEL.get(payment.status, payment.status)
+    emoji = _STATUS_EMOJI.get(payment.status, "❓")
+    await callback.answer(
+        f"{emoji} Текущий статус: {status_label}\n"
+        "Если платёж прошёл, он будет подтверждён автоматически.",
+        show_alert=True,
+    )

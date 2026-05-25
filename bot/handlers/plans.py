@@ -107,10 +107,14 @@ def _kb_stars_pay(payment_id: int, stars: int) -> InlineKeyboardMarkup:
     ]])
 
 
-def _kb_pay_url(url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Перейти к оплате", url=url)
-    ]])
+def _kb_pay_url(url: str, payment_id: int | None = None) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="💳 Перейти к оплате", url=url)]]
+    if payment_id is not None:
+        rows.append([InlineKeyboardButton(
+            text="✅ Я оплатил",
+            callback_data=f"recheck_payment:{payment_id}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -402,9 +406,9 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
             f"<b>Счёт #{payment_id}</b>\n"
             f"Тариф: {tariff_name}\n"
             f"Сумма: <b>{int(amount)} ₽</b>{promo_line}\n\n"
-            "Нажмите кнопку для оплаты:",
+            "Нажмите кнопку для оплаты. После оплаты нажмите «✅ Я оплатил»:",
             parse_mode="HTML",
-            reply_markup=_kb_pay_url(payment_url),
+            reply_markup=_kb_pay_url(payment_url, payment_id),
         )
 
     elif stars_flow:
