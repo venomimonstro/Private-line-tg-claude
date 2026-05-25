@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
@@ -14,6 +14,9 @@ from app.payments.services import confirm_payment_auto
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
+
+# Providers that expect a plain-text "YES" response (not JSON)
+_PLAINTEXT_YES_PROVIDERS = {"freekassa"}
 
 _SUCCESS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -39,7 +42,7 @@ async def payment_webhook(
     provider_name: str,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
-) -> dict:
+) -> PlainTextResponse | dict:
     try:
         provider = await get_provider_db(provider_name, session)
     except ValueError:
@@ -56,14 +59,21 @@ async def payment_webhook(
     result = await session.get(Payment, incoming.our_payment_id)
     if result is None:
         logger.error("Payment %d not found (provider: %s)", incoming.our_payment_id, provider_name)
-        return {"status": "ok"}  # Return 200 to prevent retries for missing payments
+        # Return success to prevent infinite retries for unknown payments
+        if provider_name in _PLAINTEXT_YES_PROVIDERS:
+            return PlainTextResponse("YES")
+        return {"status": "ok"}
 
     if result.status != PaymentStatus.pending:
+        if provider_name in _PLAINTEXT_YES_PROVIDERS:
+            return PlainTextResponse("YES")
         return {"status": "already_processed"}
 
     result.provider_payment_id = incoming.provider_payment_id
     await confirm_payment_auto(result, session)
 
+    if provider_name in _PLAINTEXT_YES_PROVIDERS:
+        return PlainTextResponse("YES")
     return {"status": "ok"}
 
 

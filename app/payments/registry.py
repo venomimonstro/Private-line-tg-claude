@@ -54,9 +54,9 @@ def _build_with_creds(name: str, g) -> PaymentProviderBase:
         from app.payments.providers.freekassa import FreeKassaProvider
         return FreeKassaProvider(
             merchant_id=g("FREEKASSA_MERCHANT_ID"),
+            secret_1=g("FREEKASSA_SECRET_1"),
             secret_2=g("FREEKASSA_SECRET_2"),
             api_key=g("FREEKASSA_API_KEY"),
-            secret_1=g("FREEKASSA_SECRET_1"),
         )
 
     if name == "lava":
