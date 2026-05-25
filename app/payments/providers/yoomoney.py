@@ -156,7 +156,8 @@ class YooMoneyProvider(PaymentProviderBase):
     def _verify_sign_new(self, params: dict[str, str]) -> bool:
         """NEW format: HMAC-SHA256 of all params except 'sign', sorted alphabetically."""
         sign_got = params.get("sign", "").lower().strip()
-        filtered = sorted((k, v) for k, v in params.items() if k != "sign")
+        # YooMoney excludes empty-value params from signature (e.g. bill_id=, sender=)
+        filtered = sorted((k, v) for k, v in params.items() if k != "sign" and v != "")
         check_str = "&".join(f"{k}={v}" for k, v in filtered)
         expected = hmac_module.new(
             self._secret.encode("utf-8"),
