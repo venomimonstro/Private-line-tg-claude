@@ -1,67 +1,77 @@
 {% extends "portal/base.html" %}
-{% block title %}Оформление — {{ tariff.name }} — Private Line VPN{% endblock %}
+{% block title %}Оформление — {{ tariff.name }} — Private X Line{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-12 col-md-8 col-lg-6">
+  <div class="col-12 col-md-7 col-lg-5">
 
-    <a href="/portal/" class="text-muted small mb-3 d-inline-block">
-      <i class="bi bi-arrow-left"></i> Назад к тарифам
+    <a href="/portal/" class="btn-outline-portal btn d-inline-flex align-items-center gap-1 mb-3 px-2 py-1">
+      <i class="bi bi-arrow-left"></i> Назад
     </a>
 
     {% if error %}
-    <div class="alert alert-danger">{{ error }}</div>
+    <div class="alert alert-danger mb-3">{{ error }}</div>
     {% endif %}
 
+    {# — Tariff summary card — #}
     <div class="card mb-3 p-3">
       <div class="d-flex justify-content-between align-items-center">
         <div>
-          <h5 class="fw-bold mb-0">{{ tariff.name }}</h5>
-          <div class="text-muted small">{{ tariff.duration_days }} дней · {{ tariff.max_keys }} уст.</div>
+          <div class="fw-semibold" style="font-size:.95rem">{{ tariff.name }}</div>
+          <div class="text-muted" style="font-size:.78rem;margin-top:.15rem">
+            {{ tariff.duration_days }} дней &middot; {{ tariff.max_keys }} уст.
+          </div>
         </div>
         <div class="text-end">
           {% if tariff.price_first_month is not none %}
-          <div class="fw-bold fs-5">{{ tariff.price_first_month }} {{ tariff.currency }}</div>
-          <div class="text-muted small text-decoration-line-through">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
+          <div class="fw-bold" style="font-size:1.15rem">{{ tariff.price_first_month }} {{ tariff.currency }}</div>
+          <div class="text-muted text-decoration-line-through" style="font-size:.78rem">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
           {% else %}
-          <div class="fw-bold fs-5">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
+          <div class="fw-bold" style="font-size:1.15rem">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
           {% endif %}
         </div>
       </div>
     </div>
 
+    {# — Checkout form — #}
     <div class="card p-4">
-      <h6 class="fw-semibold mb-3">Контактные данные</h6>
+      <h6 class="fw-semibold mb-3" style="font-size:.9rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">
+        Контактные данные
+      </h6>
       <form method="post" action="/portal/start/{{ tariff.slug }}" class="needs-validation" novalidate>
+
         <div class="mb-3">
-          <label class="form-label">Email <span class="text-danger">*</span></label>
-          <input type="email" name="email" class="form-control" required
+          <label class="form-label" for="f-email">Email <span class="text-danger">*</span></label>
+          <input type="email" id="f-email" name="email" class="form-control" required
                  placeholder="your@email.com"
-                 value="{{ prefill_email or '' }}">
-          <div class="form-text text-muted">На него придёт VPN-ключ и информация о подписке.</div>
+                 value="{{ prefill_email or '' }}"
+                 autocomplete="email">
+          <div class="form-text">На него придёт VPN-ключ после оплаты.</div>
         </div>
 
         <div class="mb-3">
-          <label class="form-label">Имя</label>
-          <input type="text" name="first_name" class="form-control"
-                 placeholder="Необязательно" maxlength="255">
+          <label class="form-label" for="f-name">Имя <span class="text-muted fw-normal" style="font-size:.8rem">(необязательно)</span></label>
+          <input type="text" id="f-name" name="first_name" class="form-control"
+                 placeholder="Иван" maxlength="255" autocomplete="given-name">
         </div>
 
-        <div class="form-check mb-3">
+        <div class="form-check mb-4">
           <input class="form-check-input" type="checkbox" id="agree" required>
-          <label class="form-check-label text-muted small" for="agree">
-            Я соглашаюсь с условиями использования сервиса
+          <label class="form-check-label" for="agree">
+            Соглашаюсь с условиями использования сервиса
           </label>
+          <div class="invalid-feedback">Необходимо принять условия.</div>
         </div>
 
-        <button type="submit" class="btn btn-primary w-100 py-2">
+        <button type="submit" class="btn btn-primary w-100 py-2" style="font-size:.95rem">
           <i class="bi bi-credit-card me-2"></i>Перейти к оплате
         </button>
       </form>
     </div>
 
-    <div class="text-center mt-3 text-muted small">
-      <i class="bi bi-lock me-1"></i>Платёж защищён. Ключ активируется автоматически после оплаты.
+    <div class="text-center mt-3" style="color:var(--text-dim);font-size:.78rem">
+      <i class="bi bi-lock me-1"></i>Данные защищены. Ключ активируется автоматически после оплаты.
     </div>
+
   </div>
 </div>
 {% endblock %}

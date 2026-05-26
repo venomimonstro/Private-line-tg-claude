@@ -1,76 +1,98 @@
 {% extends "portal/base.html" %}
-{% block title %}Ожидание оплаты — Private Line VPN{% endblock %}
+{% block title %}Ожидание оплаты — Private X Line{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-12 col-md-8 col-lg-6 text-center">
+  <div class="col-12 col-md-7 col-lg-5 text-center">
 
+    {# ── Waiting state ── #}
     <div id="state-waiting">
       <div class="mb-4">
-        <div class="spinner-border text-primary" style="width:3rem;height:3rem" role="status"></div>
+        <div class="spinner-border" style="width:3rem;height:3rem;color:var(--accent-hi)" role="status">
+          <span class="visually-hidden">Загрузка...</span>
+        </div>
       </div>
       <h4 class="fw-bold mb-2">Ожидаем оплату</h4>
-      <p class="text-muted mb-4">Страница обновится автоматически после подтверждения платежа.</p>
+      <p class="text-muted mb-4" style="font-size:.9rem">
+        Страница обновится автоматически после подтверждения платежа.
+      </p>
 
       {% if payment_url %}
-      <a href="{{ payment_url }}" class="btn btn-primary btn-lg mb-3" target="_blank" rel="noopener">
-        <i class="bi bi-credit-card me-2"></i>Оплатить сейчас
+      <a href="{{ payment_url }}" class="btn btn-primary btn-lg mb-2 px-5" target="_blank" rel="noopener">
+        <i class="bi bi-credit-card me-2"></i>Оплатить
       </a>
-      <p class="text-muted small">Если кнопка не открылась — <a href="{{ payment_url }}" target="_blank">нажмите здесь</a>.</p>
+      <p class="text-muted mb-4" style="font-size:.78rem">
+        Если кнопка не открылась &mdash; <a href="{{ payment_url }}" target="_blank">нажмите здесь</a>
+      </p>
       {% endif %}
 
-      <div class="card p-3 mt-4 text-start">
-        <div class="row">
-          <div class="col-6 text-muted small">Тариф</div>
-          <div class="col-6 small fw-semibold">{{ tariff_name }}</div>
-          <div class="col-6 text-muted small mt-1">Сумма</div>
-          <div class="col-6 small fw-semibold mt-1">{{ amount }} {{ currency }}</div>
-          <div class="col-6 text-muted small mt-1">Статус</div>
-          <div class="col-6 small mt-1">
-            <span id="status-badge" class="badge bg-warning text-dark">Ожидание</span>
+      <div class="card p-3 mt-2 text-start">
+        <div class="row g-0">
+          <div class="col-5 text-muted py-1" style="font-size:.82rem;border-bottom:1px solid var(--border)">Тариф</div>
+          <div class="col-7 py-1 fw-medium" style="font-size:.82rem;border-bottom:1px solid var(--border)">{{ tariff_name }}</div>
+          <div class="col-5 text-muted py-1" style="font-size:.82rem;border-bottom:1px solid var(--border)">Сумма</div>
+          <div class="col-7 py-1 fw-semibold" style="font-size:.82rem;border-bottom:1px solid var(--border)">{{ amount }} {{ currency }}</div>
+          <div class="col-5 text-muted py-1" style="font-size:.82rem">Статус</div>
+          <div class="col-7 py-1" style="font-size:.82rem">
+            <span id="status-badge" class="badge" style="background:rgba(255,193,7,.18);color:#ffc107;font-weight:500">
+              Ожидание
+            </span>
           </div>
         </div>
       </div>
     </div>
 
+    {# ── Activating state ── #}
+    <div id="state-activating" style="display:none">
+      <div class="mb-4">
+        <div class="spinner-border" style="width:3rem;height:3rem;color:var(--green)" role="status">
+          <span class="visually-hidden">Активация...</span>
+        </div>
+      </div>
+      <h4 class="fw-bold mb-2">Оплата получена!</h4>
+      <p class="text-muted" style="font-size:.9rem">Активируем ваш ключ, несколько секунд...</p>
+    </div>
+
+    {# ── Success state ── #}
     <div id="state-success" style="display:none">
-      <div class="mb-4 text-success" style="font-size:4rem">✅</div>
-      <h4 class="fw-bold mb-2">Оплата подтверждена!</h4>
-      <p class="text-muted mb-4">Ваш VPN-ключ готов. Скопируйте и добавьте его в приложение.</p>
-      <div class="card p-3 mb-3">
+      <div class="mb-3" style="font-size:3.5rem;line-height:1">✅</div>
+      <h4 class="fw-bold mb-1">Оплата подтверждена!</h4>
+      <p class="text-muted mb-4" style="font-size:.9rem">
+        VPN-ключ готов. Скопируйте и добавьте в приложение.
+      </p>
+
+      <div class="card p-3 mb-4 text-start">
         <div class="d-flex align-items-center gap-2 mb-2">
-          <i class="bi bi-key-fill text-warning"></i>
-          <span class="fw-semibold">Ваш VPN-ключ</span>
+          <i class="bi bi-key-fill" style="color:#ffc107"></i>
+          <span class="fw-semibold" style="font-size:.9rem">Ваш VPN-ключ</span>
         </div>
         <div class="input-group">
-          <input type="text" id="vpn-key-display" class="form-control font-monospace small"
-                 readonly style="font-size:.78rem">
-          <button class="btn btn-outline-secondary" onclick="copyKey()" title="Скопировать">
+          <input type="text" id="vpn-key-display" class="form-control font-monospace"
+                 readonly style="font-size:.75rem;letter-spacing:.3px">
+          <button class="btn btn-primary" onclick="copyKey()" title="Скопировать" id="copy-btn">
             <i class="bi bi-clipboard"></i>
           </button>
         </div>
-        <div class="form-text mt-2">
-          Добавьте ключ в <a href="https://apps.apple.com/app/outline-app/id1356177741" target="_blank">Outline</a>
+        <div class="form-text mt-2" style="font-size:.78rem">
+          Добавьте ключ в
+          <a href="https://apps.apple.com/app/outline-app/id1356177741" target="_blank" rel="noopener">Outline (iOS)</a>,
+          <a href="https://play.google.com/store/apps/details?id=org.outline.android.client" target="_blank" rel="noopener">Outline (Android)</a>
           или другое совместимое приложение.
         </div>
       </div>
-      <a href="/portal/" class="btn btn-outline-secondary">
-        <i class="bi bi-arrow-left"></i> На главную
+
+      <a href="/portal/" class="btn-outline-portal btn">
+        <i class="bi bi-arrow-left me-1"></i>На главную
       </a>
     </div>
 
+    {# ── Failed state ── #}
     <div id="state-failed" style="display:none">
-      <div class="mb-4 text-danger" style="font-size:4rem">❌</div>
-      <h4 class="fw-bold mb-2">Платёж не прошёл</h4>
-      <p class="text-muted mb-4">Попробуйте ещё раз или выберите другой способ оплаты.</p>
-      <a href="/portal/" class="btn btn-primary">Попробовать снова</a>
-    </div>
-
-    <div id="state-activating" style="display:none">
-      <div class="mb-4">
-        <div class="spinner-border text-success" style="width:3rem;height:3rem" role="status"></div>
-      </div>
-      <h4 class="fw-bold mb-2">Оплата получена!</h4>
-      <p class="text-muted">Активируем ваш ключ, это займёт несколько секунд...</p>
+      <div class="mb-3" style="font-size:3.5rem;line-height:1">❌</div>
+      <h4 class="fw-bold mb-1">Платёж не прошёл</h4>
+      <p class="text-muted mb-4" style="font-size:.9rem">
+        Попробуйте ещё раз или выберите другой способ оплаты.
+      </p>
+      <a href="/portal/" class="btn btn-primary px-4">Попробовать снова</a>
     </div>
 
   </div>
@@ -80,21 +102,29 @@
 <script>
 const PAYMENT_ID = {{ payment_id }};
 const STATUS_URL = '/portal/api/status/' + PAYMENT_ID;
-let pollInterval = 3000;
 let attempts = 0;
 
 function setState(name) {
-  ['waiting','success','failed','activating'].forEach(function(s) {
-    document.getElementById('state-' + s).style.display = (s === name) ? '' : 'none';
+  ['waiting', 'activating', 'success', 'failed'].forEach(function(s) {
+    document.getElementById('state-' + s).style.display = s === name ? '' : 'none';
   });
 }
 
 function copyKey() {
   const el = document.getElementById('vpn-key-display');
+  const btn = document.getElementById('copy-btn');
   navigator.clipboard.writeText(el.value).then(function() {
-    const btn = el.nextElementSibling;
-    btn.innerHTML = '<i class="bi bi-check"></i>';
-    setTimeout(function() { btn.innerHTML = '<i class="bi bi-clipboard"></i>'; }, 1500);
+    btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+    btn.style.background = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(function() {
+      btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+      btn.style.background = '';
+      btn.style.borderColor = '';
+    }, 2000);
+  }).catch(function() {
+    el.select();
+    document.execCommand('copy');
   });
 }
 
@@ -116,15 +146,13 @@ function poll() {
         const badge = document.getElementById('status-badge');
         if (badge) badge.textContent = data.status_label || data.status;
         attempts++;
-        const delay = Math.min(pollInterval * Math.pow(1.2, Math.floor(attempts / 5)), 15000);
+        const delay = Math.min(3000 * Math.pow(1.15, Math.floor(attempts / 4)), 12000);
         setTimeout(poll, delay);
       }
     })
-    .catch(function() {
-      setTimeout(poll, 5000);
-    });
+    .catch(function() { setTimeout(poll, 5000); });
 }
 
-setTimeout(poll, pollInterval);
+setTimeout(poll, 3000);
 </script>
 {% endblock %}
