@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -15,6 +17,8 @@ from app.models.vpn_key import VpnKey
 from app.services.vpn_key import get_access_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="access")
 
@@ -107,8 +111,11 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
             f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
             f"<code>{access_url}</code>\n\n"
             f"Скопируйте ключ и импортируйте в приложение:\n"
-            f"• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
-            f"• <b>Hiddify</b> (Windows/Mac)",
+            f"• <b>Android:</b> Hiddify, V2RayNG\n"
+            f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+            f"• <b>Windows/macOS:</b> Hiddify\n"
+            f"• <b>Linux:</b> Hiddify, v2rayA\n\n"
+            f"Нажмите «📱 Как подключиться» для пошаговых инструкций.",
             parse_mode="HTML",
         )
     else:
@@ -122,8 +129,11 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
             lines.append(f"<b>{label}:</b>\n<code>{url}</code>")
         lines.append(
             "\n📱 Скопируйте любой ключ и добавьте в приложение:\n"
-            "• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
-            "• <b>Hiddify</b> (Windows/Mac)"
+            "• <b>Android:</b> Hiddify, V2RayNG\n"
+            "• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+            "• <b>Windows/macOS:</b> Hiddify\n"
+            "• <b>Linux:</b> Hiddify, v2rayA\n\n"
+            "Нажмите «📱 Как подключиться» для пошаговых инструкций."
         )
         await callback.message.answer("\n\n".join(lines), parse_mode="HTML")  # type: ignore[union-attr]
     await callback.answer()
@@ -158,8 +168,11 @@ async def on_get_key_by_id(callback: CallbackQuery, db_user: User) -> None:
     await callback.message.answer(  # type: ignore[union-attr]
         f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
         f"<code>{access_url}</code>\n\n"
-        f"Скопируйте ключ и добавьте его в приложение Outline.\n"
-        f"Нажмите «📱 Как подключиться» для инструкции.",
+        f"Скопируйте ключ и добавьте в приложение:\n"
+        f"• <b>Android:</b> Hiddify, V2RayNG\n"
+        f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+        f"• <b>Windows/macOS:</b> Hiddify\n\n"
+        f"Нажмите «📱 Как подключиться» для пошаговой инструкции.",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -184,6 +197,42 @@ async def on_platform_instructions(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+async def _fetch_live_traffic_gb(key: VpnKey) -> float | None:
+    """Query VPN server in real-time for this key's traffic. Returns GB or None on error."""
+    from app.models.vpn_server import VpnServer
+    from app.services.vpn_key import _make_client
+    from app.services.circuit_breaker import get_circuit_breaker, CircuitOpenError
+
+    async with async_session_maker() as session:
+        server = await session.get(VpnServer, key.server_id)
+        if server is None:
+            return None
+
+        cb = get_circuit_breaker(server.id)
+        if not cb.is_available():
+            return None
+
+        client = _make_client(server)
+        try:
+            stats: dict = await cb.call(client.get_transfer_stats())
+            bytes_used = stats.get(str(key.outline_key_id)) or stats.get(key.outline_key_id)
+            if bytes_used is None:
+                return 0.0
+            used_gb = bytes_used / (1024 ** 3)
+            # Persist updated value
+            key_row = await session.get(VpnKey, key.id)
+            if key_row is not None:
+                key_row.traffic_used_gb = used_gb
+                key_row.last_checked_at = __import__("datetime").datetime.utcnow()
+                await session.commit()
+            return used_gb
+        except (CircuitOpenError, Exception) as exc:
+            logger.warning("Live traffic fetch failed for key %d: %s", key.id, exc)
+            return None
+        finally:
+            await client.aclose()
+
+
 @router.message(F.text == "📊 Проверить лимит")
 async def check_limit(message: Message, db_user: User) -> None:
     sub, active_keys, tariff = await _get_active_subscription(db_user.id)
@@ -193,21 +242,29 @@ async def check_limit(message: Message, db_user: User) -> None:
         return
 
     active_key = active_keys[0]
-    used = active_key.traffic_used_gb
+
+    # Try live query first; fall back to cached value if server is unreachable
+    live_gb = await _fetch_live_traffic_gb(active_key)
+    used = live_gb if live_gb is not None else active_key.traffic_used_gb
+    source_note = "" if live_gb is not None else "\n<i>⚠️ Данные из кэша — сервер временно недоступен</i>"
+
     limit = tariff.traffic_limit_gb if tariff else None
 
     if limit and limit > 0:
-        percent = (used / limit * 100)
+        percent = min(100.0, used / limit * 100)
+        filled = int(percent // 10)
         text = (
             f"📊 <b>Использование трафика</b>\n\n"
             f"Использовано: <b>{used:.2f} ГБ</b> из {limit} ГБ\n"
             f"Осталось: <b>{max(0.0, limit - used):.2f} ГБ</b>\n"
-            f"{'▓' * int(percent // 10)}{'░' * (10 - int(percent // 10))} {percent:.1f}%"
+            f"{'▓' * filled}{'░' * (10 - filled)} {percent:.1f}%"
+            f"{source_note}"
         )
     else:
         text = (
             f"📊 <b>Использование трафика</b>\n\n"
             f"Использовано: <b>{used:.2f} ГБ</b>\n"
-            f"Лимит: Без ограничений"
+            f"Лимит: <b>Без ограничений</b>"
+            f"{source_note}"
         )
     await message.answer(text, parse_mode="HTML")

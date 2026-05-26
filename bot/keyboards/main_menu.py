@@ -50,9 +50,17 @@ def my_access_keyboard() -> InlineKeyboardMarkup:
 def connection_platforms_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 Android", callback_data="instructions:android")],
-            [InlineKeyboardButton(text="🍎 iPhone", callback_data="instructions:iphone")],
-            [InlineKeyboardButton(text="🖥 Windows", callback_data="instructions:windows")],
-            [InlineKeyboardButton(text="🍏 macOS", callback_data="instructions:macos")],
+            [
+                InlineKeyboardButton(text="🤖 Android", callback_data="instructions:android"),
+                InlineKeyboardButton(text="🍎 iPhone", callback_data="instructions:iphone"),
+            ],
+            [
+                InlineKeyboardButton(text="🖥 Windows", callback_data="instructions:windows"),
+                InlineKeyboardButton(text="🍏 macOS", callback_data="instructions:macos"),
+            ],
+            [
+                InlineKeyboardButton(text="🐧 Linux", callback_data="instructions:linux"),
+                InlineKeyboardButton(text="📡 Роутер", callback_data="instructions:router"),
+            ],
         ]
     )

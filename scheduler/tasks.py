@@ -156,7 +156,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
     scheduler.add_job(_job_check_expiring_soon, "cron", hour=9, minute=0)
-    scheduler.add_job(_job_sync_traffic, "cron", hour=3, minute=0)
+    scheduler.add_job(_job_sync_traffic, "interval", hours=2)
     scheduler.add_job(_job_daily_backup, "cron", hour=4, minute=0)
     scheduler.add_job(_job_health_check, "interval", hours=1)
     scheduler.add_job(_job_collect_analytics, "cron", hour=23, minute=55)
