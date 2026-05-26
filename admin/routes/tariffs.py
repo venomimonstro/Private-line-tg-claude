@@ -83,6 +83,7 @@ async def create_tariff(
     max_keys: str = Form(default="1"),
     max_devices: str = Form(default="0"),
     speed_limit_mbps: str = Form(default=""),
+    trial_days: str = Form(default=""),
     sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
     is_visible: bool = Form(default=False),
@@ -96,6 +97,7 @@ async def create_tariff(
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
         ptype = TariffType(payment_type) if payment_type in TariffType._value2member_map_ else TariffType.recurring
+        trial = int(trial_days.strip()) if trial_days.strip() else None
     except (ValueError, Exception) as exc:
         return _form_error(request, admin, str(exc))
 
@@ -116,6 +118,7 @@ async def create_tariff(
         max_keys=keys,
         max_devices=devices,
         speed_limit_mbps=int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None,
+        trial_days=trial if trial else None,
         sort_order=order,
         is_active=is_active,
         is_visible=is_visible,
@@ -173,6 +176,7 @@ async def update_tariff(
     max_keys: str = Form(default="1"),
     max_devices: str = Form(default="0"),
     speed_limit_mbps: str = Form(default=""),
+    trial_days: str = Form(default=""),
     sort_order: str = Form(default="0"),
     is_active: bool = Form(default=False),
     is_visible: bool = Form(default=False),
@@ -197,6 +201,7 @@ async def update_tariff(
         order = int(sort_order.strip() or "0")
         price = Decimal(price_monthly.strip())
         ptype = TariffType(payment_type) if payment_type in TariffType._value2member_map_ else TariffType.recurring
+        trial = int(trial_days.strip()) if trial_days.strip() else None
     except (ValueError, Exception) as exc:
         return edit_error(str(exc))
 
@@ -218,6 +223,7 @@ async def update_tariff(
     tariff.max_keys = keys
     tariff.max_devices = devices
     tariff.speed_limit_mbps = int(speed_limit_mbps.strip()) if speed_limit_mbps.strip() else None
+    tariff.trial_days = trial if trial else None
     tariff.sort_order = order
     tariff.is_active = is_active
     tariff.is_visible = is_visible

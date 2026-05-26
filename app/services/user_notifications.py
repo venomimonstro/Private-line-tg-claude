@@ -134,3 +134,25 @@ async def notify_expiring_soon(user_id: int, days: int) -> None:
         )
     except Exception as exc:
         logger.error("notify_expiring_soon failed for user %d: %s", user_id, exc)
+
+
+async def notify_gift_sent(sender_telegram_id: int, recipient_telegram_id: int, tariff_name: str) -> None:
+    """Notify gift sender that the gift was delivered."""
+    from app.bot_instance import get_bot
+
+    bot = get_bot()
+    if bot is None:
+        return
+    try:
+        await bot.send_message(
+            chat_id=sender_telegram_id,
+            text=(
+                f"🎁 Ваш подарок отправлен!\n\n"
+                f"Тариф <b>{tariff_name}</b> активирован для пользователя "
+                f"<code>{recipient_telegram_id}</code>.\n\n"
+                "Спасибо за то, что делитесь Private X Line с друзьями!"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.error("notify_gift_sent failed for sender %d: %s", sender_telegram_id, exc)

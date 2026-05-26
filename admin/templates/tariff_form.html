@@ -133,6 +133,16 @@
           </div>
 
           <div class="col-md-4">
+            <label class="form-label fw-semibold">Пробный период (дней)</label>
+            <input type="number" name="trial_days" class="form-control"
+                   value="{{ tariff.trial_days if tariff and tariff.trial_days is not none else '' }}"
+                   min="0" placeholder="Оставить пустым = без пробного">
+            <div class="form-text text-muted">
+              Кол-во бесплатных дней для новых пользователей. 0 или пусто — без пробного периода.
+            </div>
+          </div>
+
+          <div class="col-md-4">
             <label class="form-label fw-semibold">Порядок сортировки</label>
             <input type="number" name="sort_order" class="form-control"
                    value="{{ tariff.sort_order if tariff else 0 }}"

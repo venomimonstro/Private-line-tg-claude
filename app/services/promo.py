@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -134,3 +134,52 @@ async def create_trial_subscription(
         user_id, tariff_slug, trial_days,
     )
     return subscription
+
+
+async def activate_tariff_trial(
+    user_id: int,
+    tariff_slug: str,
+    session: AsyncSession,
+) -> Subscription | None:
+    """Activate built-in tariff trial (no promo code). Returns subscription or None if ineligible."""
+    from app.models.tariff import Tariff
+    from app.services import subscription as subscription_service
+    from app.services.user_notifications import send_key_to_user
+
+    # Only for users with zero subscriptions ever
+    existing = await session.execute(
+        select(Subscription).where(Subscription.user_id == user_id).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return None
+
+    tariff_result = await session.execute(
+        select(Tariff).where(Tariff.slug == tariff_slug, Tariff.is_active == True)  # noqa: E712
+    )
+    tariff = tariff_result.scalar_one_or_none()
+    if tariff is None or not tariff.trial_days:
+        return None
+
+    now = datetime.utcnow()
+    sub = Subscription(
+        user_id=user_id,
+        tariff_id=tariff.id,
+        status=SubscriptionStatus.pending_payment,
+        auto_renew=False,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(sub)
+    await session.flush()
+
+    await subscription_service.activate_subscription(
+        sub, tariff, session, send_key_callback=send_key_to_user,
+    )
+
+    # Override expiry to trial_days (activate_subscription uses tariff.duration_days)
+    if sub.status == SubscriptionStatus.active:
+        sub.expires_at = now + timedelta(days=tariff.trial_days)
+        await session.flush()
+
+    logger.info("Activated built-in trial for user %d, tariff %s, %d days", user_id, tariff_slug, tariff.trial_days)
+    return sub

@@ -38,6 +38,7 @@
         Контактные данные
       </h6>
       <form method="post" action="/portal/start/{{ tariff.slug }}" class="needs-validation" novalidate>
+        {% if ref %}<input type="hidden" name="ref" value="{{ ref }}">{% endif %}
 
         <div class="mb-3">
           <label class="form-label" for="f-email">Email <span class="text-danger">*</span></label>

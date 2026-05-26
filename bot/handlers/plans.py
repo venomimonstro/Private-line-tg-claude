@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session_maker
+from app.models.subscription import Subscription
 from app.models.tariff import Tariff
 from app.models.user import User
 from bot.keyboards.main_menu import tariff_selection_keyboard
@@ -37,7 +38,7 @@ _LABELS: dict[str, str] = {
 }
 
 _RULES = (
-    "<b>Правила сервиса Private Line</b>\n\n"
+    "<b>Правила сервиса Private X Line</b>\n\n"
     "1. Сервис предназначен для защищённого интернет-доступа.\n"
     "2. Запрещено: незаконная деятельность, спам, фишинг, DDoS, торренты.\n"
     "3. Запрещена передача ключа доступа третьим лицам.\n"
@@ -48,27 +49,37 @@ _RULES = (
 
 
 class PurchaseStates(StatesGroup):
-    selecting_tariff = State()
-    accepting_rules = State()
-    waiting_promo_code = State()
+    selecting_tariff       = State()
+    accepting_rules        = State()
+    waiting_promo_code     = State()
+    entering_gift_recipient = State()
 
 
 # ── keyboards ─────────────────────────────────────────────────────────────────
 
-def _kb_tariff_rules(tariff_slug: str) -> InlineKeyboardMarkup:
-    """Rules screen buttons."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+def _kb_tariff_rules(
+    tariff_slug: str,
+    trial_days: int | None = None,
+    trial_eligible: bool = False,
+) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton(
             text="✅ Принять и выбрать оплату",
-            callback_data=f"rules_ok:{tariff_slug}:",   # last segment = promo (empty)
+            callback_data=f"rules_ok:{tariff_slug}:",
         )],
         [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data=f"enter_promo:{tariff_slug}")],
-        [InlineKeyboardButton(text="← Назад к тарифам", callback_data="back_to_plans")],
-    ])
+        [InlineKeyboardButton(text="🎁 Подарить другу",  callback_data=f"gift_select:{tariff_slug}")],
+    ]
+    if trial_days and trial_eligible:
+        rows.insert(1, [InlineKeyboardButton(
+            text=f"🆓 Пробный период {trial_days} дн.",
+            callback_data=f"trial_from_tariff:{tariff_slug}",
+        )])
+    rows.append([InlineKeyboardButton(text="← Назад к тарифам", callback_data="back_to_plans")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _kb_tariff_rules_promo(tariff_slug: str, promo: str) -> InlineKeyboardMarkup:
-    """Rules screen buttons with promo already entered."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="✅ Принять и выбрать оплату",
@@ -79,7 +90,6 @@ def _kb_tariff_rules_promo(tariff_slug: str, promo: str) -> InlineKeyboardMarkup
 
 
 def _kb_providers(providers: list[str], tariff_slug: str, promo: str) -> InlineKeyboardMarkup:
-    """Payment method selection buttons."""
     rows = [
         [InlineKeyboardButton(
             text=_LABELS.get(p, p),
@@ -113,6 +123,12 @@ def _kb_pay_url(url: str) -> InlineKeyboardMarkup:
     ])
 
 
+def _kb_gift_cancel(tariff_slug: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Отмена", callback_data=f"tariff:{tariff_slug}")],
+    ])
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 async def _load_tariff(tariff_slug: str) -> Tariff | None:
@@ -129,6 +145,14 @@ async def _load_providers() -> list[str]:
         return await get_enabled_providers(session)
 
 
+async def _has_any_subscription(user_id: int) -> bool:
+    async with async_session_maker() as session:
+        r = await session.execute(
+            select(Subscription).where(Subscription.user_id == user_id).limit(1)
+        )
+        return r.scalar_one_or_none() is not None
+
+
 def _tariff_summary(tariff: Tariff) -> str:
     traffic = f"{tariff.traffic_limit_gb} ГБ/мес" if tariff.traffic_limit_gb else "Безлимит"
     if tariff.price_first_month is not None:
@@ -138,12 +162,14 @@ def _tariff_summary(tariff: Tariff) -> str:
         )
     else:
         price_line = f"💰 <b>{int(tariff.price_monthly)} ₽/мес</b>"
+    trial_line = f"\n🆓 Пробный период: <b>{tariff.trial_days} дней</b> бесплатно (для новых пользователей)" if tariff.trial_days else ""
     desc_line = f"\n📝 {tariff.description}" if tariff.description else ""
     return (
         f"<b>Тариф «{tariff.name}»</b>{desc_line}\n\n"
         f"{price_line}\n"
         f"📦 Трафик: {traffic}\n"
         f"📱 Устройств: {tariff.max_keys}"
+        f"{trial_line}"
     )
 
 
@@ -174,7 +200,7 @@ async def show_plans(message: Message, state: FSMContext) -> None:
 # ── step 2: show rules for chosen tariff ─────────────────────────────────────
 
 @router.callback_query(F.data.startswith("tariff:"))
-async def on_tariff_selected(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_tariff_selected(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
     await callback.answer()
     tariff_slug = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
 
@@ -183,13 +209,136 @@ async def on_tariff_selected(callback: CallbackQuery, state: FSMContext) -> None
         await callback.message.answer("❌ Тариф недоступен.")  # type: ignore[union-attr]
         return
 
+    # Check trial eligibility
+    trial_eligible = False
+    if tariff.trial_days:
+        trial_eligible = not await _has_any_subscription(db_user.id)
+
     await state.update_data(tariff_slug=tariff_slug)
     await state.set_state(PurchaseStates.accepting_rules)
 
     await callback.message.edit_text(  # type: ignore[union-attr]
         _tariff_summary(tariff) + "\n\n" + _RULES,
         parse_mode="HTML",
-        reply_markup=_kb_tariff_rules(tariff_slug),
+        reply_markup=_kb_tariff_rules(tariff_slug, tariff.trial_days, trial_eligible),
+    )
+
+
+# ── trial from tariff (built-in, no promo code) ───────────────────────────────
+
+@router.callback_query(F.data.startswith("trial_from_tariff:"))
+async def on_trial_from_tariff(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    await callback.answer()
+    tariff_slug = (callback.data or "").split(":", 1)[1]  # type: ignore[union-attr]
+
+    try:
+        async with async_session_maker() as session:
+            from app.services.promo import activate_tariff_trial
+
+            # Save rules acceptance
+            u = await session.get(User, db_user.id)
+            if u:
+                u.rules_accepted_at = datetime.utcnow()
+            await session.flush()
+
+            sub = await activate_tariff_trial(db_user.id, tariff_slug, session)
+            if sub is None:
+                await callback.message.answer(  # type: ignore[union-attr]
+                    "❌ Пробный период недоступен.\n"
+                    "Вы уже пользовались подпиской или тариф изменился."
+                )
+                await state.clear()
+                return
+
+            await session.commit()
+    except Exception:
+        logger.exception("trial_from_tariff error slug=%s user=%d", tariff_slug, db_user.id)
+        await callback.message.answer("❌ Ошибка сервера. Попробуйте позже.")  # type: ignore[union-attr]
+        await state.clear()
+        return
+
+    await state.clear()
+    tariff = await _load_tariff(tariff_slug)
+    days = tariff.trial_days if tariff else "?"
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"🎉 <b>Пробный период активирован — {days} дней!</b>\n\n"
+        "VPN-ключ придёт в течение нескольких секунд.\n"
+        "Приятного использования Private X Line!",
+        parse_mode="HTML",
+    )
+
+
+# ── gift flow ─────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("gift_select:"))
+async def on_gift_select(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    await callback.answer()
+    tariff_slug = (callback.data or "").split(":", 1)[1]  # type: ignore[union-attr]
+    await state.update_data(tariff_slug=tariff_slug, gift_recipient_tg_id=None)
+    await state.set_state(PurchaseStates.entering_gift_recipient)
+    await callback.message.answer(  # type: ignore[union-attr]
+        "🎁 <b>Подарочная подписка</b>\n\n"
+        "Введите <b>Telegram ID</b> получателя (числовой идентификатор).\n\n"
+        "Узнать свой ID можно через бота @userinfobot.",
+        parse_mode="HTML",
+        reply_markup=_kb_gift_cancel(tariff_slug),
+    )
+
+
+@router.message(PurchaseStates.entering_gift_recipient)
+async def on_gift_recipient_entered(message: Message, state: FSMContext, db_user: User) -> None:
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    tariff_slug = data.get("tariff_slug", "")
+
+    try:
+        recipient_tg_id = int(text)
+    except ValueError:
+        await message.answer(
+            "❌ Telegram ID должен быть числом (например: 123456789).\nПопробуйте ещё раз:",
+            reply_markup=_kb_gift_cancel(tariff_slug),
+        )
+        return
+
+    if recipient_tg_id == db_user.telegram_id:
+        await message.answer(
+            "❌ Нельзя подарить подписку самому себе. Введите чужой Telegram ID:",
+            reply_markup=_kb_gift_cancel(tariff_slug),
+        )
+        return
+
+    tariff = await _load_tariff(tariff_slug)
+    if tariff is None:
+        await message.answer("❌ Тариф недоступен.")
+        await state.clear()
+        return
+
+    await state.update_data(gift_recipient_tg_id=recipient_tg_id)
+
+    try:
+        providers = await _load_providers()
+    except Exception:
+        await message.answer("❌ Ошибка загрузки методов оплаты.")
+        await state.clear()
+        return
+
+    # Save rules acceptance
+    try:
+        async with async_session_maker() as session:
+            u = await session.get(User, db_user.id)
+            if u:
+                u.rules_accepted_at = datetime.utcnow()
+            await session.commit()
+    except Exception:
+        pass
+
+    await message.answer(
+        f"🎁 Подарок для <code>{recipient_tg_id}</code>\n"
+        f"Тариф: <b>{tariff.name}</b>\n"
+        f"Сумма: <b>{int(tariff.price_monthly)} ₽</b>\n\n"
+        "<b>Выберите способ оплаты:</b>",
+        parse_mode="HTML",
+        reply_markup=_kb_providers(providers, tariff_slug, ""),
     )
 
 
@@ -241,7 +390,6 @@ async def on_promo_entered(message: Message, state: FSMContext, db_user: User) -
         return
 
     if promo.is_trial:
-        # Trial promo — confirm and activate immediately
         await state.update_data(promo_code=code)
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -258,7 +406,6 @@ async def on_promo_entered(message: Message, state: FSMContext, db_user: User) -
         )
         return
 
-    # Discount promo — go back to rules screen with promo applied
     tariff = await _load_tariff(tariff_slug)
     if tariff is None:
         await message.answer("❌ Тариф недоступен.")
@@ -291,12 +438,10 @@ async def on_promo_entered(message: Message, state: FSMContext, db_user: User) -
 async def on_rules_accepted(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
     await callback.answer()
 
-    # parse: rules_ok:{tariff_slug}:{promo}
     parts = (callback.data or "").split(":", 2)  # type: ignore[union-attr]
     tariff_slug = parts[1] if len(parts) > 1 else ""
     promo_code = parts[2] if len(parts) > 2 else ""
 
-    # save rules acceptance
     try:
         async with async_session_maker() as session:
             u = await session.get(User, db_user.id)
@@ -306,7 +451,6 @@ async def on_rules_accepted(callback: CallbackQuery, state: FSMContext, db_user:
     except Exception:
         logger.exception("rules_ok: failed to save rules_accepted_at")
 
-    # load available providers
     try:
         providers = await _load_providers()
     except Exception:
@@ -340,7 +484,6 @@ async def on_rules_accepted(callback: CallbackQuery, state: FSMContext, db_user:
 async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
     await callback.answer()
 
-    # parse: do_pay:{provider}:{tariff_slug}:{promo}
     parts = (callback.data or "").split(":", 3)  # type: ignore[union-attr]
     if len(parts) < 3:
         await callback.message.answer("❌ Ошибка данных. Начните заново /plans")  # type: ignore[union-attr]
@@ -350,35 +493,40 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
     tariff_slug = parts[2]
     promo_code = parts[3] if len(parts) > 3 else ""
 
+    # Read gift recipient from FSM state (set by gift flow)
+    fsm_data = await state.get_data()
+    gift_recipient_tg_id: int | None = fsm_data.get("gift_recipient_tg_id")
+    await state.clear()
+
     try:
         from app.payments.services import create_payment
         from app.services.promo import apply_promo, validate_promo
 
         async with async_session_maker() as session:
-            # verify tariff exists
             r = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
             tariff = r.scalar_one_or_none()
             if tariff is None:
                 await callback.message.answer("❌ Тариф не найден. Начните заново /plans")  # type: ignore[union-attr]
                 return
 
-            # validate promo (if any)
             promo_obj = None
             if promo_code:
                 promo_obj, _err = await validate_promo(promo_code, tariff_slug, db_user.id, session)
 
-            # create payment record + provider intent
             payment, result = await create_payment(
                 db_user.id, tariff_slug, session, provider_name=provider_name
             )
 
-            # apply discount
             if promo_obj is not None:
                 disc = await apply_promo(promo_obj, float(payment.amount), session)
                 payment.amount = Decimal(str(disc))
                 await session.flush()
 
-            # capture values before session closes
+            # Tag as gift if recipient was entered
+            if gift_recipient_tg_id:
+                payment.gift_recipient_telegram_id = gift_recipient_tg_id
+                await session.flush()
+
             payment_id = payment.id
             amount = float(payment.amount)
             tariff_name = tariff.name
@@ -395,13 +543,14 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
         )
         return
 
-    promo_line = f"\n🎟 Промокод применён." if promo_code and promo_obj else ""
+    gift_note = f"\n🎁 Подарок для <code>{gift_recipient_tg_id}</code>" if gift_recipient_tg_id else ""
+    promo_line = "\n🎟 Промокод применён." if promo_code and promo_obj else ""
 
     if payment_url:
         await callback.message.answer(  # type: ignore[union-attr]
             f"<b>Счёт #{payment_id}</b>\n"
             f"Тариф: {tariff_name}\n"
-            f"Сумма: <b>{int(amount)} ₽</b>{promo_line}\n\n"
+            f"Сумма: <b>{int(amount)} ₽</b>{promo_line}{gift_note}\n\n"
             "Нажмите кнопку для оплаты. После оплаты подписка активируется автоматически.",
             parse_mode="HTML",
             reply_markup=_kb_pay_url(payment_url),
@@ -412,20 +561,19 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
         await callback.message.answer(  # type: ignore[union-attr]
             f"<b>Счёт #{payment_id}</b>\n"
             f"Тариф: {tariff_name}\n"
-            f"Сумма: <b>{stars} ⭐</b> (~{int(amount)} ₽){promo_line}\n\n"
+            f"Сумма: <b>{stars} ⭐</b> (~{int(amount)} ₽){promo_line}{gift_note}\n\n"
             "Нажмите кнопку — откроется окно оплаты Telegram Stars:",
             parse_mode="HTML",
             reply_markup=_kb_stars_pay(payment_id, stars),
         )
 
     else:
-        # manual / unknown provider
         if not instructions:
             instructions = "Ожидайте инструкций от поддержки."
         await callback.message.answer(  # type: ignore[union-attr]
             f"<b>Заявка #{payment_id} создана.</b>\n"
             f"Тариф: {tariff_name}\n"
-            f"Сумма: <b>{int(amount)} ₽</b>{promo_line}\n\n"
+            f"Сумма: <b>{int(amount)} ₽</b>{promo_line}{gift_note}\n\n"
             f"📋 {instructions}\n\n"
             f"В комментарии укажите: <code>#{payment_id}</code>",
             parse_mode="HTML",
@@ -459,13 +607,12 @@ async def on_stars_pay(callback: CallbackQuery, db_user: User) -> None:
             if payment.status != PaymentStatus.pending:
                 await callback.message.answer("ℹ️ Этот платёж уже обработан.")  # type: ignore[union-attr]
                 return
-
             amount = float(payment.amount)
             tid = payment.tariff_id
 
         async with async_session_maker() as session:
             t = await session.get(Tariff, tid)
-            tname = t.name if t else "Private Line"
+            tname = t.name if t else "Private X Line"
 
     except Exception:
         logger.exception("stars_pay: DB error payment_id=%d", payment_id)
@@ -479,7 +626,7 @@ async def on_stars_pay(callback: CallbackQuery, db_user: User) -> None:
             db_user.telegram_id,
             payment_id,
             amount,
-            f"Private Line — {tname}",
+            f"Private X Line — {tname}",
         )
     except Exception:
         logger.exception("stars_pay: send_invoice failed payment_id=%d", payment_id)
@@ -489,7 +636,7 @@ async def on_stars_pay(callback: CallbackQuery, db_user: User) -> None:
         )
 
 
-# ── trial promo confirm ───────────────────────────────────────────────────────
+# ── trial promo confirm (via promo code) ──────────────────────────────────────
 
 @router.callback_query(F.data.startswith("confirm_trial:"))
 async def on_confirm_trial(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:

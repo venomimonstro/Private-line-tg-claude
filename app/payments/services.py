@@ -229,20 +229,69 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         logger.error("Tariff %d not found for payment %d", payment.tariff_id, payment.id)
         return
 
-    from app.services.user_notifications import send_key_to_user, notify_payment_confirmed
+    from app.services.user_notifications import notify_gift_sent, notify_payment_confirmed, send_key_to_user
 
     user = await session.get(User, payment.user_id)
     telegram_id = user.telegram_id if user else None
 
+    # ── Gift subscription ──────────────────────────────────────────────────────
+    if payment.gift_recipient_telegram_id:
+        recipient_result = await session.execute(
+            select(User).where(User.telegram_id == payment.gift_recipient_telegram_id)
+        )
+        recipient = recipient_result.scalar_one_or_none()
+        if recipient is None:
+            recipient = User(
+                telegram_id=payment.gift_recipient_telegram_id,
+                source="gift",
+                status=UserStatus.active,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                last_activity_at=datetime.utcnow(),
+            )
+            session.add(recipient)
+            await session.flush()
+
+        payment.gift_recipient_id = recipient.id
+
+        # Disable giver's placeholder subscription
+        subscription.status = SubscriptionStatus.disabled
+        subscription.updated_at = datetime.utcnow()
+
+        # Create and activate subscription for recipient
+        gift_sub = Subscription(
+            user_id=recipient.id,
+            tariff_id=tariff.id,
+            status=SubscriptionStatus.pending_payment,
+            auto_renew=False,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(gift_sub)
+        await session.flush()
+
+        await subscription_service.activate_subscription(
+            gift_sub, tariff, session, send_key_callback=send_key_to_user,
+        )
+
+        await notify_admin(
+            f"🎁 Подарочная подписка #{payment.id}\n"
+            f"Даритель: {payment.user_id}\n"
+            f"Получатель TG: {payment.gift_recipient_telegram_id}\n"
+            f"Тариф: {tariff.name}"
+        )
+        if telegram_id:
+            await notify_gift_sent(telegram_id, payment.gift_recipient_telegram_id, tariff.name)
+        return
+
+    # ── Normal activation / renewal ───────────────────────────────────────────
     if subscription.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
-        # Renewal on an already-active subscription: just extend the expiry date.
         subscription.tariff_id = tariff.id
         await subscription_service.extend_subscription(subscription, tariff.duration_days, session)
         logger.info("Extended subscription %d by %d days (renewal)", subscription.id, tariff.duration_days)
         if telegram_id:
             await notify_payment_confirmed(telegram_id, float(payment.amount), is_renewal=True, subscription=subscription)
     else:
-        # Fresh activation (pending_payment, expired, disabled, activation_error).
         subscription.status = SubscriptionStatus.pending_payment
         await subscription_service.activate_subscription(
             subscription, tariff, session, send_key_callback=send_key_to_user,

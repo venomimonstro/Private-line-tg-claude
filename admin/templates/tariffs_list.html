@@ -20,6 +20,7 @@
         <th>Ключей</th>
         <th>Устройств</th>
         <th>Скорость</th>
+        <th>Trial</th>
         <th>Активен</th>
         <th>Виден</th>
         <th>Сортировка</th>
@@ -45,6 +46,7 @@
       <td>{{ t.max_keys }}</td>
       <td>{{ t.max_devices if t.max_devices else '∞' }}</td>
       <td>{{ t.speed_limit_mbps ~ ' Мбит/с' if t.speed_limit_mbps is not none else '∞' }}</td>
+      <td>{{ t.trial_days ~ ' дн.' if t.trial_days else '—' }}</td>
       <td>
         <span class="badge {% if t.is_active %}bg-success{% else %}bg-secondary{% endif %}">
           {{ 'Да' if t.is_active else 'Нет' }}
@@ -82,7 +84,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="13" class="text-center text-muted py-4">Тарифы не найдены</td>
+      <td colspan="15" class="text-center text-muted py-4">Тарифы не найдены</td>
     </tr>
     {% endfor %}
     </tbody>

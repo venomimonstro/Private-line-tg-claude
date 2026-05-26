@@ -52,7 +52,7 @@
     <p class="text-muted mb-3" style="font-size:.8rem;line-height:1.5">{{ t.description }}</p>
     {% endif %}
 
-    <a href="/portal/pay/{{ t.slug }}" class="btn btn-primary w-100 mt-auto">
+    <a href="/portal/pay/{{ t.slug }}{% if ref %}?ref={{ ref }}{% endif %}" class="btn btn-primary w-100 mt-auto">
       Выбрать <i class="bi bi-arrow-right ms-1"></i>
     </a>
   </div>
