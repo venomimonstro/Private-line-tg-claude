@@ -27,6 +27,7 @@ class Tariff(Base):
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     speed_limit_mbps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default=TariffType.recurring.value, server_default="recurring"
     )
