@@ -698,3 +698,166 @@ async def back_to_plans(callback: CallbackQuery, state: FSMContext) -> None:
         "Выберите тариф:",
         reply_markup=tariff_selection_keyboard(tariffs),
     )
+
+
+# ── trial menu (standalone button) ────────────────────────────────────────────
+
+def _kb_trial_tariffs(trial_tariffs: list[Tariff]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=f"🆓 {t.name} — {t.trial_days} дн. бесплатно",
+            callback_data=f"trial_pick:{t.slug}",
+        )]
+        for t in trial_tariffs
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _kb_trial_confirm(slug: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Активировать бесплатно", callback_data=f"trial_confirm:{slug}")],
+        [InlineKeyboardButton(text="← Назад", callback_data="trial_back")],
+    ])
+
+
+@router.message(F.text == "🆓 Пробный период")
+@router.message(Command("trial"))
+async def show_trial_menu(message: Message, db_user: User) -> None:
+    # Check eligibility first
+    has_sub = await _has_any_subscription(db_user.id)
+    if has_sub:
+        await message.answer(
+            "❌ <b>Пробный период недоступен</b>\n\n"
+            "Пробный период можно активировать только один раз — для новых пользователей.\n"
+            "У вас уже есть или была подписка.\n\n"
+            "Нажмите «💳 Купить доступ» для оформления подписки.",
+            parse_mode="HTML",
+        )
+        return
+
+    async with async_session_maker() as session:
+        r = await session.execute(
+            select(Tariff)
+            .where(
+                Tariff.is_active == True,  # noqa: E712
+                Tariff.is_visible == True,  # noqa: E712
+                Tariff.trial_days > 0,
+            )
+            .order_by(Tariff.sort_order)
+        )
+        trial_tariffs = list(r.scalars().all())
+
+    if not trial_tariffs:
+        await message.answer(
+            "⏳ Пробный период временно недоступен. Попробуйте позже или нажмите «💳 Купить доступ»."
+        )
+        return
+
+    await message.answer(
+        "🆓 <b>Пробный период</b>\n\n"
+        "Вы можете бесплатно попробовать сервис — VPN-ключ придёт сразу после активации.\n\n"
+        "Выберите тариф:",
+        parse_mode="HTML",
+        reply_markup=_kb_trial_tariffs(trial_tariffs),
+    )
+
+
+@router.callback_query(F.data.startswith("trial_pick:"))
+async def on_trial_pick(callback: CallbackQuery) -> None:
+    await callback.answer()
+    slug = (callback.data or "").split(":", 1)[1]
+
+    tariff = await _load_tariff(slug)
+    if tariff is None or not tariff.trial_days:
+        await callback.message.answer("❌ Тариф недоступен.")  # type: ignore[union-attr]
+        return
+
+    traffic = f"{tariff.traffic_limit_gb} ГБ" if tariff.traffic_limit_gb else "Безлимит"
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"🆓 <b>{tariff.name}</b>\n\n"
+        f"⏱ Длительность пробного периода: <b>{tariff.trial_days} дней</b>\n"
+        f"📦 Трафик: <b>{traffic}</b>\n"
+        f"📱 Устройств: <b>{tariff.max_keys}</b>\n\n"
+        f"После активации VPN-ключ придёт в этот чат.\n"
+        f"Кредитная карта не нужна.",
+        parse_mode="HTML",
+        reply_markup=_kb_trial_confirm(slug),
+    )
+
+
+@router.callback_query(F.data.startswith("trial_confirm:"))
+async def on_trial_confirm(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    await callback.answer()
+    slug = (callback.data or "").split(":", 1)[1]
+
+    # Re-check eligibility (race condition guard)
+    has_sub = await _has_any_subscription(db_user.id)
+    if has_sub:
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Пробный период недоступен — у вас уже есть подписка."
+        )
+        return
+
+    await callback.message.answer("⏳ Активируем пробный период...")  # type: ignore[union-attr]
+
+    try:
+        async with async_session_maker() as session:
+            from app.services.promo import activate_tariff_trial
+
+            u = await session.get(User, db_user.id)
+            if u:
+                u.rules_accepted_at = datetime.utcnow()
+            await session.flush()
+
+            sub = await activate_tariff_trial(db_user.id, slug, session)
+            if sub is None:
+                await callback.message.answer(  # type: ignore[union-attr]
+                    "❌ Не удалось активировать пробный период.\n"
+                    "Возможно, у вас уже была подписка или тариф изменился.\n\n"
+                    "Обратитесь в поддержку, если это ошибка."
+                )
+                return
+
+            await session.commit()
+    except Exception:
+        logger.exception("trial_confirm error slug=%s user=%d", slug, db_user.id)
+        await callback.message.answer(  # type: ignore[union-attr]
+            "❌ Ошибка сервера при активации. Попробуйте позже или обратитесь в поддержку."
+        )
+        return
+
+    await state.clear()
+    tariff = await _load_tariff(slug)
+    days = tariff.trial_days if tariff else "?"
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"🎉 <b>Пробный период активирован — {days} дней!</b>\n\n"
+        "VPN-ключ придёт в течение нескольких секунд.\n\n"
+        "Если ключ не пришёл — нажмите «🔑 Мой доступ».",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "trial_back")
+async def on_trial_back(callback: CallbackQuery, db_user: User) -> None:
+    await callback.answer()
+    has_sub = await _has_any_subscription(db_user.id)
+    if has_sub:
+        await callback.message.answer("У вас уже есть подписка.")  # type: ignore[union-attr]
+        return
+
+    async with async_session_maker() as session:
+        r = await session.execute(
+            select(Tariff)
+            .where(
+                Tariff.is_active == True,  # noqa: E712
+                Tariff.is_visible == True,  # noqa: E712
+                Tariff.trial_days > 0,
+            )
+            .order_by(Tariff.sort_order)
+        )
+        trial_tariffs = list(r.scalars().all())
+
+    await callback.message.answer(  # type: ignore[union-attr]
+        "Выберите тариф для пробного периода:",
+        reply_markup=_kb_trial_tariffs(trial_tariffs),
+    )

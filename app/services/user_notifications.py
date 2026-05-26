@@ -21,35 +21,33 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     try:
         first_url: str = ""
 
+        _app_hint = (
+            "📱 <b>Приложения для подключения:</b>\n"
+            "• <b>Android:</b> Hiddify, V2RayNG\n"
+            "• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+            "• <b>Windows/macOS:</b> Hiddify\n"
+            "• <b>Linux:</b> Hiddify, v2rayA\n\n"
+            "Скопируйте ключ → откройте приложение → нажмите «+» → «Импорт из буфера».\n"
+            "Подробная инструкция: кнопка «📱 Как подключиться» в меню."
+        )
+
         if len(vpn_keys) == 1:
             url = get_access_url(vpn_keys[0])  # type: ignore[arg-type]
             first_url = url
             text = (
-                "✅ Ваш ключ доступа готов!\n\n"
+                "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
                 f"<code>{url}</code>\n\n"
-                "📱 <b>Как подключиться:</b>\n"
-                "Скопируйте ключ и импортируйте в приложение:\n"
-                "• <b>V2RayNG</b> (Android)\n"
-                "• <b>Streisand</b> или <b>FoXray</b> (iPhone)\n"
-                "• <b>NekoBox</b> или <b>Hiddify</b> (Windows/Mac)\n\n"
-                "Нажмите «➕ Добавить» или «Импорт» в приложении."
+                + _app_hint
             )
         else:
-            lines = ["✅ Ваши ключи доступа готовы! Подключайтесь к любому серверу.\n"]
+            lines = ["✅ <b>Ваши VPN-ключи готовы!</b>\n"]
             for key in vpn_keys:
                 url = get_access_url(key)  # type: ignore[arg-type]
                 if not first_url:
                     first_url = url
                 label = getattr(key, "label", None) or "VPN"
                 lines.append(f"<b>{label}:</b>\n<code>{url}</code>\n")
-            lines.append(
-                "📱 <b>Как подключиться:</b>\n"
-                "Скопируйте любой ключ и импортируйте в приложение:\n"
-                "• <b>V2RayNG</b> (Android)\n"
-                "• <b>Streisand</b> или <b>FoXray</b> (iPhone)\n"
-                "• <b>NekoBox</b> или <b>Hiddify</b> (Windows/Mac)\n\n"
-                "Нажмите «➕ Добавить» или «Импорт» в приложении."
-            )
+            lines.append(_app_hint)
             text = "\n".join(lines)
 
         await bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
