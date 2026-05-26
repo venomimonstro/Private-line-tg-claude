@@ -16,8 +16,7 @@ from app.models.health_check import SystemHealthCheck
 from app.models.subscription import Subscription
 from app.models.vpn_server import VpnServer
 from app.services.notification import notify_admin
-from app.vpn.outline import OutlineClient
-from app.encryption import decrypt
+from app.services.vpn_key import _make_client  # reuse protocol detection
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +56,28 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
     except Exception as exc:
         details["bot_error"] = str(exc)
 
-    # VPN API
+    # VPN API — protocol-aware check (Outline or Marzban)
     vpn_api_status = _COMPONENT_FAIL
     vpn_server_result = await session.execute(
         select(VpnServer).where(VpnServer.status == VpnServerStatus.active).limit(1)
     )
     vpn_server = vpn_server_result.scalar_one_or_none()
     if vpn_server is not None:
+        client = None
         try:
-            client = OutlineClient(api_url=vpn_server.api_url)
+            client = _make_client(vpn_server)
             ok = await client.check_connection()
-            await client.aclose()
             vpn_api_status = _COMPONENT_OK if ok else _COMPONENT_FAIL
+            if not ok:
+                details["vpn_error"] = "check_connection returned False"
         except Exception as exc:
             details["vpn_error"] = str(exc)
+        finally:
+            if client is not None:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
     else:
         details["vpn_info"] = "No active VPN server configured"
         vpn_api_status = "N/A"
