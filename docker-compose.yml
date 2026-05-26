@@ -19,6 +19,8 @@ services:
       - ./backups:/app/backups
       - ./logs:/app/logs
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
     depends_on:
       - db
     networks:
@@ -26,7 +28,7 @@ services:
 
   admin:
     build: .
-    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --workers 1
     env_file: .env
     environment:
       - PYTHONPATH=/app
@@ -47,6 +49,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/_health"]
       interval: 30s
@@ -64,9 +68,21 @@ services:
       POSTGRES_DB: privateline
       POSTGRES_USER: privateline
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c effective_cache_size=128MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=50
+      -c wal_buffers=8MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
     networks:
       - privateline
 
@@ -78,8 +94,13 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.time=7d'
+      - '--storage.tsdb.retention.size=512MB'
+      - '--query.max-concurrency=2'
+      - '--web.enable-lifecycle'
     restart: unless-stopped
+    mem_limit: 192m
+    memswap_limit: 192m
     networks:
       - privateline
 
@@ -90,6 +111,8 @@ services:
     command:
       - '--config.file=/etc/alertmanager/config.yml'
     restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
     networks:
       - privateline
 
@@ -99,6 +122,9 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_SERVER_ROOT_URL: http://localhost:3000
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_RENDERING_CONCURRENT_RENDER_LIMIT: 2
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
@@ -106,6 +132,8 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
+    mem_limit: 192m
+    memswap_limit: 192m
     networks:
       - privateline
     depends_on:
@@ -118,6 +146,8 @@ services:
     volumes:
       - /:/host:ro,rslave
     restart: unless-stopped
+    mem_limit: 48m
+    memswap_limit: 48m
     networks:
       - privateline
 
@@ -131,6 +161,8 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - nginx_logs:/var/log/nginx
     restart: unless-stopped
+    mem_limit: 48m
+    memswap_limit: 48m
     networks:
       - privateline
     depends_on:
