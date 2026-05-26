@@ -1,0 +1,62 @@
+{% extends "portal/base.html" %}
+{% block title %}Выберите тариф — Private Line VPN{% endblock %}
+{% block content %}
+<div class="text-center mb-5">
+  <h1 class="fw-bold mb-2" style="font-size:2rem">🔒 Выберите тариф</h1>
+  <p class="text-muted">Безопасный VPN с мгновенной активацией. Оплата онлайн, ключ сразу после оплаты.</p>
+</div>
+
+<div class="row g-3 justify-content-center">
+{% for t in tariffs %}
+<div class="col-12 col-sm-6 col-lg-4">
+  <div class="card card-hover h-100 p-3">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <h5 class="fw-bold mb-0">{{ t.name }}</h5>
+      {% if t.payment_type == 'one_time' %}
+        <span class="badge bg-info text-dark badge-pill">Разовый</span>
+      {% else %}
+        <span class="badge bg-secondary badge-pill">Подписка</span>
+      {% endif %}
+    </div>
+
+    <div class="mb-3">
+      {% if t.price_first_month is not none %}
+      <div class="text-muted text-decoration-line-through small">{{ t.price_monthly }} {{ t.currency }}</div>
+      <div class="price-big">{{ t.price_first_month }} <span class="price-currency">{{ t.currency }}</span></div>
+      <div class="text-success small">первый месяц, затем {{ t.price_monthly }} {{ t.currency }}</div>
+      {% else %}
+      <div class="price-big">{{ t.price_monthly }} <span class="price-currency">{{ t.currency }}</span></div>
+      <div class="text-muted small">за {{ t.duration_days }} дней</div>
+      {% endif %}
+    </div>
+
+    <ul class="feature-list mb-3 flex-grow-1">
+      <li>{{ t.duration_days }} дней доступа</li>
+      <li>{{ t.max_keys }} устройств{% if t.max_keys > 1 %} одновременно{% endif %}</li>
+      <li>{{ t.traffic_limit_gb ~ ' ГБ трафика' if t.traffic_limit_gb is not none else 'Безлимитный трафик' }}</li>
+      <li>{{ t.speed_limit_mbps ~ ' Мбит/с' if t.speed_limit_mbps is not none else 'Без ограничений скорости' }}</li>
+    </ul>
+
+    {% if t.description %}
+    <p class="text-muted small mb-3">{{ t.description }}</p>
+    {% endif %}
+
+    <a href="/portal/pay/{{ t.slug }}" class="btn btn-primary w-100">
+      Выбрать <i class="bi bi-arrow-right"></i>
+    </a>
+  </div>
+</div>
+{% else %}
+<div class="col-12 text-center text-muted py-5">
+  <i class="bi bi-exclamation-circle fs-1 d-block mb-2"></i>
+  Тарифы пока недоступны. Попробуйте позже.
+</div>
+{% endfor %}
+</div>
+
+<div class="text-center mt-5 text-muted small">
+  <i class="bi bi-shield-check me-1"></i>Безопасная оплата &nbsp;·&nbsp;
+  <i class="bi bi-lightning me-1"></i>Мгновенная активация &nbsp;·&nbsp;
+  <i class="bi bi-headset me-1"></i>Поддержка 24/7
+</div>
+{% endblock %}

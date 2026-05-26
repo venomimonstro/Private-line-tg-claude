@@ -1,0 +1,80 @@
+{% extends "portal/base.html" %}
+{% block title %}Оформление — {{ tariff.name }} — Private Line VPN{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+
+    <a href="/portal/" class="text-muted small mb-3 d-inline-block">
+      <i class="bi bi-arrow-left"></i> Назад к тарифам
+    </a>
+
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+
+    <div class="card mb-3 p-3">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h5 class="fw-bold mb-0">{{ tariff.name }}</h5>
+          <div class="text-muted small">{{ tariff.duration_days }} дней · {{ tariff.max_keys }} уст.</div>
+        </div>
+        <div class="text-end">
+          {% if tariff.price_first_month is not none %}
+          <div class="fw-bold fs-5">{{ tariff.price_first_month }} {{ tariff.currency }}</div>
+          <div class="text-muted small text-decoration-line-through">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
+          {% else %}
+          <div class="fw-bold fs-5">{{ tariff.price_monthly }} {{ tariff.currency }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-4">
+      <h6 class="fw-semibold mb-3">Контактные данные</h6>
+      <form method="post" action="/portal/start/{{ tariff.slug }}" class="needs-validation" novalidate>
+        <div class="mb-3">
+          <label class="form-label">Email <span class="text-danger">*</span></label>
+          <input type="email" name="email" class="form-control" required
+                 placeholder="your@email.com"
+                 value="{{ prefill_email or '' }}">
+          <div class="form-text text-muted">На него придёт VPN-ключ и информация о подписке.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Имя</label>
+          <input type="text" name="first_name" class="form-control"
+                 placeholder="Необязательно" maxlength="255">
+        </div>
+
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="agree" required>
+          <label class="form-check-label text-muted small" for="agree">
+            Я соглашаюсь с условиями использования сервиса
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 py-2">
+          <i class="bi bi-credit-card me-2"></i>Перейти к оплате
+        </button>
+      </form>
+    </div>
+
+    <div class="text-center mt-3 text-muted small">
+      <i class="bi bi-lock me-1"></i>Платёж защищён. Ключ активируется автоматически после оплаты.
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.querySelectorAll('form.needs-validation').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (!form.checkValidity()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      form.classList.add('was-validated');
+    }, false);
+  });
+</script>
+{% endblock %}

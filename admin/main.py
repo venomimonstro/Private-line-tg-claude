@@ -35,6 +35,7 @@ from admin.routes import (
     updates,
     users,
     vpn_keys,
+    web_portal,
     withdrawals,
 )
 from app.database import get_async_session
@@ -126,6 +127,7 @@ app.include_router(promo_codes.router)
 app.include_router(bulk_actions.router)
 app.include_router(integrations.router)
 app.include_router(webhook_router)
+app.include_router(web_portal.router)
 
 
 @app.get("/login", response_class=HTMLResponse)

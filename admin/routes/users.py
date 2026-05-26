@@ -9,15 +9,17 @@ from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from admin.dependencies import get_current_admin
+from admin.dependencies import get_current_admin, require_super_admin
 from app.database import get_async_session
-from app.enums import AdminAction, UserStatus, VpnKeyStatus
+from app.enums import AdminAction, SubscriptionStatus, UserStatus, VpnKeyStatus
 from app.models.admin_log import AdminLog
 from app.models.payment import Payment
 from app.models.subscription import Subscription
+from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
+from app.services import subscription as subscription_service
 from app.services import vpn_key as vpn_key_service
 
 router = APIRouter(prefix="/users")
@@ -61,6 +63,112 @@ async def list_users(
         "q": effective_q, "search": effective_q,  # pass both for templates
         "page_title": "Пользователи",
     })
+
+
+@router.get("/create", response_class=HTMLResponse)
+async def create_user_form(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> HTMLResponse:
+    tariff_result = await session.execute(
+        select(Tariff).where(Tariff.is_active == True).order_by(Tariff.sort_order)
+    )
+    tariffs = tariff_result.scalars().all()
+    return templates.TemplateResponse("user_create.html", {
+        "request": request, "admin": admin,
+        "tariffs": tariffs, "page_title": "Создать пользователя", "error": None,
+    })
+
+
+@router.post("/create", response_model=None)
+async def create_user(
+    request: Request,
+    telegram_id: str = Form(...),
+    username: str = Form(default=""),
+    first_name: str = Form(default=""),
+    last_name: str = Form(default=""),
+    email: str = Form(default=""),
+    tariff_id: str = Form(default=""),
+    activate_key: bool = Form(default=False),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse | HTMLResponse:
+    tariff_result = await session.execute(
+        select(Tariff).where(Tariff.is_active == True).order_by(Tariff.sort_order)
+    )
+    tariffs = tariff_result.scalars().all()
+
+    def form_error(msg: str) -> HTMLResponse:
+        return templates.TemplateResponse("user_create.html", {
+            "request": request, "admin": admin, "tariffs": tariffs,
+            "page_title": "Создать пользователя", "error": msg,
+        })
+
+    tg_id_str = telegram_id.strip()
+    if not tg_id_str:
+        return form_error("Telegram ID обязателен")
+    try:
+        tg_id = int(tg_id_str)
+    except ValueError:
+        return form_error("Telegram ID должен быть числом")
+
+    existing = await session.execute(select(User).where(User.telegram_id == tg_id))
+    if existing.scalar_one_or_none() is not None:
+        return form_error(f"Пользователь с Telegram ID {tg_id} уже существует")
+
+    user = User(
+        telegram_id=tg_id,
+        username=username.strip() or None,
+        first_name=first_name.strip() or None,
+        last_name=last_name.strip() or None,
+        email=email.strip() or None,
+        source="manual",
+        status=UserStatus.active,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        last_activity_at=datetime.utcnow(),
+    )
+    session.add(user)
+    await session.flush()
+
+    vpn_key = None
+    tariff = None
+    if tariff_id.strip():
+        tariff = await session.get(Tariff, int(tariff_id.strip()))
+        if tariff is not None:
+            subscription = Subscription(
+                user_id=user.id,
+                tariff_id=tariff.id,
+                status=SubscriptionStatus.pending_payment,
+                auto_renew=False,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            session.add(subscription)
+            await session.flush()
+
+            if activate_key:
+                vpn_key = await subscription_service.activate_subscription(
+                    subscription=subscription,
+                    tariff=tariff,
+                    session=session,
+                )
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action=AdminAction.create_user_manual,
+        target_user_id=user.id,
+        details={
+            "telegram_id": tg_id,
+            "tariff": tariff.slug if tariff else None,
+            "key_activated": vpn_key is not None,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/users/{user.id}", status_code=303)
 
 
 @router.get("/{user_id}", response_class=HTMLResponse)

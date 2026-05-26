@@ -32,6 +32,7 @@ class Payment(Base):
     )
     provider: Mapped[str] = mapped_column(String(64), default="manual", nullable=False)
     provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

@@ -162,6 +162,8 @@ async def create_payment(
 
     if payment_result.provider_payment_id and payment_result.provider_payment_id != "manual":
         payment.provider_payment_id = payment_result.provider_payment_id
+    if payment_result.payment_url:
+        payment.payment_url = payment_result.payment_url
 
     await notify_admin(
         f"💳 Новая заявка #{payment.id}\n"

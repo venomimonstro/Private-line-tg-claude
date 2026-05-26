@@ -27,6 +27,10 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="telegram", server_default="telegram"
+    )
     status: Mapped[UserStatus] = mapped_column(
         SAEnum(UserStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
         default=UserStatus.new,

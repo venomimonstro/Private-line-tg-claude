@@ -140,3 +140,4 @@ class AdminAction(str, Enum):
     update_tariff = "update_tariff"
     delete_tariff = "delete_tariff"
     update_integration_settings = "update_integration_settings"
+    create_user_manual = "create_user_manual"
