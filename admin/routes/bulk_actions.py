@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _TG_MESSAGE_MAX_LEN = 4096
 _MESSAGE_PREVIEW_LEN = 100
+_SEND_DELAY = 0.05  # 20 msg/sec — safely under Telegram's 30/sec limit
 
 
 def _parse_user_ids(raw: str) -> list[int]:
@@ -173,25 +175,30 @@ async def bulk_notify(
         )
         users = result.scalars().all()
 
-    from app.bot_instance import get_bot
+    from aiogram import Bot
+    from app.config import settings
 
-    bot = get_bot()
     sent = 0
     failed = 0
-    for user in users:
-        if bot is not None:
+    bot = Bot(token=settings.BOT_TOKEN)
+    try:
+        for user in users:
+            if user.telegram_id < 0:
+                # Skip synthetic web-portal users (negative telegram_id)
+                continue
             try:
                 await bot.send_message(
                     chat_id=user.telegram_id,
                     text=message_text[:_TG_MESSAGE_MAX_LEN],
+                    parse_mode="HTML",
                 )
                 sent += 1
+                await asyncio.sleep(_SEND_DELAY)
             except Exception as exc:
-                logger.warning("bulk_notify: failed to send to user %d: %s", user.id, exc)
+                logger.warning("bulk_notify: failed to send to user %d (tg=%d): %s", user.id, user.telegram_id, exc)
                 failed += 1
-        else:
-            logger.warning("bulk_notify: bot not available, skipping user %d", user.id)
-            failed += 1
+    finally:
+        await bot.session.close()
 
     log = AdminLog(
         admin_user_id=admin.id,
