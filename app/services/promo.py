@@ -6,11 +6,32 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import PaymentStatus, SubscriptionStatus
+from app.enums import SubscriptionStatus
 from app.models.promo_code import PromoCode
 from app.models.subscription import Subscription
 
 logger = logging.getLogger(__name__)
+
+# Statuses that mean the user actually received VPN service.
+# disabled/blocked/activation_error/pending_payment do NOT block a trial.
+_USED_SERVICE_STATUSES = (
+    SubscriptionStatus.active,
+    SubscriptionStatus.expires_soon,
+    SubscriptionStatus.expired,
+)
+
+
+async def has_used_service(user_id: int, session: AsyncSession) -> bool:
+    """Return True only if the user ever had an active/expired subscription."""
+    r = await session.execute(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status.in_(_USED_SERVICE_STATUSES),
+        )
+        .limit(1)
+    )
+    return r.scalar_one_or_none() is not None
 
 
 async def validate_promo(
@@ -49,17 +70,7 @@ async def validate_promo(
     # dedicated payment metadata field if available. For now, check trial
     # subscriptions by checking if user ever had trial sub for same tariff.
     if promo.is_trial:
-        trial_result = await session.execute(
-            select(Subscription).where(
-                Subscription.user_id == user_id,
-                Subscription.status.in_([
-                    SubscriptionStatus.active,
-                    SubscriptionStatus.expires_soon,
-                    SubscriptionStatus.expired,
-                ]),
-            ).limit(1)
-        )
-        if trial_result.scalar_one_or_none() is not None:
+        if await has_used_service(user_id, session):
             return None, "Пробный период доступен только для новых пользователей."
 
     return promo, ""
@@ -95,11 +106,7 @@ async def create_trial_subscription(
     from app.models.subscription import Subscription
     from app.models.tariff import Tariff
 
-    # Trial is only for users who have never had any subscription.
-    result = await session.execute(
-        select(Subscription).where(Subscription.user_id == user_id).limit(1)
-    )
-    if result.scalar_one_or_none() is not None:
+    if await has_used_service(user_id, session):
         return None
 
     tariff_result = await session.execute(
@@ -146,11 +153,7 @@ async def activate_tariff_trial(
     from app.services import subscription as subscription_service
     from app.services.user_notifications import send_key_to_user
 
-    # Only for users with zero subscriptions ever
-    existing = await session.execute(
-        select(Subscription).where(Subscription.user_id == user_id).limit(1)
-    )
-    if existing.scalar_one_or_none() is not None:
+    if await has_used_service(user_id, session):
         return None
 
     tariff_result = await session.execute(

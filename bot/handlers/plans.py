@@ -146,11 +146,10 @@ async def _load_providers() -> list[str]:
 
 
 async def _has_any_subscription(user_id: int) -> bool:
+    """Return True if the user ever had an active/expired subscription (used real service)."""
+    from app.services.promo import has_used_service
     async with async_session_maker() as session:
-        r = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id).limit(1)
-        )
-        return r.scalar_one_or_none() is not None
+        return await has_used_service(user_id, session)
 
 
 def _tariff_summary(tariff: Tariff) -> str:
