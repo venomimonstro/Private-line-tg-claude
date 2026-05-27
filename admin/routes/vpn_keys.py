@@ -16,7 +16,7 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services import vpn_key as vpn_key_service
-from app.services.vpn_key import get_access_url
+from app.services.vpn_key import get_access_url, repair_marzban_keys
 
 router = APIRouter(prefix="/vpn-keys")
 templates = Jinja2Templates(directory="admin/templates")
@@ -125,3 +125,31 @@ async def reissue_key(
     session.add(log)
     await session.commit()
     return RedirectResponse("/admin/vpn-keys", status_code=303)
+
+
+@router.post("/repair-marzban")
+async def repair_marzban_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> RedirectResponse:
+    """Fix all active Marzban keys: update inbounds and refresh stored access URLs."""
+    import logging as _logging
+    from urllib.parse import quote as _quote
+    _log = _logging.getLogger(__name__)
+    try:
+        fixed, errors = await repair_marzban_keys(session)
+        flash = f"Исправлено ключей: {fixed} | Ошибок: {errors}"
+    except Exception as exc:
+        _log.error("Admin repair_marzban failed: %s", exc, exc_info=True)
+        flash = f"Ошибка: {exc}"
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="repair_marzban_keys",
+        target_entity="vpn_key",
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+    return RedirectResponse(f"/admin/vpn-keys?flash={_quote(flash)}", status_code=303)

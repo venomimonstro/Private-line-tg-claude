@@ -153,43 +153,33 @@ async def _job_process_pending_operations() -> None:
 
 
 async def _job_repair_marzban_inbounds() -> None:
-    """Fix existing Marzban users whose inbound tag was hardcoded to 'VLESS-TCP'.
+    """Fix existing Marzban keys whose inbound tag was hardcoded to 'VLESS-TCP'.
 
     Runs immediately on startup (next_run_time=now) and then every 24 hours.
-    This repairs keys created before the dynamic-inbound fix was deployed.
+    For each active key this:
+      1. Updates the Marzban user's inbounds to the real tags from /api/inbounds
+      2. Fetches fresh links and injects Reality params
+      3. Writes the corrected access URL back to vpn_keys.access_url_encrypted
+    This fixes connections for users whose keys were created before the
+    dynamic-inbound fix was deployed.
     """
-    logger.info("Running: repair_marzban_inbounds")
-    from app.enums import VpnServerStatus
-    from app.models.vpn_server import VpnServer
+    logger.info("Running: repair_marzban_inbounds (DB + Marzban side)")
     from app.services.notification import notify_admin
-    from app.services.vpn_key import _server_protocol, _make_client
+    from app.services.vpn_key import repair_marzban_keys
 
-    async with async_session_maker() as session:
-        from sqlalchemy import select as _select
-        result = await session.execute(
-            _select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
-        )
-        servers = result.scalars().all()
+    try:
+        async with async_session_maker() as session:
+            fixed, errors = await repair_marzban_keys(session)
 
-    for server in servers:
-        try:
-            if _server_protocol(server) != "marzban":
-                continue
-            client = _make_client(server)
-            try:
-                repaired, errors = await client.repair_all_users_inbounds()
-                if repaired > 0 or errors > 0:
-                    await notify_admin(
-                        f"🔧 Marzban inbound repair (server #{server.id} '{server.name}'):\n"
-                        f"  Исправлено: {repaired} | Ошибок: {errors}"
-                    )
-            finally:
-                await client.aclose()
-        except Exception as exc:
-            logger.error(
-                "repair_marzban_inbounds failed for server %d '%s': %s",
-                server.id, server.name, exc,
+        if fixed > 0 or errors > 0:
+            await notify_admin(
+                f"🔧 Marzban key repair:\n"
+                f"  Обновлено URL в БД: {fixed} | Ошибок: {errors}"
             )
+        else:
+            logger.info("repair_marzban_inbounds: no keys needed repair")
+    except Exception as exc:
+        logger.error("repair_marzban_inbounds job failed: %s", exc, exc_info=True)
 
 
 def create_scheduler() -> AsyncIOScheduler:

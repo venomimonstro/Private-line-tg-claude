@@ -240,3 +240,104 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
 
 def get_access_url(vpn_key: VpnKey) -> str:
     return decrypt(vpn_key.access_url_encrypted)
+
+
+async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
+    """Re-issue correct access URLs for every active Marzban VPN key in the DB.
+
+    For each active key on a Marzban server this function calls ``create_key()``
+    with the existing Marzban username.  Because the user already exists, Marzban
+    returns HTTP 409 → the code path in ``create_key()`` then:
+      1. PUTs the user with the correct inbounds from ``/api/inbounds``
+      2. GETs the updated user and extracts fresh links
+      3. Injects Reality params from ``/api/core/config``
+      4. Returns the corrected access URL
+
+    The new URL is stored back into ``vpn_keys.access_url_encrypted``.
+
+    Returns ``(fixed, errors)``.
+    """
+    # Load all active keys on Marzban servers
+    result = await session.execute(
+        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+    )
+    servers = result.scalars().all()
+    marzban_server_ids: set[int] = {s.id for s in servers if _server_protocol(s) == "marzban"}
+
+    if not marzban_server_ids:
+        logger.info("repair_marzban_keys: no active Marzban servers found — nothing to do")
+        return 0, 0
+
+    keys_result = await session.execute(
+        select(VpnKey).where(
+            VpnKey.server_id.in_(marzban_server_ids),
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    keys: list[VpnKey] = list(keys_result.scalars().all())
+
+    if not keys:
+        logger.info("repair_marzban_keys: no active Marzban keys found — nothing to do")
+        return 0, 0
+
+    logger.info("repair_marzban_keys: repairing %d active Marzban keys", len(keys))
+
+    # Build one client per server (reuse across keys on the same server)
+    server_map: dict[int, VpnServer] = {s.id: s for s in servers if s.id in marzban_server_ids}
+    clients: dict[int, MarzbanClient] = {}
+    for sid, srv in server_map.items():
+        try:
+            clients[sid] = _make_client(srv)  # type: ignore[assignment]
+        except Exception as exc:
+            logger.error("repair_marzban_keys: cannot build client for server %d: %s", sid, exc)
+
+    fixed = 0
+    errors = 0
+    try:
+        for key in keys:
+            client = clients.get(key.server_id)
+            if client is None:
+                errors += 1
+                continue
+            try:
+                raw = await client.create_key(name=key.outline_key_id)
+                if raw.access_url:
+                    old_url = decrypt(key.access_url_encrypted)
+                    new_url = raw.access_url
+                    if old_url != new_url:
+                        key.access_url_encrypted = encrypt(new_url)
+                        logger.info(
+                            "repair_marzban_keys: updated URL for key %d (user=%s)",
+                            key.id, key.outline_key_id,
+                        )
+                    else:
+                        logger.debug(
+                            "repair_marzban_keys: key %d (user=%s) URL unchanged — already correct",
+                            key.id, key.outline_key_id,
+                        )
+                    fixed += 1
+                else:
+                    logger.warning(
+                        "repair_marzban_keys: key %d (user=%s) got empty access_url — skipping",
+                        key.id, key.outline_key_id,
+                    )
+                    errors += 1
+            except Exception as exc:
+                logger.error(
+                    "repair_marzban_keys: failed for key %d (user=%s): %s",
+                    key.id, key.outline_key_id, exc,
+                )
+                errors += 1
+    finally:
+        for client in clients.values():
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+    await session.commit()
+    logger.info(
+        "repair_marzban_keys complete: %d fixed, %d errors (of %d total)",
+        fixed, errors, len(keys),
+    )
+    return fixed, errors
