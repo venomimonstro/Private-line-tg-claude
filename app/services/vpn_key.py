@@ -277,7 +277,9 @@ def get_access_url(vpn_key: VpnKey) -> str:
     return decrypt(vpn_key.access_url_encrypted)
 
 
-async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
+async def repair_marzban_keys(
+    session: AsyncSession,
+) -> tuple[int, int, list[tuple[int, str]]]:
     """Re-issue correct access URLs for every active Marzban VPN key in the DB.
 
     For each active key on a Marzban server this function calls ``create_key()``
@@ -290,8 +292,12 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
 
     The new URL is stored back into ``vpn_keys.access_url_encrypted``.
 
-    Returns ``(fixed, errors)``.
+    Returns ``(fixed, errors, changed_notifications)`` where ``changed_notifications``
+    is a list of ``(telegram_id, new_url)`` for keys whose URL was actually updated —
+    callers should send these to the respective users.
     """
+    from app.models.user import User
+
     # Load all active keys on Marzban servers
     result = await session.execute(
         select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
@@ -301,7 +307,7 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
 
     if not marzban_server_ids:
         logger.info("repair_marzban_keys: no active Marzban servers found — nothing to do")
-        return 0, 0
+        return 0, 0, []
 
     keys_result = await session.execute(
         select(VpnKey).where(
@@ -313,7 +319,7 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
 
     if not keys:
         logger.info("repair_marzban_keys: no active Marzban keys found — nothing to do")
-        return 0, 0
+        return 0, 0, []
 
     logger.info("repair_marzban_keys: repairing %d active Marzban keys", len(keys))
 
@@ -328,6 +334,10 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
 
     fixed = 0
     errors = 0
+    # Collect (telegram_id, new_url) for keys whose stored URL actually changed.
+    # We fetch telegram_id BEFORE commit while the session is still active.
+    changed_notifications: list[tuple[int, str]] = []
+
     try:
         for key in keys:
             client = clients.get(key.server_id)
@@ -345,6 +355,16 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
                             "repair_marzban_keys: updated URL for key %d (user=%s)",
                             key.id, key.outline_key_id,
                         )
+                        # Collect for post-commit user notification
+                        try:
+                            user = await session.get(User, key.user_id)
+                            if user is not None:
+                                changed_notifications.append((user.telegram_id, new_url))
+                        except Exception as exc:
+                            logger.warning(
+                                "repair_marzban_keys: could not load user for key %d: %s",
+                                key.id, exc,
+                            )
                     else:
                         logger.debug(
                             "repair_marzban_keys: key %d (user=%s) URL unchanged — already correct",
@@ -372,7 +392,7 @@ async def repair_marzban_keys(session: AsyncSession) -> tuple[int, int]:
 
     await session.commit()
     logger.info(
-        "repair_marzban_keys complete: %d fixed, %d errors (of %d total)",
-        fixed, errors, len(keys),
+        "repair_marzban_keys complete: %d fixed, %d errors, %d URLs changed (of %d total)",
+        fixed, errors, len(changed_notifications), len(keys),
     )
-    return fixed, errors
+    return fixed, errors, changed_notifications

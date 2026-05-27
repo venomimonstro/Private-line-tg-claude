@@ -153,31 +153,61 @@ async def _job_process_pending_operations() -> None:
 
 
 async def _job_repair_marzban_inbounds() -> None:
-    """Fix existing Marzban keys whose inbound tag was hardcoded to 'VLESS-TCP'.
+    """Fix existing Marzban keys: update inbounds, refresh Reality params, notify users.
 
-    Runs immediately on startup (next_run_time=now) and then every 24 hours.
-    For each active key this:
+    Runs immediately on startup then every 6 hours.  For each active key this:
       1. Updates the Marzban user's inbounds to the real tags from /api/inbounds
-      2. Fetches fresh links and injects Reality params
+      2. Fetches fresh links and injects Reality params from /api/core/config
       3. Writes the corrected access URL back to vpn_keys.access_url_encrypted
-    This fixes connections for users whose keys were created before the
-    dynamic-inbound fix was deployed.
+      4. Sends the new key URL to the user via bot (only when URL actually changed)
     """
     logger.info("Running: repair_marzban_inbounds (DB + Marzban side)")
+    from app.bot_instance import get_bot
     from app.services.notification import notify_admin
     from app.services.vpn_key import repair_marzban_keys
 
     try:
         async with async_session_maker() as session:
-            fixed, errors = await repair_marzban_keys(session)
+            fixed, errors, changed = await repair_marzban_keys(session)
 
         if fixed > 0 or errors > 0:
             await notify_admin(
                 f"🔧 Marzban key repair:\n"
-                f"  Обновлено URL в БД: {fixed} | Ошибок: {errors}"
+                f"  Обновлено URL в БД: {fixed} | Ошибок: {errors} | "
+                f"Реально изменилось: {len(changed)}"
             )
         else:
             logger.info("repair_marzban_inbounds: no keys needed repair")
+
+        # Notify users whose key URL was actually updated
+        if changed:
+            bot = get_bot()
+            if bot is None:
+                logger.warning("repair_marzban_inbounds: bot not available, cannot notify %d users", len(changed))
+            else:
+                for telegram_id, new_url in changed:
+                    try:
+                        await bot.send_message(
+                            chat_id=telegram_id,
+                            text=(
+                                "🔄 <b>Ваш VPN-ключ был обновлён автоматически</b>\n\n"
+                                "🔑 <b>Ваш актуальный ключ доступа:</b>\n\n"
+                                f"<code>{new_url}</code>\n\n"
+                                "Удалите старый ключ из приложения и добавьте этот:\n"
+                                "• <b>Android:</b> Hiddify, V2RayNG\n"
+                                "• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+                                "• <b>Windows/macOS:</b> Hiddify\n"
+                                "• <b>Linux:</b> Hiddify, v2rayA\n\n"
+                                "Нажмите «📱 Как подключиться» для пошаговых инструкций."
+                            ),
+                            parse_mode="HTML",
+                        )
+                        logger.info("repair_marzban_inbounds: notified user tg=%d with new key", telegram_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "repair_marzban_inbounds: could not notify user tg=%d: %s",
+                            telegram_id, exc,
+                        )
     except Exception as exc:
         logger.error("repair_marzban_inbounds job failed: %s", exc, exc_info=True)
 

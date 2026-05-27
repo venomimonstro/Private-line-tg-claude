@@ -144,8 +144,8 @@ async def repair_marzban_endpoint(
     from urllib.parse import quote as _quote
     _log = _logging.getLogger(__name__)
     try:
-        fixed, errors = await repair_marzban_keys(session)
-        flash = f"Исправлено ключей: {fixed} | Ошибок: {errors}"
+        fixed, errors, changed = await repair_marzban_keys(session)
+        flash = f"Исправлено ключей: {fixed} | Ошибок: {errors} | Изменилось URL: {len(changed)}"
     except Exception as exc:
         _log.error("Admin repair_marzban failed: %s", exc, exc_info=True)
         flash = f"Ошибка: {exc}"
@@ -159,6 +159,91 @@ async def repair_marzban_endpoint(
     session.add(log)
     await session.commit()
     return RedirectResponse(f"/admin/vpn-keys?flash={_quote(flash)}", status_code=303)
+
+
+@router.post("/repair-and-notify")
+async def repair_and_notify_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> JSONResponse:
+    """Run full Marzban repair then push the updated key to every affected user via bot."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    try:
+        fixed, errors, changed = await repair_marzban_keys(session)
+    except Exception as exc:
+        _log.error("repair-and-notify: repair failed: %s", exc, exc_info=True)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    log = AdminLog(
+        admin_user_id=admin.id,
+        action="repair_and_notify_keys",
+        target_entity="vpn_key",
+        details={"fixed": fixed, "errors": errors, "changed": len(changed)},
+        ip_address=request.client.host if request.client else None,
+    )
+    session.add(log)
+    await session.commit()
+
+    # Send updated keys to users whose URL actually changed
+    from app.bot_instance import get_bot
+    bot = get_bot()
+    notified = 0
+    notify_errors = 0
+    if bot is None:
+        # Admin container — create a temporary bot instance
+        from aiogram import Bot
+        from app.config import settings
+        tmp_bot = Bot(token=settings.BOT_TOKEN)
+        use_bot = tmp_bot
+        close_tmp = True
+    else:
+        use_bot = bot
+        close_tmp = False
+
+    try:
+        for telegram_id, new_url in changed:
+            try:
+                await use_bot.send_message(
+                    chat_id=telegram_id,
+                    text=(
+                        "🔄 <b>Ваш VPN-ключ был обновлён</b>\n\n"
+                        "🔑 <b>Ваш актуальный ключ доступа:</b>\n\n"
+                        f"<code>{new_url}</code>\n\n"
+                        "Удалите старый ключ из приложения и добавьте этот:\n"
+                        "• <b>Android:</b> Hiddify, V2RayNG\n"
+                        "• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+                        "• <b>Windows/macOS:</b> Hiddify\n"
+                        "• <b>Linux:</b> Hiddify, v2rayA"
+                    ),
+                    parse_mode="HTML",
+                )
+                notified += 1
+            except Exception as exc:
+                _log.warning("repair-and-notify: failed to message tg=%d: %s", telegram_id, exc)
+                notify_errors += 1
+    finally:
+        if close_tmp:
+            try:
+                await tmp_bot.session.close()
+            except Exception:
+                pass
+
+    return JSONResponse({
+        "ok": True,
+        "fixed": fixed,
+        "errors": errors,
+        "changed": len(changed),
+        "notified": notified,
+        "notify_errors": notify_errors,
+        "message": (
+            f"Repair done: {fixed} keys fixed, {errors} errors. "
+            f"URLs changed: {len(changed)}. "
+            f"Users notified: {notified} ({notify_errors} failed)."
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +601,17 @@ async def diagnose_keys(
 <form method="post" action="/admin/vpn-keys/diagnose/fix-keys"
       onsubmit="return confirm('Update stored VLESS URLs for all active Marzban keys?')">
   <button type="submit">Fix Keys (Safe)</button>
+</form>
+
+<h2>4. Send Keys to All Users Now</h2>
+<p class="note">
+  Runs the full repair (updates Marzban inbounds + DB URLs) and then immediately
+  sends each user their current key via the Telegram bot.
+  Use this after deploying a fix to make sure all users get their working key.
+</p>
+<form method="post" action="/admin/vpn-keys/repair-and-notify"
+      onsubmit="return confirm('Run repair AND send keys to ALL active users via bot? This will message every user.')">
+  <button type="submit" style="background:#1e6f2a">Repair + Send Keys to All Users</button>
 </form>
 </body>
 </html>"""
