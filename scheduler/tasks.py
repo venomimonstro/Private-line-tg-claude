@@ -200,12 +200,12 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_check_traffic_limits, "interval", hours=4)
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
-    # Repair Marzban users with wrong inbounds immediately on startup, then daily.
-    # This fixes keys created while "VLESS-TCP" was hardcoded.
+    # Repair Marzban users with wrong inbounds immediately on startup, then every 6h.
+    # This fixes keys created while inbound detection was broken.
     scheduler.add_job(
         _job_repair_marzban_inbounds,
         "interval",
-        hours=24,
+        hours=6,
         next_run_time=datetime.now(_tz.utc),
     )
     return scheduler

@@ -15,7 +15,7 @@ from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from app.vpn.outline import OutlineClient
-from app.vpn.marzban import MarzbanClient, MarzbanKey
+from app.vpn.marzban import MarzbanClient, MarzbanConfigError, MarzbanKey
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,12 @@ async def create_vpn_key(
 
         raw_key = await cb.call(_create())
     except Exception as exc:
-        if not isinstance(exc, CircuitOpenError):
+        if not isinstance(exc, (CircuitOpenError, MarzbanConfigError)):
+            server.failure_count += 1
+            server.last_error = str(exc)[:500]
+            server.last_error_at = datetime.utcnow()
+        elif isinstance(exc, MarzbanConfigError):
+            # Configuration errors count as server failures too
             server.failure_count += 1
             server.last_error = str(exc)[:500]
             server.last_error_at = datetime.utcnow()
@@ -125,6 +130,25 @@ async def create_vpn_key(
         raise
     finally:
         await client.aclose()
+
+    # Guard: never store an empty or non-VLESS URL — it would look active but be broken
+    if not raw_key.access_url:
+        raise ValueError(
+            f"VPN client returned empty access_url for subscription {subscription_id} "
+            f"on server {server.id}. Key NOT stored."
+        )
+    if protocol == "marzban" and not raw_key.access_url.startswith("vless://"):
+        raise ValueError(
+            f"Marzban returned unexpected access_url prefix for subscription "
+            f"{subscription_id}: {raw_key.access_url[:60]}"
+        )
+
+    logger.info(
+        "Storing key for sub %d user %d: %s...%s",
+        subscription_id, user_id,
+        raw_key.access_url[:40],
+        raw_key.access_url[-20:] if len(raw_key.access_url) > 60 else "",
+    )
 
     vpn_key = VpnKey(
         user_id=user_id,

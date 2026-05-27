@@ -114,6 +114,25 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         op.vpn_key_id = vpn_key.id
         logger.info("Created VPN key %d via pending operation %d", vpn_key.id, op.id)
 
+        # Notify the user — they may have been waiting since payment without
+        # receiving their key (pending operations run silently in the background)
+        try:
+            from app.models.user import User
+            from app.services.user_notifications import send_key_to_user
+            db_user = await session.get(User, int(user_id))
+            if db_user is not None:
+                await send_key_to_user(db_user.telegram_id, vpn_key)
+                logger.info(
+                    "Sent pending-op key to user %d (tg=%d)",
+                    db_user.id, db_user.telegram_id,
+                )
+        except Exception as notify_exc:
+            # Non-fatal: key was created, notification failed
+            logger.warning(
+                "Could not notify user %s after pending-op key creation: %s",
+                user_id, notify_exc,
+            )
+
     elif op_type == PendingOperationType.disable_key.value:
         if op.vpn_key_id is None:
             raise ValueError("disable_key operation missing vpn_key_id")
