@@ -152,7 +152,49 @@ async def _job_process_pending_operations() -> None:
         logger.debug("outline_queue module not available, skipping")
 
 
+async def _job_repair_marzban_inbounds() -> None:
+    """Fix existing Marzban users whose inbound tag was hardcoded to 'VLESS-TCP'.
+
+    Runs immediately on startup (next_run_time=now) and then every 24 hours.
+    This repairs keys created before the dynamic-inbound fix was deployed.
+    """
+    logger.info("Running: repair_marzban_inbounds")
+    from app.enums import VpnServerStatus
+    from app.models.vpn_server import VpnServer
+    from app.services.notification import notify_admin
+    from app.services.vpn_key import _server_protocol, _make_client
+
+    async with async_session_maker() as session:
+        from sqlalchemy import select as _select
+        result = await session.execute(
+            _select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+        )
+        servers = result.scalars().all()
+
+    for server in servers:
+        try:
+            if _server_protocol(server) != "marzban":
+                continue
+            client = _make_client(server)
+            try:
+                repaired, errors = await client.repair_all_users_inbounds()
+                if repaired > 0 or errors > 0:
+                    await notify_admin(
+                        f"🔧 Marzban inbound repair (server #{server.id} '{server.name}'):\n"
+                        f"  Исправлено: {repaired} | Ошибок: {errors}"
+                    )
+            finally:
+                await client.aclose()
+        except Exception as exc:
+            logger.error(
+                "repair_marzban_inbounds failed for server %d '%s': %s",
+                server.id, server.name, exc,
+            )
+
+
 def create_scheduler() -> AsyncIOScheduler:
+    from datetime import datetime, timezone as _tz
+
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
     scheduler.add_job(_job_check_expiring_soon, "cron", hour=9, minute=0)
@@ -168,4 +210,12 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_check_traffic_limits, "interval", hours=4)
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
+    # Repair Marzban users with wrong inbounds immediately on startup, then daily.
+    # This fixes keys created while "VLESS-TCP" was hardcoded.
+    scheduler.add_job(
+        _job_repair_marzban_inbounds,
+        "interval",
+        hours=24,
+        next_run_time=datetime.now(_tz.utc),
+    )
     return scheduler

@@ -31,6 +31,7 @@ class MarzbanClient:
         self._token: str | None = None
         self._client = httpx.AsyncClient(verify=False, timeout=15.0)
         self._reality_cache: tuple[str, str, str] | None = None  # (pubkey, short_id, sni)
+        self._inbounds_cache: dict[str, list[str]] | None = None  # {protocol: [tag, ...]}
 
     async def _auth(self) -> str:
         resp = await self._client.post(
@@ -93,6 +94,34 @@ class MarzbanClient:
             logger.warning("Could not fetch Reality params from Marzban: %s", exc)
         return None
 
+    async def get_inbounds(self) -> dict[str, list[str]]:
+        """Return {protocol: [inbound_tag, ...]} from the server's /api/inbounds.
+
+        The result is cached per-client instance to avoid extra API calls.
+        Falls back to {"vless": ["VLESS-TCP"]} on error — callers should treat
+        this as a signal to check logs if connections still fail.
+        """
+        if self._inbounds_cache is not None:
+            return self._inbounds_cache
+        try:
+            headers = await self._headers()
+            resp = await self._client.get(f"{self._base}/api/inbounds", headers=headers)
+            if resp.status_code == 200:
+                raw: dict = resp.json()
+                # Keep only protocols that actually have inbound tags configured
+                data = {proto: tags for proto, tags in raw.items() if tags}
+                self._inbounds_cache = data
+                logger.info("Fetched inbounds from Marzban: %s", data)
+                return self._inbounds_cache
+            logger.warning(
+                "Could not fetch inbounds from Marzban: HTTP %s — using fallback",
+                resp.status_code,
+            )
+        except Exception as exc:
+            logger.warning("Could not fetch inbounds from Marzban: %s — using fallback", exc)
+        # Safe fallback: do NOT cache so next call retries the server
+        return {"vless": ["VLESS-TCP"]}
+
     def _inject_reality(self, url: str, public_key: str, short_id: str, sni: str) -> str:
         """Return url with all Reality params set, including required flow."""
         if not url or not url.startswith("vless://"):
@@ -112,10 +141,16 @@ class MarzbanClient:
     async def create_key(self, name: str, traffic_limit_gb: float | None = None, ip_limit: int = 0) -> MarzbanKey:
         headers = await self._headers()
         safe_name = name[:32]
+
+        # Resolve actual inbound tags from the server — never hardcode "VLESS-TCP"
+        inbounds_map = await self.get_inbounds()
+        vless_inbounds = inbounds_map.get("vless") or ["VLESS-TCP"]
+        logger.info("Using VLESS inbounds for %s: %s", safe_name, vless_inbounds)
+
         body: dict = {
             "username": safe_name,
             "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
-            "inbounds": {"vless": ["VLESS-TCP"]},
+            "inbounds": {"vless": vless_inbounds},
             "status": "active",
             "data_limit_reset_strategy": "no_reset",
         }
@@ -132,7 +167,7 @@ class MarzbanClient:
                 headers=headers,
                 json={
                     "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
-                    "inbounds": {"vless": ["VLESS-TCP"]},
+                    "inbounds": {"vless": vless_inbounds},
                     "status": "active",
                 },
             )
@@ -205,6 +240,67 @@ class MarzbanClient:
                 )
 
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
+
+    async def repair_all_users_inbounds(self) -> tuple[int, int]:
+        """Fix every Marzban user whose inbounds don't match the server's actual config.
+
+        Returns (repaired_count, error_count).  Intended to be called once on
+        startup and periodically thereafter to correct keys created while the
+        inbound tag was hardcoded to "VLESS-TCP".
+        """
+        headers = await self._headers()
+        inbounds_map = await self.get_inbounds()
+        desired_vless = set(inbounds_map.get("vless") or ["VLESS-TCP"])
+
+        # Fetch all users (up to 10 000 — adjust if needed for large deployments)
+        resp = await self._client.get(
+            f"{self._base}/api/users",
+            headers=headers,
+            params={"limit": 10000},
+        )
+        resp.raise_for_status()
+        users: list[dict] = resp.json().get("users", [])
+
+        repaired = 0
+        errors = 0
+        for user in users:
+            username: str = user.get("username", "")
+            if not username:
+                continue
+            current_vless = set(user.get("inbounds", {}).get("vless", []))
+            if current_vless == desired_vless:
+                continue  # already correct
+            try:
+                put_resp = await self._client.put(
+                    f"{self._base}/api/user/{username}",
+                    headers=headers,
+                    json={
+                        "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
+                        "inbounds": {"vless": list(desired_vless)},
+                        "status": user.get("status", "active"),
+                    },
+                )
+                if put_resp.is_success:
+                    logger.info(
+                        "Repaired inbounds for Marzban user '%s': %s → %s",
+                        username, sorted(current_vless), sorted(desired_vless),
+                    )
+                    repaired += 1
+                else:
+                    logger.warning(
+                        "Failed to repair '%s': HTTP %s — %s",
+                        username, put_resp.status_code, put_resp.text[:200],
+                    )
+                    errors += 1
+            except Exception as exc:
+                logger.warning("Error repairing Marzban user '%s': %s", username, exc)
+                errors += 1
+
+        logger.info(
+            "Marzban inbound repair complete: %d repaired, %d errors (of %d total users)",
+            repaired, errors, len(users),
+        )
+        return repaired, errors
 
     async def delete_key(self, username: str) -> None:
         headers = await self._headers()
