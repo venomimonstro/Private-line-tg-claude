@@ -92,11 +92,25 @@ class MarzbanClient:
         headers = await self._headers()
 
         # Attempt 1: /api/inbounds (newer Marzban)
+        # IMPORTANT: this endpoint returns a list of inbound *objects*, NOT strings:
+        #   {"vless": [{"tag": "VLESS-TCP", "protocol": "vless", "network": "tcp", ...}]}
+        # We must extract just the "tag" field — POST /api/user expects ["VLESS-TCP"].
         try:
             resp = await self._client.get(f"{self._base}/api/inbounds", headers=headers)
             if resp.status_code == 200:
                 raw: dict = resp.json()
-                data = {proto: tags for proto, tags in raw.items() if tags}
+                data: dict[str, list[str]] = {}
+                for proto, items in raw.items():
+                    tags: list[str] = []
+                    for item in items:
+                        if isinstance(item, str):
+                            tags.append(item)          # older Marzban: plain string
+                        elif isinstance(item, dict):
+                            tag = item.get("tag", "")  # newer Marzban: object with "tag"
+                            if tag:
+                                tags.append(tag)
+                    if tags:
+                        data[proto] = tags
                 if data:
                     self._inbounds_cache = data
                     logger.info("Inbounds from /api/inbounds: %s", data)
