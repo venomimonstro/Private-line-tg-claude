@@ -19,8 +19,7 @@ services:
       - ./backups:/app/backups
       - ./logs:/app/logs
     restart: unless-stopped
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 512m
     depends_on:
       - db
     networks:
@@ -49,8 +48,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/_health"]
       interval: 30s
@@ -81,8 +79,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 384m
     networks:
       - privateline
 

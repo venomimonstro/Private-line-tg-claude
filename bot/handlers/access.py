@@ -96,7 +96,13 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
     sub, active_keys, tariff = await _get_active_subscription(db_user.id)
 
     if sub is None or not active_keys:
-        await callback.answer("Активный ключ не найден. Обратитесь в поддержку.", show_alert=True)
+        await callback.message.answer(  # type: ignore[union-attr]
+            "⏳ <b>Ключ ещё создаётся или не был выдан</b>\n\n"
+            "Если вы только что оплатили — подождите 1-2 минуты, ключ выдаётся автоматически.\n\n"
+            "Если прошло более 5 минут — напишите в поддержку.",
+            parse_mode="HTML",
+        )
+        await callback.answer()
         return
 
     if len(active_keys) == 1:
@@ -198,39 +204,70 @@ async def on_platform_instructions(callback: CallbackQuery) -> None:
 
 
 async def _fetch_live_traffic_gb(key: VpnKey) -> float | None:
-    """Query VPN server in real-time for this key's traffic. Returns GB or None on error."""
+    """Query VPN server directly for this key's live traffic. Returns GB or None on error.
+
+    Intentionally bypasses the circuit breaker so a user-initiated
+    request always reaches the server (CB is a batch-job guard, not a
+    user-facing gate).  A 10-second timeout protects the bot handler.
+    """
+    import asyncio
+    from datetime import datetime as _dt
+
     from app.models.vpn_server import VpnServer
     from app.services.vpn_key import _make_client
-    from app.services.circuit_breaker import get_circuit_breaker, CircuitOpenError
 
-    async with async_session_maker() as session:
-        server = await session.get(VpnServer, key.server_id)
-        if server is None:
-            return None
+    try:
+        async with async_session_maker() as session:
+            server = await session.get(VpnServer, key.server_id)
+            if server is None:
+                logger.warning("Traffic check: server %d not found for key %d", key.server_id, key.id)
+                return None
 
-        cb = get_circuit_breaker(server.id)
-        if not cb.is_available():
-            return None
+            client = _make_client(server)
+            try:
+                stats: dict = await asyncio.wait_for(
+                    client.get_transfer_stats(),
+                    timeout=10.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Traffic check timed out for key %d (server %d)", key.id, key.server_id)
+                return None
+            finally:
+                await client.aclose()
 
-        client = _make_client(server)
-        try:
-            stats: dict = await cb.call(client.get_transfer_stats())
-            bytes_used = stats.get(str(key.outline_key_id)) or stats.get(key.outline_key_id)
+            # Outline uses numeric string IDs; Marzban uses username strings.
+            # outline_key_id is already a str column — try it directly.
+            bytes_used: int | None = stats.get(key.outline_key_id)
             if bytes_used is None:
+                # Fallback: int key in dict (Outline sometimes stores as int)
+                try:
+                    bytes_used = stats.get(int(key.outline_key_id))  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    pass
+
+            if bytes_used is None:
+                logger.debug(
+                    "Traffic check: key %r not found in stats (server %d). "
+                    "Known keys: %s",
+                    key.outline_key_id, key.server_id,
+                    list(stats.keys())[:10],
+                )
                 return 0.0
+
             used_gb = bytes_used / (1024 ** 3)
-            # Persist updated value
+
+            # Persist the fresh value so the background sync stays consistent
             key_row = await session.get(VpnKey, key.id)
             if key_row is not None:
                 key_row.traffic_used_gb = used_gb
-                key_row.last_checked_at = __import__("datetime").datetime.utcnow()
+                key_row.last_checked_at = _dt.utcnow()
                 await session.commit()
+
             return used_gb
-        except (CircuitOpenError, Exception) as exc:
-            logger.warning("Live traffic fetch failed for key %d: %s", key.id, exc)
-            return None
-        finally:
-            await client.aclose()
+
+    except Exception as exc:
+        logger.warning("Traffic check failed for key %d: %s", key.id, exc, exc_info=True)
+        return None
 
 
 @router.message(F.text == "📊 Проверить лимит")
