@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime as _dt
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -9,18 +10,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session_maker
+from app.encryption import decrypt
 from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
-from app.services.vpn_key import get_access_url
+from app.models.vpn_server import VpnServer
+from app.services.vpn_key import create_vpn_key, get_access_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
-from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard
+from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="access")
+
+_MAX_DAILY_REISSUES = 5
 
 _STATUS_LABELS: dict[str, str] = {
     SubscriptionStatus.active: "✅ Активна",
@@ -305,3 +310,152 @@ async def check_limit(message: Message, db_user: User) -> None:
             f"{source_note}"
         )
     await message.answer(text, parse_mode="HTML")
+
+
+# ─── Key self-service reissue ────────────────────────────────────────────────
+
+@router.callback_query(F.data == "reissue_key")
+async def on_reissue_key(callback: CallbackQuery, db_user: User) -> None:
+    """Show confirmation prompt with daily limit status."""
+    sub, active_keys, tariff = await _get_active_subscription(db_user.id)
+
+    if sub is None or not active_keys:
+        await callback.answer(
+            "Нет активного ключа для обновления.", show_alert=True
+        )
+        return
+
+    key = active_keys[0]
+    today = date.today()
+    used = key.reissue_count_today if key.reissue_date == today else 0
+    remaining = _MAX_DAILY_REISSUES - used
+
+    if remaining <= 0:
+        await callback.answer(
+            f"⛔ Лимит {_MAX_DAILY_REISSUES} обновлений в день исчерпан.\n"
+            "Попробуйте завтра.",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"🔄 <b>Обновить ключ доступа?</b>\n\n"
+        f"Текущий ключ будет аннулирован и заменён новым.\n"
+        f"После обновления старый ключ перестанет работать — "
+        f"импортируйте новый в приложение.\n\n"
+        f"📊 Использовано обновлений сегодня: <b>{used}/{_MAX_DAILY_REISSUES}</b>",
+        parse_mode="HTML",
+        reply_markup=reissue_confirm_keyboard(used, _MAX_DAILY_REISSUES),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "reissue_confirm")
+async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
+    """Actually reissue the key (race-condition safe)."""
+    await callback.answer("⏳ Создаём новый ключ…")
+
+    async with async_session_maker() as session:
+        # Re-read everything inside the session for consistency
+        sub_result = await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.user_id == db_user.id,
+                Subscription.status.in_([
+                    SubscriptionStatus.active,
+                    SubscriptionStatus.expires_soon,
+                    SubscriptionStatus.activation_error,
+                ]),
+            )
+            .order_by(Subscription.expires_at.desc())
+        )
+        sub = sub_result.scalars().first()
+        if sub is None:
+            await callback.message.answer(  # type: ignore[union-attr]
+                "❌ Активная подписка не найдена.", parse_mode="HTML"
+            )
+            return
+
+        keys_result = await session.execute(
+            select(VpnKey).where(
+                VpnKey.subscription_id == sub.id,
+                VpnKey.status == VpnKeyStatus.active,
+            )
+        )
+        active_key = keys_result.scalars().first()
+        if active_key is None:
+            await callback.message.answer(  # type: ignore[union-attr]
+                "❌ Активный ключ не найден.", parse_mode="HTML"
+            )
+            return
+
+        # Double-check daily limit (guard against concurrent taps)
+        today = date.today()
+        used = active_key.reissue_count_today if active_key.reissue_date == today else 0
+        if used >= _MAX_DAILY_REISSUES:
+            await callback.message.answer(  # type: ignore[union-attr]
+                f"⛔ Лимит {_MAX_DAILY_REISSUES} обновлений в день исчерпан.\n"
+                "Попробуйте завтра.",
+                parse_mode="HTML",
+            )
+            return
+
+        server = await session.get(VpnServer, active_key.server_id)
+        if server is None:
+            await callback.message.answer(  # type: ignore[union-attr]
+                "❌ VPN-сервер не найден. Обратитесь в поддержку.", parse_mode="HTML"
+            )
+            return
+
+        tariff = await session.get(Tariff, sub.tariff_id)
+
+        try:
+            # create_vpn_key purges the old key, creates a new one,
+            # and carries the reissue_count_today forward automatically.
+            new_key = await create_vpn_key(
+                user_id=db_user.id,
+                subscription_id=sub.id,
+                server=server,
+                traffic_limit_gb=tariff.traffic_limit_gb if tariff else None,
+                session=session,
+            )
+            # Increment the daily counter on the new key
+            new_key.reissue_count_today = used + 1
+            new_key.reissue_date = today
+            new_key.last_reissued_at = _dt.utcnow()
+            await session.commit()
+        except Exception as exc:
+            logger.error("Bot reissue failed for user %d: %s", db_user.id, exc, exc_info=True)
+            await callback.message.answer(  # type: ignore[union-attr]
+                "❌ Не удалось обновить ключ. Попробуйте позже или обратитесь в поддержку.",
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            access_url = decrypt(new_key.access_url_encrypted)
+        except Exception:
+            access_url = get_access_url(new_key)
+
+    remaining_after = _MAX_DAILY_REISSUES - (used + 1)
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"✅ <b>Ключ успешно обновлён!</b>\n\n"
+        f"🔑 <b>Ваш новый ключ доступа:</b>\n\n"
+        f"<code>{access_url}</code>\n\n"
+        f"Удалите старый ключ из приложения и добавьте этот:\n"
+        f"• <b>Android:</b> Hiddify, V2RayNG\n"
+        f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
+        f"• <b>Windows/macOS:</b> Hiddify\n"
+        f"• <b>Linux:</b> Hiddify, v2rayA\n\n"
+        f"📊 Осталось обновлений сегодня: <b>{remaining_after}/{_MAX_DAILY_REISSUES}</b>",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "reissue_cancel")
+async def on_reissue_cancel(callback: CallbackQuery) -> None:
+    await callback.answer("Отменено.")
+    try:
+        await callback.message.delete()  # type: ignore[union-attr]
+    except Exception:
+        pass

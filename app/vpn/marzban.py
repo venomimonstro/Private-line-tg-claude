@@ -95,31 +95,58 @@ class MarzbanClient:
         return None
 
     async def get_inbounds(self) -> dict[str, list[str]]:
-        """Return {protocol: [inbound_tag, ...]} from the server's /api/inbounds.
+        """Return {protocol: [inbound_tag, ...]} from the server's actual XRay config.
 
-        The result is cached per-client instance to avoid extra API calls.
-        Falls back to {"vless": ["VLESS-TCP"]} on error — callers should treat
-        this as a signal to check logs if connections still fail.
+        Strategy:
+          1. Try GET /api/inbounds  (newer Marzban ≥ 0.3.x)
+          2. Fall back to parsing GET /api/core/config  (works on ALL versions)
+          3. Return {"vless": ["VLESS-TCP"]} only as last resort (and log a warning)
+
+        The result is cached per-client instance to avoid repeated API calls.
         """
         if self._inbounds_cache is not None:
             return self._inbounds_cache
+
+        headers = await self._headers()
+
+        # --- attempt 1: /api/inbounds (newer Marzban) ---
         try:
-            headers = await self._headers()
             resp = await self._client.get(f"{self._base}/api/inbounds", headers=headers)
             if resp.status_code == 200:
                 raw: dict = resp.json()
-                # Keep only protocols that actually have inbound tags configured
                 data = {proto: tags for proto, tags in raw.items() if tags}
-                self._inbounds_cache = data
-                logger.info("Fetched inbounds from Marzban: %s", data)
-                return self._inbounds_cache
-            logger.warning(
-                "Could not fetch inbounds from Marzban: HTTP %s — using fallback",
-                resp.status_code,
-            )
+                if data:
+                    self._inbounds_cache = data
+                    logger.info("Fetched inbounds from /api/inbounds: %s", data)
+                    return self._inbounds_cache
         except Exception as exc:
-            logger.warning("Could not fetch inbounds from Marzban: %s — using fallback", exc)
-        # Safe fallback: do NOT cache so next call retries the server
+            logger.debug("GET /api/inbounds failed: %s", exc)
+
+        # --- attempt 2: parse from /api/core/config (all Marzban versions) ---
+        try:
+            resp = await self._client.get(f"{self._base}/api/core/config", headers=headers)
+            if resp.status_code == 200:
+                config: dict = resp.json()
+                by_proto: dict[str, list[str]] = {}
+                for inbound in config.get("inbounds", []):
+                    proto: str = inbound.get("protocol", "")
+                    tag: str = inbound.get("tag", "")
+                    if proto and tag:
+                        by_proto.setdefault(proto, []).append(tag)
+                if by_proto:
+                    self._inbounds_cache = by_proto
+                    logger.info("Fetched inbounds from /api/core/config: %s", by_proto)
+                    return self._inbounds_cache
+        except Exception as exc:
+            logger.warning("GET /api/core/config for inbounds failed: %s", exc)
+
+        # --- last resort ---
+        logger.warning(
+            "Could not determine inbound tags for %s — "
+            "falling back to 'VLESS-TCP'. Connections may fail if the "
+            "server uses a different inbound tag name.",
+            self._base,
+        )
         return {"vless": ["VLESS-TCP"]}
 
     def _inject_reality(self, url: str, public_key: str, short_id: str, sni: str) -> str:

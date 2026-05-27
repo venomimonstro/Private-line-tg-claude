@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Union
 
 from sqlalchemy import select
@@ -64,8 +64,16 @@ async def create_vpn_key(
     old_keys_result = await session.execute(
         select(VpnKey).where(VpnKey.subscription_id == subscription_id)
     )
+    # Transfer bot-reissue daily counter from the active key so it survives purge
+    _today = date.today()
+    _inherited_reissue_count: int = 0
+    _inherited_reissue_date: date | None = None
     for old_key in old_keys_result.scalars().all():
         if old_key.status == VpnKeyStatus.active:
+            # Capture reissue tracking before deletion
+            if old_key.reissue_date == _today:
+                _inherited_reissue_count = old_key.reissue_count_today or 0
+                _inherited_reissue_date = _today
             # Best-effort: remove from VPN server
             try:
                 old_server_result = await session.get(VpnServer, old_key.server_id)
@@ -128,6 +136,9 @@ async def create_vpn_key(
         traffic_used_gb=0.0,
         traffic_limit_gb=traffic_limit_gb,
         label=label,
+        # Carry bot-reissue counter forward so the daily limit is preserved
+        reissue_count_today=_inherited_reissue_count,
+        reissue_date=_inherited_reissue_date,
     )
     session.add(vpn_key)
     await session.flush()

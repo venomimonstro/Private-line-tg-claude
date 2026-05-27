@@ -40,11 +40,22 @@ def accept_rules_keyboard(tariff_slug: str) -> InlineKeyboardMarkup:
 def my_access_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="🔑 Мой ключ", callback_data="get_key")],
+        [InlineKeyboardButton(text="🔄 Обновить ключ", callback_data="reissue_key")],
         [InlineKeyboardButton(text="🌍 Выбрать страну", callback_data="geo_switch")],
-        [InlineKeyboardButton(text="🔄 Продлить", callback_data="renew")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reissue_confirm_keyboard(used: int, limit: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, обновить", callback_data="reissue_confirm"),
+                InlineKeyboardButton(text="← Отмена", callback_data="reissue_cancel"),
+            ],
+        ]
+    )
 
 
 def connection_platforms_keyboard() -> InlineKeyboardMarkup:

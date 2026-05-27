@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -39,6 +39,9 @@ class VpnKey(Base):
     label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notified_80pct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     notified_95pct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    # Bot self-service key reissue tracking (max N per day)
+    reissue_count_today: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    reissue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="vpn_keys")
     subscription: Mapped[Subscription] = relationship("Subscription", back_populates="vpn_keys")
