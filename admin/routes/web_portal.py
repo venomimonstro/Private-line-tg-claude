@@ -211,6 +211,7 @@ async def portal_waiting(
     if payment is None:
         return RedirectResponse("/portal/", status_code=303)
 
+    is_manual = (not payment.payment_url)
     return templates.TemplateResponse("portal/waiting.html", {
         "request": request,
         "payment_id": payment_id,
@@ -219,6 +220,8 @@ async def portal_waiting(
         "amount": payment.amount,
         "currency": payment.currency,
         "bot_url": _bot_url(),
+        "is_manual": is_manual,
+        "payment_instructions": settings.PAYMENT_INSTRUCTIONS if is_manual else "",
     })
 
 
