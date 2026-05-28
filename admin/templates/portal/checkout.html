@@ -34,11 +34,13 @@
 
     {# — Checkout form — #}
     <div class="card p-4">
-      <h6 class="fw-semibold mb-3" style="font-size:.9rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">
-        Контактные данные
-      </h6>
       <form method="post" action="/portal/start/{{ tariff.slug }}" class="needs-validation" novalidate>
         {% if ref %}<input type="hidden" name="ref" value="{{ ref }}">{% endif %}
+
+        {# ── Контактные данные ── #}
+        <h6 class="fw-semibold mb-3" style="font-size:.85rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">
+          Контактные данные
+        </h6>
 
         <div class="mb-3">
           <label class="form-label" for="f-email">Email <span class="text-danger">*</span></label>
@@ -46,7 +48,7 @@
                  placeholder="your@email.com"
                  value="{{ prefill_email or '' }}"
                  autocomplete="email">
-          <div class="form-text">Нужен для привязки аккаунта. Ключ появится на странице автоматически.</div>
+          <div class="form-text">Для входа в личный кабинет и восстановления доступа.</div>
         </div>
 
         <div class="mb-3">
@@ -55,7 +57,7 @@
                  placeholder="Иван" maxlength="255" autocomplete="given-name">
         </div>
 
-        <div class="mb-3">
+        <div class="mb-4">
           <label class="form-label" for="f-tg">Telegram @username <span class="text-muted fw-normal" style="font-size:.8rem">(необязательно)</span></label>
           <div class="input-group">
             <span class="input-group-text">@</span>
@@ -64,8 +66,31 @@
                    value="{{ prefill_tg or '' }}"
                    autocomplete="off">
           </div>
-          <div class="form-text">Для автоматической привязки к Telegram-боту после включения VPN.</div>
+          <div class="form-text">Укажите, чтобы связать с Telegram-ботом после включения VPN.</div>
         </div>
+
+        {# ── Способ оплаты ── #}
+        {% if providers %}
+        <h6 class="fw-semibold mb-2" style="font-size:.85rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">
+          Способ оплаты
+        </h6>
+        <div class="mb-4" id="provider-list">
+          {% for p in providers %}
+          <label class="provider-card d-flex align-items-center gap-3 p-3 mb-2 rounded-3"
+                 style="cursor:pointer;border:1.5px solid var(--border);background:var(--bg-surface);transition:border-color .15s">
+            <input type="radio" name="provider" value="{{ p.code }}"
+                   class="provider-radio" style="display:none"
+                   {% if loop.first %}checked{% endif %}>
+            <span style="font-size:1.4rem;line-height:1;flex-shrink:0">{{ p.icon }}</span>
+            <span style="flex:1;min-width:0">
+              <span class="fw-semibold" style="font-size:.9rem;color:var(--text-base)">{{ p.name }}</span>
+              <span class="d-block text-muted" style="font-size:.76rem;margin-top:.05rem">{{ p.desc }}</span>
+            </span>
+            <span class="provider-check" style="font-size:1.1rem;color:var(--green);display:none">✓</span>
+          </label>
+          {% endfor %}
+        </div>
+        {% endif %}
 
         <div class="form-check mb-4">
           <input class="form-check-input" type="checkbox" id="agree" required>
@@ -89,7 +114,36 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<style>
+.provider-card.selected {
+  border-color: var(--accent-hi) !important;
+  background: rgba(92,107,192,.1) !important;
+}
+</style>
 <script>
+  /* Payment method selection */
+  function syncProviders() {
+    document.querySelectorAll('.provider-card').forEach(function(card) {
+      var radio = card.querySelector('.provider-radio');
+      var check = card.querySelector('.provider-check');
+      if (radio && radio.checked) {
+        card.classList.add('selected');
+        if (check) check.style.display = '';
+      } else {
+        card.classList.remove('selected');
+        if (check) check.style.display = 'none';
+      }
+    });
+  }
+  document.querySelectorAll('.provider-card').forEach(function(card) {
+    card.addEventListener('click', function() {
+      var radio = card.querySelector('.provider-radio');
+      if (radio) { radio.checked = true; syncProviders(); }
+    });
+  });
+  syncProviders();
+
+  /* Form validation */
   document.querySelectorAll('form.needs-validation').forEach(function (form) {
     form.addEventListener('submit', function (event) {
       if (!form.checkValidity()) {

@@ -39,6 +39,32 @@ _STATUS_LABELS = {
 }
 
 
+_PROVIDER_META: dict[str, tuple[str, str, str]] = {
+    # code → (icon, display_name, description)
+    "yookassa":  ("🏦", "ЮKassa",    "Карта, СБП, ЮMoney"),
+    "yoomoney":  ("💛", "ЮMoney",    "Кошелёк ЮMoney"),
+    "freekassa": ("⚡", "FreeKassa", "Карта, криптовалюта"),
+    "lava":      ("🔥", "LAVA",      "Карта, СБП"),
+    "robokassa": ("💳", "Robokassa", "Карта, СБП"),
+    "prodamus":  ("💳", "Prodamus",  "Карта"),
+    "crypto":    ("₿",  "CryptoBot", "USDT, TON, BTC и другие"),
+    "manual":    ("🏧", "Перевод",   "Реквизиты — ручное подтверждение"),
+}
+
+
+async def _web_providers(session) -> list[dict]:
+    """Return enabled providers that work outside Telegram (no Stars)."""
+    from app.payments.services import get_enabled_providers
+    enabled = await get_enabled_providers(session)
+    result = []
+    for code in enabled:
+        if code == "stars":
+            continue
+        icon, name, desc = _PROVIDER_META.get(code, ("💳", code, ""))
+        result.append({"code": code, "icon": icon, "name": name, "desc": desc})
+    return result
+
+
 def _make_fake_tg_id() -> int:
     return -abs(int(hashlib.sha256(str(random.getrandbits(64)).encode()).hexdigest(), 16) % (10 ** 12))
 
@@ -104,9 +130,11 @@ async def portal_checkout(
             "request": request, "tariffs": [], "ref": "", "bot_url": _bot_url(),
             "error": "Тариф не найден или недоступен.",
         }, status_code=404)
+    providers = await _web_providers(session)
     return templates.TemplateResponse("portal/checkout.html", {
         "request": request, "tariff": tariff, "bot_url": _bot_url(),
         "error": None, "prefill_email": None, "prefill_tg": None, "ref": ref,
+        "providers": providers,
     })
 
 
@@ -117,10 +145,11 @@ async def portal_start_payment(
     email: str = Form(...),
     first_name: str = Form(default=""),
     tg_username: str = Form(default=""),
+    provider: str = Form(default=""),
     ref: str = Form(default=""),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse | HTMLResponse:
-    from app.payments.services import create_payment
+    from app.payments.services import create_payment, get_enabled_providers
 
     result = await session.execute(
         select(Tariff).where(Tariff.slug == slug, Tariff.is_active == True, Tariff.is_visible == True)
@@ -131,12 +160,19 @@ async def portal_start_payment(
 
     email = email.strip().lower()
     tg_clean = tg_username.lstrip("@").strip() if tg_username else ""
+    providers = await _web_providers(session)
 
     def checkout_error(msg: str) -> HTMLResponse:
         return templates.TemplateResponse("portal/checkout.html", {
             "request": request, "tariff": tariff, "bot_url": _bot_url(),
             "error": msg, "prefill_email": email, "prefill_tg": tg_clean, "ref": ref,
+            "providers": providers,
         })
+
+    # Validate and resolve selected provider
+    valid_codes = [p["code"] for p in providers]
+    if provider not in valid_codes:
+        provider = valid_codes[0] if valid_codes else "manual"
 
     if not email or "@" not in email:
         return checkout_error("Введите корректный email.")
@@ -187,6 +223,7 @@ async def portal_start_payment(
             user_id=user.id,
             tariff_slug=slug,
             session=session,
+            provider_name=provider,
         )
         await session.commit()
     except Exception as exc:
