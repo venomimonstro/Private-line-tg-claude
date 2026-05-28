@@ -140,12 +140,55 @@ class MarzbanClient:
     # ─── Reality params ────────────────────────────────────────────────────────
 
     def _clean_sni(self, raw: str) -> str:
-        """Strip Markdown link formatting from SNI — e.g. [foo](url) → foo."""
-        cleaned = _MARKDOWN_LINK_RE.sub(r"\1", raw).strip()
-        if cleaned != raw:
-            logger.warning(
-                "SNI contained Markdown formatting — cleaned: %r → %r", raw, cleaned
-            )
+        """Strip Markdown link formatting from SNI — e.g. [foo](url) → foo.
+
+        Uses multiple methods because the XRay config may store brackets as
+        standard ASCII or as Unicode full-width equivalents.
+        """
+        if not raw:
+            return raw
+
+        # Log the raw repr so we can see the exact bytes once
+        logger.debug("_clean_sni input repr: %r", raw)
+
+        cleaned = raw.strip()
+
+        # Method 1: standard ASCII Markdown regex [text](url)
+        result = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+        if result != cleaned:
+            logger.warning("SNI Markdown (regex) cleaned: %r → %r", cleaned, result.strip())
+            return result.strip()
+
+        # Method 2: direct bracket extraction — handles cases where regex fails
+        # Normalise full-width Unicode brackets to ASCII first
+        normalised = (
+            cleaned
+            .replace("［", "[").replace("］", "]")  # ［ ］
+            .replace("（", "(").replace("）", ")")  # （ ）
+            .replace("【", "[").replace("】", "]")  # 【 】
+        )
+        result2 = _MARKDOWN_LINK_RE.sub(r"\1", normalised)
+        if result2 != normalised:
+            logger.warning("SNI Markdown (unicode-bracket) cleaned: %r → %r", cleaned, result2.strip())
+            return result2.strip()
+
+        # Method 3: manual extraction — if string starts with [ find matching ]
+        if cleaned.startswith("[") and "]" in cleaned:
+            end = cleaned.index("]")
+            candidate = cleaned[1:end].strip()
+            # Accept only if it looks like a hostname (has a dot, no spaces/parens)
+            if candidate and "." in candidate and " " not in candidate and "(" not in candidate:
+                logger.warning("SNI bracket-extract cleaned: %r → %r", cleaned, candidate)
+                return candidate
+
+        # Method 4: regex for just [text] without the (url) part
+        m = re.match(r"^\[([^\]]+)\]", cleaned)
+        if m:
+            candidate = m.group(1).strip()
+            if candidate and "." in candidate:
+                logger.warning("SNI bare-bracket cleaned: %r → %r", cleaned, candidate)
+                return candidate
+
         return cleaned
 
     async def get_reality_params(self) -> tuple[str, str, str] | None:
@@ -366,9 +409,12 @@ class MarzbanClient:
         if reality:
             public_key, short_id, sni = reality
             access_url = self._inject_reality(access_url, public_key, short_id, sni)
+            # Log the sni that was actually put into the URL (already cleaned inside _inject_reality)
+            from urllib.parse import parse_qs as _pqs, urlparse as _uparse
+            _actual_sni = _pqs(_uparse(access_url).query).get("sni", [sni])[0]
             logger.info(
-                "Applied Reality params for %s: pbk=%.8s... sid=%s sni=%s",
-                safe_name, public_key, short_id, sni,
+                "Applied Reality params for %s: pbk=%.8s... sid=%s sni_in_url=%s (raw=%s)",
+                safe_name, public_key, short_id, _actual_sni, sni,
             )
         else:
             logger.error(
