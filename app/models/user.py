@@ -53,6 +53,7 @@ class User(Base):
     referral_balance: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False, default=Decimal("0"), server_default="0"
     )
+    portal_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
 
     subscriptions: Mapped[list[Subscription]] = relationship(
         "Subscription", back_populates="user", lazy="select"

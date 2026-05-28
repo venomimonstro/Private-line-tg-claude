@@ -5,6 +5,7 @@ import logging
 import re
 from datetime import date, datetime, timedelta
 from typing import Union
+from urllib.parse import urlparse, parse_qs as _parse_qs
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,35 @@ from app.vpn.marzban import MarzbanClient, MarzbanConfigError, MarzbanKey
 logger = logging.getLogger(__name__)
 
 _KEY_REISSUE_COOLDOWN_DAYS = 7
+
+
+def _key_url_needs_repair(access_url: str) -> bool:
+    """Return True only if the stored URL is broken and needs repair.
+
+    A URL is considered healthy if:
+    - It is non-empty
+    - Its SNI parameter contains no Markdown brackets
+    - It contains the required Reality params (pbk + sid)
+
+    We deliberately skip healthy keys so the repair job never issues a
+    Marzban PUT request (which disrupts active connections) for keys that
+    are already working.
+    """
+    if not access_url:
+        return True
+    try:
+        parsed = urlparse(access_url)
+        if parsed.scheme != "vless":
+            return False  # Outline or unknown — don't touch
+        qs = _parse_qs(parsed.query)
+        sni = qs.get("sni", [""])[0]
+        if "[" in sni or "]" in sni:
+            return True  # Corrupted Markdown SNI
+        if not qs.get("pbk") or not qs.get("sid"):
+            return True  # Missing Reality params
+        return False
+    except Exception:
+        return True  # Can't parse → assume broken
 _START_TARIFF_SLUG = "start"
 
 AnyClient = Union[OutlineClient, MarzbanClient]
@@ -333,6 +363,7 @@ async def repair_marzban_keys(
             logger.error("repair_marzban_keys: cannot build client for server %d: %s", sid, exc)
 
     fixed = 0
+    skipped = 0
     errors = 0
     # Collect (telegram_id, new_url) for keys whose stored URL actually changed.
     # We fetch telegram_id BEFORE commit while the session is still active.
@@ -340,6 +371,26 @@ async def repair_marzban_keys(
 
     try:
         for key in keys:
+            # Check the existing URL FIRST — skip healthy keys without touching Marzban.
+            # This prevents disrupting active connections on every bot restart.
+            try:
+                old_url = decrypt(key.access_url_encrypted) if key.access_url_encrypted else ""
+            except Exception:
+                old_url = ""
+
+            if not _key_url_needs_repair(old_url):
+                logger.debug(
+                    "repair_marzban_keys: key %d (user=%s) URL is healthy — skipping",
+                    key.id, key.outline_key_id,
+                )
+                skipped += 1
+                continue
+
+            logger.info(
+                "repair_marzban_keys: key %d (user=%s) needs repair — SNI or params broken",
+                key.id, key.outline_key_id,
+            )
+
             client = clients.get(key.server_id)
             if client is None:
                 errors += 1
@@ -347,7 +398,6 @@ async def repair_marzban_keys(
             try:
                 raw = await client.create_key(name=key.outline_key_id)
                 if raw.access_url:
-                    old_url = decrypt(key.access_url_encrypted)
                     new_url = raw.access_url
                     if old_url != new_url:
                         key.access_url_encrypted = encrypt(new_url)
@@ -367,7 +417,7 @@ async def repair_marzban_keys(
                             )
                     else:
                         logger.debug(
-                            "repair_marzban_keys: key %d (user=%s) URL unchanged — already correct",
+                            "repair_marzban_keys: key %d (user=%s) URL unchanged after repair attempt",
                             key.id, key.outline_key_id,
                         )
                     fixed += 1
@@ -392,7 +442,7 @@ async def repair_marzban_keys(
 
     await session.commit()
     logger.info(
-        "repair_marzban_keys complete: %d fixed, %d errors, %d URLs changed (of %d total)",
-        fixed, errors, len(changed_notifications), len(keys),
+        "repair_marzban_keys complete: %d fixed, %d skipped (healthy), %d errors, %d URLs changed (of %d total)",
+        fixed, skipped, errors, len(changed_notifications), len(keys),
     )
     return fixed, errors, changed_notifications

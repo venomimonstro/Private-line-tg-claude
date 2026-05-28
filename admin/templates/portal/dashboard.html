@@ -1,0 +1,205 @@
+{% extends "portal/base.html" %}
+{% block title %}Личный кабинет — Private X Line{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6" style="height:calc(100vh - 56px);display:flex;flex-direction:column">
+
+    {# Header #}
+    <div class="card mb-2 p-3 d-flex flex-row align-items-center gap-3" style="flex-shrink:0">
+      <div style="width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#2563eb);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">🔐</div>
+      <div>
+        <div class="fw-semibold" style="font-size:.95rem">
+          {{ user.first_name or user.username or 'Пользователь' }}
+        </div>
+        <div style="font-size:.78rem;color:var(--text-muted)">
+          {% if has_subscription %}
+            {% if sub_status == 'active' %}✅ Подписка активна до {{ sub_expires }}{% elif sub_status == 'expires_soon' %}⚠️ Истекает {{ sub_expires }}{% else %}Подписка: {{ sub_status }}{% endif %}
+          {% else %}
+            Нет активной подписки
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Chat area #}
+    <div id="chat" class="card mb-2 p-3" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:.75rem;min-height:0">
+      <div class="d-flex">
+        <div class="chat-bubble-bot">
+          👋 Привет! Я ваш личный ассистент.<br>
+          Выберите команду ниже.
+        </div>
+      </div>
+    </div>
+
+    {# Command keyboard #}
+    <div style="flex-shrink:0">
+      <div class="row g-2 mb-2">
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('key')">🔑 Мой ключ</button></div>
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('status')">📊 Статус</button></div>
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('pay')">💳 Оплатить</button></div>
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('reissue')">🔄 Новый ключ</button></div>
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('guide')">📱 Как подключиться</button></div>
+        <div class="col-6"><button class="cmd-btn w-100" onclick="sendCmd('support')">🆘 Поддержка</button></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.chat-bubble-bot {
+  background: var(--card-bg, #1e293b);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 0 1rem 1rem 1rem;
+  padding: .6rem 1rem;
+  font-size: .88rem;
+  max-width: 85%;
+  line-height: 1.5;
+}
+.chat-bubble-user {
+  background: linear-gradient(135deg,#7c3aed,#2563eb);
+  color: #fff;
+  border-radius: 1rem 0 1rem 1rem;
+  padding: .6rem 1rem;
+  font-size: .88rem;
+  max-width: 85%;
+  margin-left: auto;
+  line-height: 1.5;
+}
+.cmd-btn {
+  background: var(--card-bg, #1e293b);
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  color: var(--text, #f1f5f9);
+  border-radius: .5rem;
+  padding: .55rem .5rem;
+  font-size: .82rem;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+  text-align: center;
+}
+.cmd-btn:hover { background: rgba(124,58,237,.15); border-color: rgba(124,58,237,.4); }
+.cmd-btn:active { transform: scale(.97); }
+.cmd-btn:disabled { opacity: .5; cursor: not-allowed; }
+.key-box {
+  background: rgba(0,0,0,.2);
+  border-radius: .4rem;
+  padding: .5rem .75rem;
+  font-family: monospace;
+  font-size: .72rem;
+  word-break: break-all;
+  margin-top: .5rem;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,.1);
+  position: relative;
+}
+.key-box:hover { border-color: rgba(124,58,237,.5); }
+.copy-hint { font-size:.7rem; color: rgba(255,255,255,.5); margin-top:.25rem; }
+.tariff-btn {
+  display: block;
+  background: rgba(37,99,235,.15);
+  border: 1px solid rgba(37,99,235,.3);
+  color: var(--text, #f1f5f9);
+  border-radius: .4rem;
+  padding: .4rem .75rem;
+  font-size: .82rem;
+  text-decoration: none;
+  margin-top: .4rem;
+  text-align: center;
+}
+.tariff-btn:hover { background: rgba(37,99,235,.25); color: #fff; }
+</style>
+<script>
+const TOKEN = {{ token | tojson }};
+const CMD_URL = '/portal/me/' + TOKEN + '/cmd';
+
+function addBubble(side, html) {
+  const chat = document.getElementById('chat');
+  const wrap = document.createElement('div');
+  wrap.className = 'd-flex';
+  const bubble = document.createElement('div');
+  bubble.className = side === 'user' ? 'chat-bubble-user' : 'chat-bubble-bot';
+  bubble.innerHTML = html;
+  wrap.appendChild(bubble);
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+  return bubble;
+}
+
+function addTyping() {
+  const el = addBubble('bot', '<span class="typing-dots">···</span>');
+  return el.parentElement;
+}
+
+const CMD_LABELS = {
+  'key': '🔑 Мой ключ', 'status': '📊 Статус', 'pay': '💳 Оплатить',
+  'reissue': '🔄 Новый ключ', 'guide': '📱 Как подключиться', 'support': '🆘 Поддержка'
+};
+
+function sendCmd(cmd) {
+  addBubble('user', CMD_LABELS[cmd] || cmd);
+  const btns = document.querySelectorAll('.cmd-btn');
+  btns.forEach(b => b.disabled = true);
+  const typing = addTyping();
+
+  fetch(CMD_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd})
+  })
+  .then(r => r.json())
+  .then(d => {
+    typing.remove();
+    if (d.type === 'key') {
+      let html = '';
+      if (d.text) html += d.text.replace(/\n/g, '<br>') + '<br>';
+      html += '<div class="key-box" onclick="copyKey(this, \'' + escapeJs(d.key) + '\')">' + escapeHtml(d.key) + '</div>';
+      html += '<div class="copy-hint">Нажмите чтобы скопировать</div>';
+      addBubble('bot', html);
+    } else if (d.buttons) {
+      let html = (d.text || '').replace(/\n/g, '<br>');
+      d.buttons.forEach(b => {
+        if (b.url) {
+          html += '<a href="' + b.url + '" class="tariff-btn">' + escapeHtml(b.label) + '</a>';
+        }
+      });
+      addBubble('bot', html);
+    } else if (d.html) {
+      addBubble('bot', d.html);
+    } else {
+      addBubble('bot', (d.text || 'Ошибка').replace(/\n/g, '<br>'));
+    }
+  })
+  .catch(() => {
+    typing.remove();
+    addBubble('bot', '❌ Ошибка соединения. Попробуйте снова.');
+  })
+  .finally(() => { btns.forEach(b => b.disabled = false); });
+}
+
+function copyKey(el, key) {
+  navigator.clipboard.writeText(key).then(() => {
+    el.style.borderColor = '#22c55e';
+    const hint = el.nextElementSibling;
+    if (hint) { hint.textContent = '✅ Скопировано!'; hint.style.color = '#22c55e'; }
+    setTimeout(() => {
+      el.style.borderColor = '';
+      if (hint) { hint.textContent = 'Нажмите чтобы скопировать'; hint.style.color = ''; }
+    }, 2000);
+  }).catch(() => {
+    const r = document.createRange();
+    r.selectNode(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(r);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escapeJs(s) {
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
+}
+</script>
+{% endblock %}

@@ -11,6 +11,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📊 Проверить лимит"), KeyboardButton(text="💳 Мои платежи")],
             [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="📋 Правила сервиса")],
             [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="🆘 Поддержка")],
+            [KeyboardButton(text="🌐 Веб-портал")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,

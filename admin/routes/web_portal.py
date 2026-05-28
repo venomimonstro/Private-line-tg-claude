@@ -265,3 +265,234 @@ async def portal_payment_status(
                 break
 
     return JSONResponse(response)
+
+
+@router.get("/me/{token}", response_class=HTMLResponse)
+async def portal_dashboard(
+    token: str,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+) -> HTMLResponse:
+    from app.models.vpn_key import VpnKey
+    from app.enums import SubscriptionStatus, VpnKeyStatus
+
+    user_result = await session.execute(select(User).where(User.portal_token == token))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return templates.TemplateResponse("portal/index.html", {
+            "request": request, "tariffs": [], "ref": "",
+            "error": "Ссылка недействительна. Получите новую в Telegram-боте.",
+        }, status_code=404)
+
+    # Get active subscription
+    sub_result = await session.execute(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user.id,
+            Subscription.status.in_([
+                SubscriptionStatus.active,
+                SubscriptionStatus.expires_soon,
+            ]),
+        )
+        .order_by(Subscription.expires_at.desc())
+        .limit(1)
+    )
+    sub = sub_result.scalar_one_or_none()
+
+    return templates.TemplateResponse("portal/dashboard.html", {
+        "request": request,
+        "token": token,
+        "user": user,
+        "has_subscription": sub is not None,
+        "sub_expires": sub.expires_at.strftime("%d.%m.%Y") if sub and sub.expires_at else None,
+        "sub_status": sub.status.value if sub else None,
+    })
+
+
+@router.post("/me/{token}/cmd")
+async def portal_command(
+    token: str,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    from app.models.vpn_key import VpnKey
+    from app.enums import SubscriptionStatus, VpnKeyStatus
+    from app.models.tariff import Tariff
+
+    user_result = await session.execute(select(User).where(User.portal_token == token))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+        cmd = body.get("cmd", "")
+    except Exception:
+        return JSONResponse({"error": "Bad request"}, status_code=400)
+
+    if cmd == "key":
+        sub_result = await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user.id,
+                Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+            )
+            .order_by(Subscription.expires_at.desc())
+            .limit(1)
+        )
+        sub = sub_result.scalar_one_or_none()
+        if sub is None:
+            return JSONResponse({"text": "У вас нет активной подписки.\n\nНажмите «💳 Оплатить» для оформления."})
+
+        keys_result = await session.execute(
+            select(VpnKey).where(
+                VpnKey.subscription_id == sub.id,
+                VpnKey.status == VpnKeyStatus.active,
+            )
+        )
+        keys = list(keys_result.scalars().all())
+        if not keys:
+            return JSONResponse({"text": "Ключ ещё создаётся. Подождите 1–2 минуты и нажмите снова."})
+
+        key = keys[0]
+        try:
+            access_url = get_access_url(key)
+        except Exception:
+            return JSONResponse({"text": "Ошибка получения ключа. Обратитесь в поддержку."})
+
+        return JSONResponse({"type": "key", "key": access_url})
+
+    elif cmd == "status":
+        sub_result = await session.execute(
+            select(Subscription)
+            .where(Subscription.user_id == user.id)
+            .order_by(Subscription.created_at.desc())
+            .limit(1)
+        )
+        sub = sub_result.scalar_one_or_none()
+        if sub is None:
+            return JSONResponse({"text": "У вас ещё нет подписки."})
+
+        status_labels = {
+            "active": "✅ Активна",
+            "expires_soon": "⚠️ Истекает скоро",
+            "expired": "❌ Истекла",
+            "pending_payment": "⏳ Ожидает оплаты",
+            "disabled": "🔒 Отключена",
+        }
+        status_label = status_labels.get(sub.status.value if hasattr(sub.status, "value") else str(sub.status), str(sub.status))
+        expires = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
+
+        return JSONResponse({
+            "text": f"📋 Статус подписки: {status_label}\n📅 Действует до: {expires}"
+        })
+
+    elif cmd == "pay":
+        tariffs_result = await session.execute(
+            select(Tariff).where(Tariff.is_active == True, Tariff.is_visible == True).order_by(Tariff.sort_order)
+        )
+        tariffs = list(tariffs_result.scalars().all())
+        if not tariffs:
+            return JSONResponse({"text": "Тарифы временно недоступны."})
+
+        buttons = []
+        for t in tariffs:
+            price = int(t.price_first_month) if t.price_first_month else int(t.price_monthly)
+            buttons.append({"label": f"{t.name} — {price} ₽", "url": f"/portal/pay/{t.slug}"})
+
+        return JSONResponse({
+            "text": "Выберите тариф:",
+            "buttons": buttons,
+        })
+
+    elif cmd == "reissue":
+        # Reissue the key
+        from app.services.vpn_key import create_vpn_key
+        from app.models.vpn_server import VpnServer
+        from datetime import date
+
+        sub_result = await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user.id,
+                Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+            )
+            .order_by(Subscription.expires_at.desc())
+            .limit(1)
+        )
+        sub = sub_result.scalar_one_or_none()
+        if sub is None:
+            return JSONResponse({"text": "Нет активной подписки для обновления."})
+
+        keys_result = await session.execute(
+            select(VpnKey).where(
+                VpnKey.subscription_id == sub.id,
+                VpnKey.status == VpnKeyStatus.active,
+            )
+        )
+        active_key = keys_result.scalars().first()
+        if active_key is None:
+            return JSONResponse({"text": "Активный ключ не найден."})
+
+        # Check daily limit
+        today = date.today()
+        used = active_key.reissue_count_today if active_key.reissue_date == today else 0
+        if used >= 5:
+            return JSONResponse({"text": "⛔ Лимит 5 обновлений в день исчерпан. Попробуйте завтра."})
+
+        server = await session.get(VpnServer, active_key.server_id)
+        if server is None:
+            return JSONResponse({"text": "Сервер не найден. Обратитесь в поддержку."})
+
+        from app.models.tariff import Tariff as _Tariff
+        tariff = await session.get(_Tariff, sub.tariff_id)
+
+        try:
+            from datetime import datetime as _dt
+            new_key = await create_vpn_key(
+                user_id=user.id,
+                subscription_id=sub.id,
+                server=server,
+                traffic_limit_gb=tariff.traffic_limit_gb if tariff else None,
+                session=session,
+            )
+            new_key.reissue_count_today = used + 1
+            new_key.reissue_date = today
+            new_key.last_reissued_at = _dt.utcnow()
+            await session.commit()
+            access_url = get_access_url(new_key)
+            return JSONResponse({
+                "type": "key",
+                "key": access_url,
+                "text": f"✅ Ключ успешно обновлён! Осталось обновлений сегодня: {5 - (used+1)}/5",
+            })
+        except Exception as exc:
+            logger.error("Portal reissue failed for user %d: %s", user.id, exc, exc_info=True)
+            return JSONResponse({"text": "❌ Не удалось обновить ключ. Попробуйте позже."})
+
+    elif cmd == "guide":
+        return JSONResponse({
+            "html": (
+                "<b>Рекомендуемые приложения:</b><br><br>"
+                "<b>Android:</b> <a href='https://play.google.com/store/apps/details?id=app.hiddify.com' target='_blank'>Hiddify</a>, "
+                "<a href='https://play.google.com/store/apps/details?id=com.v2ray.ang' target='_blank'>V2RayNG</a><br>"
+                "<b>iPhone:</b> <a href='https://apps.apple.com/app/streisand/id6450534064' target='_blank'>Streisand</a>, "
+                "<a href='https://apps.apple.com/app/foxray/id6448898396' target='_blank'>FoXray</a><br>"
+                "<b>Windows/macOS:</b> <a href='https://github.com/hiddify/hiddify-app/releases/latest' target='_blank'>Hiddify</a><br>"
+                "<b>Linux:</b> <a href='https://github.com/hiddify/hiddify-app/releases/latest' target='_blank'>Hiddify</a>, "
+                "<a href='https://github.com/v2rayA/v2rayA/releases/latest' target='_blank'>v2rayA</a><br><br>"
+                "Скопируйте ключ (кнопка «🔑 Мой ключ»), откройте приложение, "
+                "нажмите «+» и вставьте ключ."
+            )
+        })
+
+    elif cmd == "support":
+        from app.services.notification import notify_admin
+        try:
+            name = user.first_name or user.username or f"ID:{user.id}"
+            await notify_admin(f"🆘 Запрос поддержки из веб-портала\nПользователь: {name} (id={user.id}, tg={user.telegram_id})")
+        except Exception:
+            pass
+        return JSONResponse({"text": "✅ Запрос отправлен в поддержку. Ожидайте ответа в Telegram-боте или по email."})
+
+    return JSONResponse({"text": "Неизвестная команда."})

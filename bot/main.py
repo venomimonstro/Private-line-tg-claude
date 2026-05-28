@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.bot_instance import set_bot
 from app.config import settings
 from bot.handlers import access, geo_switch, help, mykey, my_payments, payment, plans, referral, refund, rules, start, support
-from bot.handlers import onboarding, payment_status, qr_key, referral_withdraw, stars_payment
+from bot.handlers import onboarding, payment_status, portal_link, qr_key, referral_withdraw, stars_payment
 from bot.middleware.user_activity import UserActivityMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,6 +46,7 @@ async def main() -> None:
     dp.include_router(qr_key.router)
     dp.include_router(help.router)
     dp.include_router(stars_payment.router)
+    dp.include_router(portal_link.router)
     dp.include_router(onboarding.router)
     dp.include_router(payment_status.router)
 
