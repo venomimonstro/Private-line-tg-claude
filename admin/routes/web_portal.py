@@ -288,7 +288,7 @@ async def portal_login_page(request: Request) -> HTMLResponse:
     })
 
 
-@router.post("/login", response_class=HTMLResponse)
+@router.post("/login", response_class=HTMLResponse, response_model=None)
 async def portal_login_submit(
     request: Request,
     email: str = Form(...),
