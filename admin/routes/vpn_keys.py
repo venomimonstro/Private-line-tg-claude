@@ -843,3 +843,54 @@ async def fix_keys_safe(
             "DB updated — no Marzban users were modified."
         ),
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /vpn-keys/{key_id}/test-connection
+# ---------------------------------------------------------------------------
+
+@router.get("/{key_id}/test-connection")
+async def test_key_connection(
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(get_current_admin),
+) -> JSONResponse:
+    """Full connectivity test for a single VPN key.
+
+    Checks:
+      1. URL decryption
+      2. VLESS protocol prefix
+      3. Required Reality parameters (pbk, sid, sni, flow, security)
+      4. SNI cleanliness (no Markdown corruption)
+      5. TCP port connectivity to the VPN server
+    """
+    result = await session.execute(select(VpnKey).where(VpnKey.id == key_id))
+    key = result.scalar_one_or_none()
+    if key is None:
+        return JSONResponse({"ok": False, "error": "Key not found"}, status_code=404)
+
+    from app.services.watchdog import check_key_health
+    health = await check_key_health(key, session)
+
+    # Determine overall status
+    all_ok = (
+        health["tcp_ok"] is True
+        and health["params_ok"]
+        and health["sni_clean"] is not False
+    )
+
+    return JSONResponse({
+        "ok": all_ok,
+        "key_id": key_id,
+        "key_username": key.outline_key_id,
+        "server_id": key.server_id,
+        "host": health.get("host"),
+        "port": health.get("port"),
+        "tcp_ok": health["tcp_ok"],
+        "params_ok": health["params_ok"],
+        "sni_clean": health["sni_clean"],
+        "issues": health["issues"],
+        "url_preview": health["url_preview"],
+        "status": "OK" if all_ok else ("WARNING" if not health["issues"] else "FAIL"),
+    })

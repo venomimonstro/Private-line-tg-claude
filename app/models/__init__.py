@@ -20,6 +20,7 @@ from app.models.promo_code import PromoCode
 from app.models.app_setting import AppSetting
 from app.models.referral_transaction import ReferralTransaction
 from app.models.withdrawal_request import WithdrawalRequest
+from app.models.release import Release
 
 __all__ = [
     "User",
@@ -45,4 +46,5 @@ __all__ = [
     "AppSetting",
     "ReferralTransaction",
     "WithdrawalRequest",
+    "Release",
 ]

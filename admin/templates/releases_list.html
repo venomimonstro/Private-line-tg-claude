@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="mb-3 d-flex gap-2 align-items-center">
+  <button class="btn btn-outline-primary" onclick="createManualRelease()" title="Зарегистрировать текущий git-коммит как новый релиз">
+    <i class="bi bi-plus-circle me-1"></i>Зарегистрировать текущий коммит
+  </button>
+  <small class="text-muted">Используйте <code>./release.sh</code> на сервере для полного деплоя с валидацией</small>
+</div>
+
+{% if detail %}
+<!-- ── Single release detail ── -->
+<div class="card mb-4">
+  <div class="card-header fw-semibold d-flex align-items-center gap-2">
+    <span>Релиз #{{ detail.id }} — {{ detail.version }}</span>
+    {% if detail.is_current %}<span class="badge bg-success">ТЕКУЩИЙ</span>{% endif %}
+    {% set s = detail.status %}
+    <span class="badge {% if s == 'success' %}bg-success{% elif s in ('failed', 'rolled_back') %}bg-danger{% elif s == 'deploying' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ s }}</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <table class="table table-sm">
+          <tr><th>Коммит</th><td><code>{{ detail.commit_hash or '—' }}</code></td></tr>
+          <tr><th>Предыдущий</th><td><code>{{ detail.previous_commit or '—' }}</code></td></tr>
+          <tr><th>Запущен</th><td>{{ detail.triggered_by or '—' }}</td></tr>
+          <tr><th>Создан</th><td>{{ detail.created_at.strftime('%d.%m.%Y %H:%M:%S') if detail.created_at else '—' }}</td></tr>
+          <tr><th>Задеплоен</th><td>{{ detail.deployed_at.strftime('%d.%m.%Y %H:%M:%S') if detail.deployed_at else '—' }}</td></tr>
+          <tr><th>Откат</th><td>{{ detail.rolled_back_at.strftime('%d.%m.%Y %H:%M:%S') if detail.rolled_back_at else '—' }}</td></tr>
+        </table>
+      </div>
+      <div class="col-md-6">
+        {% if detail.error_message %}
+        <div class="alert alert-danger">
+          <strong>Ошибка:</strong><br><pre class="mb-0" style="font-size:.85em;white-space:pre-wrap">{{ detail.error_message }}</pre>
+        </div>
+        {% endif %}
+        {% if detail.status == 'success' and detail.previous_commit %}
+        <div class="alert alert-warning">
+          <strong>Откат на сервере:</strong>
+          <pre class="mb-1 mt-2 p-2 bg-dark text-white rounded" style="font-size:.85em">./release.sh --rollback {{ detail.id }}</pre>
+          <small>Этот коммит: <code>{{ detail.previous_commit[:7] }}</code></small>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% if detail.changelog %}
+    <h6>Changelog</h6>
+    <pre class="p-2 bg-light rounded" style="font-size:.85em;white-space:pre-wrap">{{ detail.changelog }}</pre>
+    {% endif %}
+    {% if detail.deploy_log %}
+    <h6>Deploy log</h6>
+    <pre class="p-2 bg-light rounded" style="font-size:.8em;max-height:300px;overflow-y:auto;white-space:pre-wrap">{{ detail.deploy_log }}</pre>
+    {% endif %}
+    {% if detail.validation_log %}
+    <h6>Validation log</h6>
+    <pre class="p-2 bg-light rounded" style="font-size:.8em;max-height:200px;overflow-y:auto;white-space:pre-wrap">{{ detail.validation_log }}</pre>
+    {% endif %}
+  </div>
+</div>
+<p><a href="/admin/releases">&larr; Все релизы</a></p>
+{% endif %}
+
+{% if not detail %}
+<!-- ── Releases list ── -->
+<div class="card mb-4">
+  <div class="card-header fw-semibold">Инструкции по деплою</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <h6 class="text-success"><i class="bi bi-play-circle me-1"></i>Деплой нового кода</h6>
+        <pre class="p-2 bg-dark text-white rounded" style="font-size:.85em"># На сервере:
+./release.sh                    # текущая ветка
+./release.sh --branch main      # конкретная ветка</pre>
+        <p class="small text-muted mb-0">Скрипт: валидирует синтаксис → бэкап → git pull → миграции → restart → health check → авто-откат при ошибке</p>
+      </div>
+      <div class="col-md-6">
+        <h6 class="text-danger"><i class="bi bi-arrow-counterclockwise me-1"></i>Откат к предыдущей версии</h6>
+        <pre class="p-2 bg-dark text-white rounded" style="font-size:.85em"># Откат к конкретному релизу:
+./release.sh --rollback &lt;id&gt;
+
+# Просмотр истории:
+./release.sh --list</pre>
+        <p class="small text-muted mb-0">Откат: checkout предыдущего коммита → restart → health check</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header fw-semibold">История релизов</div>
+  <div class="table-responsive">
+  <table class="table table-hover mb-0 align-middle">
+    <thead class="table-light">
+      <tr>
+        <th>#</th>
+        <th>Версия</th>
+        <th>Статус</th>
+        <th>Коммит</th>
+        <th>Предыдущий</th>
+        <th>Запущен</th>
+        <th>Дата деплоя</th>
+        <th>Changelog</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in releases %}
+    <tr {% if r.is_current %}class="table-success"{% elif r.status == 'failed' %}class="table-danger"{% elif r.status == 'rolled_back' %}class="table-warning"{% endif %}>
+      <td>
+        {{ r.id }}
+        {% if r.is_current %}<span class="badge bg-success ms-1">current</span>{% endif %}
+      </td>
+      <td>
+        <a href="/admin/releases/{{ r.id }}" class="fw-semibold text-decoration-none">{{ r.version }}</a>
+      </td>
+      <td>
+        {% set s = r.status %}
+        <span class="badge {% if s == 'success' %}bg-success{% elif s in ('failed',) %}bg-danger{% elif s == 'rolled_back' %}bg-warning text-dark{% elif s == 'deploying' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+          {{ s }}
+        </span>
+      </td>
+      <td><code style="font-size:.8em">{{ (r.commit_hash or '')[:7] or '—' }}</code></td>
+      <td><code style="font-size:.8em">{{ (r.previous_commit or '')[:7] or '—' }}</code></td>
+      <td><small>{{ r.triggered_by or '—' }}</small></td>
+      <td><small>{{ r.deployed_at.strftime('%d.%m %H:%M') if r.deployed_at else (r.created_at.strftime('%d.%m %H:%M') if r.created_at else '—') }}</small></td>
+      <td style="max-width:280px">
+        <small class="text-muted" style="white-space:pre-line;font-size:.8em">{{ (r.changelog or '')[:200] }}</small>
+      </td>
+      <td class="d-flex gap-1 flex-wrap">
+        <a href="/admin/releases/{{ r.id }}" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-info-circle"></i>
+        </a>
+        {% if r.status == 'success' and r.previous_commit and not r.is_current %}
+        <button class="btn btn-sm btn-outline-danger" onclick="showRollbackCmd({{ r.id }}, '{{ (r.previous_commit or '')[:7] }}')">
+          <i class="bi bi-arrow-counterclockwise"></i> Откат
+        </button>
+        {% endif %}
+        {% if not r.is_current %}
+        <form method="post" action="/admin/releases/{{ r.id }}/mark-current"
+              onsubmit="return confirm('Отметить релиз #{{ r.id }} как текущий?')">
+          <button class="btn btn-sm btn-outline-success"><i class="bi bi-check2-circle"></i></button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="text-center text-muted py-5">
+      Релизов пока нет. Нажмите «Зарегистрировать текущий коммит» или запустите <code>./release.sh</code> на сервере.
+    </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Rollback modal -->
+<div class="modal fade" id="rollbackModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2"></i>Откат релиза</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Выполните на сервере:</p>
+        <pre id="rollbackCmd" class="p-3 bg-dark text-white rounded" style="font-size:.9em"></pre>
+        <p class="text-muted small">Скрипт автоматически создаст бэкап, откатит код и проверит здоровье системы.</p>
+        <div class="alert alert-warning mb-0">
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          <strong>Откат схемы БД:</strong> Если в откатываемом релизе были DB-миграции,
+          после отката возможны проблемы со схемой. Восстановите бэкап вручную при необходимости.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showRollbackCmd(releaseId, prevCommit) {
+    document.getElementById('rollbackCmd').textContent =
+        `./release.sh --rollback ${releaseId}   # → commit ${prevCommit}`;
+    new bootstrap.Modal(document.getElementById('rollbackModal')).show();
+}
+
+function createManualRelease() {
+    if (!confirm('Зарегистрировать текущий git-коммит как новый релиз в истории?')) return;
+    fetch('/admin/releases/create-manual', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                alert(`Релиз #${d.release_id} создан: ${d.version}`);
+                location.reload();
+            } else {
+                alert('Ошибка: ' + (d.error || 'unknown'));
+            }
+        })
+        .catch(e => alert('Ошибка: ' + e));
+}
+</script>
+{% endblock %}

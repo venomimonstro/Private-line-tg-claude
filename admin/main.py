@@ -29,6 +29,7 @@ from admin.routes import (
     promo_codes,
     referrals,
     refund_requests,
+    releases,
     servers,
     subscriptions,
     tariffs,
@@ -119,6 +120,7 @@ app.include_router(analytics.router)
 app.include_router(load_analytics.router)
 app.include_router(health.router)
 app.include_router(backups.router)
+app.include_router(releases.router)
 app.include_router(updates.router)
 app.include_router(filtering.router)
 app.include_router(abuse.router)

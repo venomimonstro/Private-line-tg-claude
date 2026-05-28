@@ -142,6 +142,21 @@ async def _job_verify_pending_payments() -> None:
         await verify_pending_payments(session)
 
 
+async def _job_subscription_watchdog() -> None:
+    """Ensure every active subscription has a working VPN key. Auto-recover if not."""
+    logger.info("Running: subscription_watchdog")
+    from app.services.watchdog import run_subscription_watchdog
+    async with async_session_maker() as session:
+        results = await run_subscription_watchdog(session)
+    if results["missing_key"] > 0:
+        logger.warning(
+            "watchdog: %d missing, %d recovered, %d failed",
+            results["missing_key"], results["recovered"], results["recovery_failed"],
+        )
+    else:
+        logger.info("watchdog: all %d subscriptions OK", results["checked"])
+
+
 async def _job_process_pending_operations() -> None:
     logger.info("Running: process_pending_operations")
     try:
@@ -230,6 +245,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_check_traffic_limits, "interval", hours=4)
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
+    scheduler.add_job(_job_subscription_watchdog, "interval", minutes=30, jitter=60)
     # Repair Marzban users with wrong inbounds immediately on startup, then every 6h.
     # This fixes keys created while inbound detection was broken.
     scheduler.add_job(
