@@ -33,6 +33,7 @@ from admin.routes import (
     servers,
     subscriptions,
     tariffs,
+    tickets,
     updates,
     users,
     vpn_keys,
@@ -116,6 +117,7 @@ app.include_router(tariffs.router)
 app.include_router(referrals.router)
 app.include_router(withdrawals.router)
 app.include_router(refund_requests.router)
+app.include_router(tickets.router)
 app.include_router(analytics.router)
 app.include_router(load_analytics.router)
 app.include_router(health.router)

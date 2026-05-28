@@ -57,6 +57,12 @@ class UpdateStatus(str, Enum):
     rollback_failed = "rollback_failed"
 
 
+class TicketStatus(str, Enum):
+    open = "open"
+    answered = "answered"
+    closed = "closed"
+
+
 class BackupType(str, Enum):
     pre_update = "pre_update"
     daily = "daily"

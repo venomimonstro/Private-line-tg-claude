@@ -726,17 +726,63 @@ async def portal_command(
             "Нажмите «🆘 Поддержка» — ответим в Telegram-боте."
         )})
 
-    # ── 🆘 Поддержка ─────────────────────────────────────────────────────────
+    # ── 🆘 Поддержка — показать форму ────────────────────────────────────────
     elif cmd == "support":
+        # Show open tickets if any
+        from app.models.ticket import Ticket
+        from app.enums import TicketStatus as _TS
+        open_r = await session.execute(
+            select(Ticket)
+            .where(Ticket.user_id == user.id, Ticket.status != _TS.closed)
+            .order_by(Ticket.updated_at.desc()).limit(3)
+        )
+        open_tickets = open_r.scalars().all()
+        tickets_html = ""
+        if open_tickets:
+            tickets_html = "<br><b>Ваши активные тикеты:</b><br>"
+            for t in open_tickets:
+                badge = "🟡" if t.status == _TS.open else "🟢"
+                tickets_html += f"{badge} Тикет #{t.id} — {t.created_at.strftime('%d.%m.%Y')}<br>"
+        return JSONResponse({
+            "type": "support_form",
+            "html": (
+                "<b>🆘 Поддержка</b><br><br>"
+                "Опишите вашу проблему или вопрос — мы ответим здесь же в чате."
+                + tickets_html
+            ),
+        })
+
+    # ── 🆘 Поддержка — отправить сообщение ───────────────────────────────────
+    elif cmd == "support_submit":
+        from app.models.ticket import Ticket
+        from app.models.ticket_message import TicketMessage
+        from app.enums import TicketStatus as _TS
         from app.services.notification import notify_admin
+
+        msg_text = body.get("text", "").strip()
+        if not msg_text:
+            return JSONResponse({"text": "Введите сообщение."})
+
+        now = datetime.utcnow()
+        ticket = Ticket(user_id=user.id, status=_TS.open, created_at=now, updated_at=now)
+        session.add(ticket)
+        await session.flush()
+        tmsg = TicketMessage(ticket_id=ticket.id, author_type="user", text=msg_text, created_at=now)
+        session.add(tmsg)
+        await session.commit()
+        ticket_id = ticket.id
+
+        name = user.first_name or user.username or f"ID:{user.id}"
+        tg_ref = f"@{user.username}" if user.username else str(user.telegram_id)
         try:
-            name = user.first_name or user.username or f"ID:{user.id}"
             await notify_admin(
-                f"🆘 Поддержка из веб-портала\n"
-                f"Пользователь: {name} (id={user.id}, tg={user.telegram_id})"
+                f"🆘 <b>Новый тикет #{ticket_id}</b> (веб-портал)\n"
+                f"Пользователь: {name} ({tg_ref})\n\n{msg_text[:500]}"
             )
         except Exception:
             pass
-        return JSONResponse({"text": "✅ Запрос отправлен. Ожидайте ответа в Telegram-боте."})
+        return JSONResponse({
+            "text": f"✅ Тикет #{ticket_id} создан.\n\nМы ответим вам здесь — обновите страницу через некоторое время."
+        })
 
     return JSONResponse({"text": "Неизвестная команда."})

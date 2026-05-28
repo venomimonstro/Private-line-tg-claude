@@ -139,7 +139,8 @@ const CMD_LABELS = {
   access:'🔑 Мой доступ', pay:'💳 Купить доступ', trial:'🆓 Пробный период',
   guide:'📱 Как подключиться', traffic:'📊 Проверить лимит', payments:'💳 Мои платежи',
   referral:'👥 Пригласить друга', reissue:'🔄 Новый ключ', rules:'📋 Правила',
-  help:'❓ Помощь', support:'🆘 Поддержка', reissue_confirm:'✅ Да, обновить', cancel:'← Отмена',
+  help:'❓ Помощь', support:'🆘 Поддержка', support_submit:'📨 Отправить запрос',
+  reissue_confirm:'✅ Да, обновить', cancel:'← Отмена',
   key:'🔑 Мой ключ', status:'📊 Статус',
 };
 
@@ -169,16 +170,19 @@ function setBtns(disabled){
   document.querySelectorAll('.cmd-btn').forEach(b=>b.disabled=disabled);
 }
 
-function sendCmd(cmd){
+function sendCmd(cmd, extra){
   addMsg('user', esc(CMD_LABELS[cmd]||cmd));
   setBtns(true);
   const typing=addTyping();
-  fetch(CMD_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})})
+  const payload=Object.assign({cmd}, extra||{});
+  fetch(CMD_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
     .then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); })
     .then(d=>{ typing.remove(); renderResp(d); })
     .catch(()=>{ typing.remove(); addMsg('bot','❌ Ошибка соединения. Попробуйте снова.'); })
     .finally(()=>setBtns(false));
 }
+
+let _supportFormId = 0;
 
 function renderResp(d){
   const id='m'+(++_uid);
@@ -189,6 +193,17 @@ function renderResp(d){
     html+='<div class="copy-hint" id="ch'+kid+'">Нажмите чтобы скопировать</div>';
     const el=addMsg('bot',html);
     el.querySelector('#'+kid).addEventListener('click',()=>copyKey(kid,d.key));
+  } else if(d.type==='support_form'){
+    const fid='sf'+(++_supportFormId);
+    let html=(d.html||'')+'<br>';
+    html+='<textarea id="'+fid+'" style="width:100%;margin-top:.5rem;padding:.4rem .6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-base);font-size:.85rem;resize:vertical" rows="3" placeholder="Ваше сообщение..."></textarea>';
+    html+='<div style="margin-top:.4rem"><span class="action-btn primary" data-fid="'+fid+'">📨 Отправить</span></div>';
+    const el=addMsg('bot',html);
+    el.querySelector('[data-fid]').addEventListener('click',function(){
+      const ta=document.getElementById(fid);
+      if(!ta||!ta.value.trim()) return;
+      sendCmd('support_submit',{text:ta.value.trim()});
+    });
   } else if(d.buttons && d.buttons.length){
     let html=d.html||(d.text?esc(d.text).replace(/\n/g,'<br>'):'');
     html+='<div style="margin-top:.5rem">';
