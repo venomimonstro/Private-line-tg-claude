@@ -32,15 +32,20 @@ async def tickets_list(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    q = select(Ticket).options(selectinload(Ticket.user))
-
+    base_q = select(Ticket)
     if status_filter:
-        q = q.where(Ticket.status == status_filter)
+        base_q = base_q.where(Ticket.status == status_filter)
 
-    total_result = await session.execute(select(func.count()).select_from(q.subquery()))
+    total_result = await session.execute(select(func.count()).select_from(base_q.subquery()))
     total = total_result.scalar_one()
 
-    q = q.order_by(Ticket.updated_at.desc()).offset((page - 1) * _PAGE_SIZE).limit(_PAGE_SIZE)
+    q = (
+        base_q
+        .options(selectinload(Ticket.user), selectinload(Ticket.messages))
+        .order_by(Ticket.updated_at.desc())
+        .offset((page - 1) * _PAGE_SIZE)
+        .limit(_PAGE_SIZE)
+    )
     result = await session.execute(q)
     tickets = result.scalars().all()
 
