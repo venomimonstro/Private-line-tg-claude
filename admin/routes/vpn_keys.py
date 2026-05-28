@@ -324,10 +324,30 @@ async def diagnose_keys(
             "reality_sni": None,
             "inbounds_api_raw": None,
             "test_user": None,
+            "tcp_443_ok": None,   # True/False/None
+            "tcp_443_error": None,
         }
         client: MarzbanClient | None = None
         try:
             client = _make_marzban_client(server)
+
+            # 0. TCP connect test to VPN port (443) — checks if XRay is up
+            import asyncio as _asyncio
+            import re as _re_host
+            _m = _re_host.match(r'https?://([^:/]+)', server.api_url)
+            _vpn_host = _m.group(1) if _m else None
+            if _vpn_host:
+                try:
+                    _conn = await _asyncio.wait_for(
+                        _asyncio.open_connection(_vpn_host, 443),
+                        timeout=5.0,
+                    )
+                    _conn[1].close()
+                    diag["tcp_443_ok"] = True
+                except Exception as tcp_exc:
+                    diag["tcp_443_ok"] = False
+                    diag["tcp_443_error"] = str(tcp_exc)
+
             # 1. Test auth
             try:
                 await client._auth()
@@ -435,6 +455,7 @@ async def diagnose_keys(
 
         key_diags.append({
             "key": key,
+            "url_full": url,
             "url_preview": url[:80],
             "is_vless": url.startswith("vless://"),
             "has_reality": "security=reality" in url,
@@ -463,13 +484,27 @@ async def diagnose_keys(
         sni_display = _esc(d["reality_sni"] or "—")
         inb_api = _esc(d["inbounds_api_raw"] or "—")
 
+        tcp_cell = (
+            '<span style="color:green;font-weight:bold">OPEN ✓</span>'
+            if d["tcp_443_ok"] is True
+            else (
+                f'<span style="color:red;font-weight:bold">CLOSED ✗</span>'
+                f'<br><small>{_esc(d["tcp_443_error"] or "")}</small>'
+                if d["tcp_443_ok"] is False
+                else '<span style="color:gray">N/A</span>'
+            )
+        )
+
         test_user_html = ""
         tu = d.get("test_user")
         if tu:
             if "error" in tu:
                 test_user_html = f'<span style="color:red">{_esc(tu["error"])}</span>'
             else:
-                links_html = "<br>".join(_esc(lnk) for lnk in tu.get("links", []))
+                links_html = "<br>".join(
+                    f'<code style="font-size:0.75em;word-break:break-all">{_esc(lnk)}</code>'
+                    for lnk in tu.get("links", [])
+                )
                 test_user_html = (
                     f'<strong>{_esc(tu.get("username",""))}</strong> '
                     f'({_esc(tu.get("status",""))})<br>'
@@ -482,6 +517,7 @@ async def diagnose_keys(
           <td>{srv.id}</td>
           <td>{_esc(srv.name)}</td>
           <td>{_esc(srv.api_url)}</td>
+          <td>{tcp_cell}</td>
           <td>{auth_cell}</td>
           <td style="font-size:0.8em">{vless_tags}</td>
           <td style="font-size:0.8em;word-break:break-all">{pbk_display}</td>
@@ -512,7 +548,7 @@ async def diagnose_keys(
           <td>{key.id}</td>
           <td>{_esc(key.outline_key_id)}</td>
           <td>{key.server_id}</td>
-          <td style="font-size:0.8em;word-break:break-all">{_esc(kd["url_preview"])}…</td>
+          <td style="font-size:0.75em;word-break:break-all;max-width:320px"><code>{_esc(kd["url_full"])}</code></td>
           <td>{ok_icon(kd["is_vless"])}</td>
           <td>{ok_icon(kd["has_reality"])}</td>
           <td>{ok_icon(kd["has_pbk"])}</td>
@@ -557,13 +593,15 @@ async def diagnose_keys(
 <table>
   <thead>
     <tr>
-      <th>ID</th><th>Name</th><th>API URL</th><th>Auth</th>
+      <th>ID</th><th>Name</th><th>API URL</th>
+      <th style="background:#ffeeee">PORT 443 TCP</th>
+      <th>Marzban Auth</th>
       <th>VLESS Inbounds (tag:port)</th>
       <th>Reality pubkey</th>
       <th>shortIds count</th>
       <th>SNI</th>
       <th>/api/inbounds response</th>
-      <th>Test user (first active)</th>
+      <th>Test user (first active) — FULL LINK</th>
     </tr>
   </thead>
   <tbody>{rows_server}</tbody>
@@ -576,7 +614,7 @@ async def diagnose_keys(
       <th>key.id</th>
       <th>marzban_username</th>
       <th>server_id</th>
-      <th>URL (first 80 chars)</th>
+      <th style="background:#fff8dc">FULL URL IN DB</th>
       <th>vless://</th>
       <th>security=reality</th>
       <th>pbk=</th>
