@@ -61,6 +61,15 @@ async def process_pending_operations(session: AsyncSession) -> int:
             op.completed_at = datetime.utcnow()
             processed += 1
             logger.info("Pending operation %d completed successfully", op.id)
+        except ValueError as exc:
+            # Permanent logic errors (missing fields, unknown type) — don't retry
+            op.attempts = op.max_attempts  # exhaust retries immediately
+            op.last_error = str(exc)[:500]
+            op.completed_at = datetime.utcnow()  # mark done so it stops appearing
+            logger.error(
+                "Pending operation %d permanently failed (non-retryable): %s",
+                op.id, exc,
+            )
         except Exception as exc:
             op.attempts += 1
             op.last_error = str(exc)[:500]
@@ -75,7 +84,7 @@ async def process_pending_operations(session: AsyncSession) -> int:
                 backoff_minutes,
             )
 
-    await session.flush()
+    await session.commit()
     return processed
 
 
