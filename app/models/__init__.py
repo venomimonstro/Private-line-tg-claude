@@ -21,6 +21,8 @@ from app.models.app_setting import AppSetting
 from app.models.referral_transaction import ReferralTransaction
 from app.models.withdrawal_request import WithdrawalRequest
 from app.models.release import Release
+from app.models.ticket import Ticket
+from app.models.ticket_message import TicketMessage
 
 __all__ = [
     "User",
@@ -47,4 +49,6 @@ __all__ = [
     "ReferralTransaction",
     "WithdrawalRequest",
     "Release",
+    "Ticket",
+    "TicketMessage",
 ]

@@ -726,33 +726,44 @@ async def portal_command(
             "Нажмите «🆘 Поддержка» — ответим в Telegram-боте."
         )})
 
-    # ── 🆘 Поддержка — показать форму ────────────────────────────────────────
+    # ── 🆘 Поддержка — ссылка на бот поддержки ───────────────────────────────
     elif cmd == "support":
-        # Show open tickets if any
+        bot_url = _bot_url()
+        buttons = []
+        if bot_url:
+            buttons.append({"label": "💬 Написать в поддержку", "url": bot_url})
+        return JSONResponse({
+            "text": "🆘 Поддержка\n\nЕсли у вас возникли вопросы — напишите нам в Telegram-бот.",
+            "buttons": buttons,
+        })
+
+    # ── 🎫 Тикеты — показать список и форму ──────────────────────────────────
+    elif cmd == "tickets":
         from app.models.ticket import Ticket
         from app.enums import TicketStatus as _TS
-        open_r = await session.execute(
+        t_r = await session.execute(
             select(Ticket)
-            .where(Ticket.user_id == user.id, Ticket.status != _TS.closed)
-            .order_by(Ticket.updated_at.desc()).limit(3)
+            .where(Ticket.user_id == user.id)
+            .order_by(Ticket.updated_at.desc()).limit(5)
         )
-        open_tickets = open_r.scalars().all()
+        user_tickets = t_r.scalars().all()
         tickets_html = ""
-        if open_tickets:
-            tickets_html = "<br><b>Ваши активные тикеты:</b><br>"
-            for t in open_tickets:
-                badge = "🟡" if t.status == _TS.open else "🟢"
-                tickets_html += f"{badge} Тикет #{t.id} — {t.created_at.strftime('%d.%m.%Y')}<br>"
+        if user_tickets:
+            tickets_html = "<b>Ваши обращения:</b><br>"
+            for t in user_tickets:
+                icon = {"open": "🟡", "answered": "🟢", "closed": "⚫"}.get(t.status.value, "•")
+                tickets_html += f"{icon} #{t.id} — {t.created_at.strftime('%d.%m.%Y')}<br>"
+            tickets_html += "<br>"
         return JSONResponse({
             "type": "support_form",
             "html": (
-                "<b>🆘 Поддержка</b><br><br>"
-                "Опишите вашу проблему или вопрос — мы ответим здесь же в чате."
+                "<b>🎫 Тикеты</b><br><br>"
                 + tickets_html
+                + "Опишите вашу проблему — ответ придёт сюда и в Telegram-бот."
             ),
         })
 
-    # ── 🆘 Поддержка — отправить сообщение ───────────────────────────────────
+    # ── 🎫 Тикеты — отправить сообщение ──────────────────────────────────────
     elif cmd == "support_submit":
         from app.models.ticket import Ticket
         from app.models.ticket_message import TicketMessage
@@ -776,13 +787,13 @@ async def portal_command(
         tg_ref = f"@{user.username}" if user.username else str(user.telegram_id)
         try:
             await notify_admin(
-                f"🆘 <b>Новый тикет #{ticket_id}</b> (веб-портал)\n"
+                f"🎫 <b>Новый тикет #{ticket_id}</b> (веб-портал)\n"
                 f"Пользователь: {name} ({tg_ref})\n\n{msg_text[:500]}"
             )
         except Exception:
             pass
         return JSONResponse({
-            "text": f"✅ Тикет #{ticket_id} создан.\n\nМы ответим вам здесь — обновите страницу через некоторое время."
+            "text": f"✅ Тикет #{ticket_id} создан.\n\nМы ответим вам здесь и в Telegram-боте."
         })
 
     return JSONResponse({"text": "Неизвестная команда."})
