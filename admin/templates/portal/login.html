@@ -1,0 +1,47 @@
+{% extends "portal/base.html" %}
+{% block title %}Войти — Private X Line{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6 col-lg-4">
+
+    <div class="text-center mb-4">
+      <div class="mb-3" style="font-size:2.5rem;line-height:1">🔐</div>
+      <h4 class="fw-bold mb-1">Войти в личный кабинет</h4>
+      <p class="text-muted mb-0" style="font-size:.9rem">
+        Введите email, указанный при покупке
+      </p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-danger mb-3">{{ error }}</div>
+    {% endif %}
+
+    <div class="card p-4">
+      <form method="post" action="/portal/login">
+        <div class="mb-4">
+          <label class="form-label" for="f-email">Email</label>
+          <input type="email" id="f-email" name="email" class="form-control"
+                 required placeholder="your@email.com"
+                 value="{{ email or '' }}"
+                 autocomplete="email">
+          <div class="form-text">Email, который вы указывали при оформлении</div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100 py-2" style="font-size:.95rem">
+          <i class="bi bi-box-arrow-in-right me-2"></i>Войти
+        </button>
+      </form>
+    </div>
+
+    <div class="text-center mt-3" style="font-size:.82rem;color:var(--text-muted)">
+      <a href="/portal/" style="color:var(--text-muted)">← Выбрать тариф</a>
+      {% if bot_url %}
+      &nbsp;&middot;&nbsp;
+      <a href="{{ bot_url }}" target="_blank" rel="noopener" style="color:var(--text-muted)">
+        <i class="bi bi-telegram me-1"></i>Telegram-бот
+      </a>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endblock %}

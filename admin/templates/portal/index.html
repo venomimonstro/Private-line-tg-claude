@@ -6,9 +6,19 @@
   <h1 class="fw-bold mb-2" style="font-size:1.9rem;letter-spacing:-.3px">
     Выберите тариф
   </h1>
-  <p class="text-muted mb-0" style="max-width:440px;margin:0 auto">
-    Мгновенная активация после оплаты. Ключ приходит на почту.
+  <p class="text-muted mb-2" style="max-width:440px;margin:0 auto">
+    Мгновенная активация. Ключ появится прямо в браузере — без ожидания.
   </p>
+  <div style="font-size:.82rem;color:var(--text-dim)">
+    Уже покупали?&nbsp;
+    <a href="/portal/login" style="color:var(--accent-hi)">Войти по email →</a>
+    {% if bot_url %}
+    &nbsp;&middot;&nbsp;
+    <a href="{{ bot_url }}" target="_blank" rel="noopener" style="color:var(--text-muted)">
+      <i class="bi bi-telegram me-1"></i>Telegram-бот
+    </a>
+    {% endif %}
+  </div>
 </div>
 
 <div class="row g-3 justify-content-center">
@@ -70,6 +80,14 @@
   <i class="bi bi-shield-check me-1"></i>Безопасная оплата &nbsp;&middot;&nbsp;
   <i class="bi bi-lightning me-1"></i>Мгновенная активация &nbsp;&middot;&nbsp;
   <i class="bi bi-headset me-1"></i>Поддержка 24/7
+</div>
+{% endif %}
+
+{% if bot_url %}
+<div class="text-center mt-3" style="font-size:.82rem">
+  <a href="{{ bot_url }}" target="_blank" rel="noopener" style="color:var(--text-muted)">
+    <i class="bi bi-telegram me-1"></i>Telegram-бот
+  </a>
 </div>
 {% endif %}
 

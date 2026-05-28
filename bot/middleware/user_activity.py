@@ -56,6 +56,33 @@ class UserActivityMiddleware(BaseMiddleware):
             user = result.scalar_one_or_none()
 
             if user is None:
+                # Check if a web-portal user with matching Telegram username exists — merge
+                if telegram_user.username:
+                    web_result = await session.execute(
+                        select(User).where(
+                            User.username == telegram_user.username,
+                            User.source == "web",
+                        )
+                    )
+                    web_user = web_result.scalar_one_or_none()
+                    if web_user is not None:
+                        # Claim the web account: update telegram_id to the real one
+                        web_user.telegram_id = telegram_user.id
+                        web_user.source = "telegram"
+                        web_user.first_name = telegram_user.first_name or web_user.first_name
+                        web_user.last_name = telegram_user.last_name
+                        web_user.language_code = telegram_user.language_code
+                        web_user.last_activity_at = datetime.utcnow()
+                        await session.commit()
+                        await session.refresh(web_user)
+                        logger.info(
+                            "Merged web user %d with Telegram user %d (@%s)",
+                            web_user.id, telegram_user.id, telegram_user.username,
+                        )
+                        data["db_user"] = web_user
+                        data["db_session"] = session
+                        return await handler(event, data)
+
                 referrer_id: int | None = None
                 cmd = data.get("command")
                 start_args = cmd.args if cmd else None

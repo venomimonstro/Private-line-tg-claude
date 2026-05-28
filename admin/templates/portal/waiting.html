@@ -81,9 +81,23 @@
         </div>
       </div>
 
-      <a href="/portal/" class="btn-outline-portal btn">
-        <i class="bi bi-arrow-left me-1"></i>На главную
-      </a>
+      <div id="portal-link-wrap" style="display:none" class="mb-2">
+        <a id="portal-link" href="#" class="btn btn-primary px-4">
+          <i class="bi bi-person-circle me-2"></i>Личный кабинет
+        </a>
+      </div>
+      {% if bot_url %}
+      <div class="mb-2">
+        <a href="{{ bot_url }}" target="_blank" rel="noopener" class="btn-outline-portal btn">
+          <i class="bi bi-telegram me-1"></i>Открыть Telegram-бот
+        </a>
+      </div>
+      {% endif %}
+      <div class="mt-1">
+        <a href="/portal/" class="btn-outline-portal btn">
+          <i class="bi bi-arrow-left me-1"></i>На главную
+        </a>
+      </div>
     </div>
 
     {# ── Failed state ── #}
@@ -136,6 +150,11 @@ function poll() {
       if (data.status === 'paid') {
         if (data.vpn_key) {
           document.getElementById('vpn-key-display').value = data.vpn_key;
+          if (data.portal_url) {
+            var wrap = document.getElementById('portal-link-wrap');
+            var link = document.getElementById('portal-link');
+            if (wrap && link) { link.href = data.portal_url; wrap.style.display = ''; }
+          }
           setState('success');
         } else {
           setState('activating');

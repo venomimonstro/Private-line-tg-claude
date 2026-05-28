@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import random
+import secrets
 from datetime import datetime
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_async_session
 from app.enums import PaymentStatus, ReferralStatus, SubscriptionStatus, UserStatus
 from app.models.payment import Payment
@@ -38,41 +40,33 @@ _STATUS_LABELS = {
 
 
 def _make_fake_tg_id() -> int:
-    """Synthetic negative telegram_id for web portal users."""
     return -abs(int(hashlib.sha256(str(random.getrandbits(64)).encode()).hexdigest(), 16) % (10 ** 12))
 
 
-async def _attach_referral(
-    user: User,
-    ref: str,
-    session: AsyncSession,
-) -> None:
-    """Look up referrer by username and create Referral + set referrer_id if not already set."""
+def _bot_url() -> str:
+    u = settings.BOT_USERNAME.lstrip("@") if settings.BOT_USERNAME else ""
+    return f"https://t.me/{u}" if u else ""
+
+
+def _portal_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+async def _attach_referral(user: User, ref: str, session: AsyncSession) -> None:
     ref_username = ref.lstrip("@").strip()
     if not ref_username or user.referrer_id is not None:
         return
-
-    referrer_result = await session.execute(
-        select(User).where(User.username == ref_username)
-    )
+    referrer_result = await session.execute(select(User).where(User.username == ref_username))
     referrer = referrer_result.scalar_one_or_none()
     if referrer is None or referrer.id == user.id:
         return
-
-    # Don't create duplicate referral records
-    existing_ref = await session.execute(
-        select(Referral).where(Referral.invited_user_id == user.id)
-    )
+    existing_ref = await session.execute(select(Referral).where(Referral.invited_user_id == user.id))
     if existing_ref.scalar_one_or_none() is not None:
         return
-
     user.referrer_id = referrer.id
     referral = Referral(
-        referrer_id=referrer.id,
-        invited_user_id=user.id,
-        bonus_days_awarded=14,
-        status=ReferralStatus.pending,
-        created_at=datetime.utcnow(),
+        referrer_id=referrer.id, invited_user_id=user.id,
+        bonus_days_awarded=14, status=ReferralStatus.pending, created_at=datetime.utcnow(),
     )
     session.add(referral)
     await session.flush()
@@ -86,13 +80,11 @@ async def portal_index(
     session: AsyncSession = Depends(get_async_session),
 ) -> HTMLResponse:
     result = await session.execute(
-        select(Tariff)
-        .where(Tariff.is_active == True, Tariff.is_visible == True)
-        .order_by(Tariff.sort_order)
+        select(Tariff).where(Tariff.is_active == True, Tariff.is_visible == True).order_by(Tariff.sort_order)
     )
     tariffs = result.scalars().all()
     return templates.TemplateResponse("portal/index.html", {
-        "request": request, "tariffs": tariffs, "ref": ref,
+        "request": request, "tariffs": tariffs, "ref": ref, "bot_url": _bot_url(),
     })
 
 
@@ -109,12 +101,12 @@ async def portal_checkout(
     tariff = result.scalar_one_or_none()
     if tariff is None:
         return templates.TemplateResponse("portal/index.html", {
-            "request": request, "tariffs": [], "ref": "",
+            "request": request, "tariffs": [], "ref": "", "bot_url": _bot_url(),
             "error": "Тариф не найден или недоступен.",
         }, status_code=404)
     return templates.TemplateResponse("portal/checkout.html", {
-        "request": request, "tariff": tariff,
-        "error": None, "prefill_email": None, "ref": ref,
+        "request": request, "tariff": tariff, "bot_url": _bot_url(),
+        "error": None, "prefill_email": None, "prefill_tg": None, "ref": ref,
     })
 
 
@@ -124,6 +116,7 @@ async def portal_start_payment(
     request: Request,
     email: str = Form(...),
     first_name: str = Form(default=""),
+    tg_username: str = Form(default=""),
     ref: str = Form(default=""),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse | HTMLResponse:
@@ -137,11 +130,12 @@ async def portal_start_payment(
         return RedirectResponse("/portal/", status_code=303)
 
     email = email.strip().lower()
+    tg_clean = tg_username.lstrip("@").strip() if tg_username else ""
 
     def checkout_error(msg: str) -> HTMLResponse:
         return templates.TemplateResponse("portal/checkout.html", {
-            "request": request, "tariff": tariff,
-            "error": msg, "prefill_email": email, "ref": ref,
+            "request": request, "tariff": tariff, "bot_url": _bot_url(),
+            "error": msg, "prefill_email": email, "prefill_tg": tg_clean, "ref": ref,
         })
 
     if not email or "@" not in email:
@@ -165,15 +159,24 @@ async def portal_start_payment(
         user = User(
             telegram_id=tg_id,
             email=email,
+            username=tg_clean or None,
             first_name=first_name.strip() or None,
             source="web",
             status=UserStatus.active,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             last_activity_at=datetime.utcnow(),
+            portal_token=_portal_token(),
         )
         session.add(user)
         await session.flush()
+    else:
+        # Update username if provided and not already set
+        if tg_clean and not user.username:
+            user.username = tg_clean
+        # Ensure portal_token exists
+        if not user.portal_token:
+            user.portal_token = _portal_token()
 
     # Attach referral for new web users
     if is_new and ref:
@@ -215,19 +218,19 @@ async def portal_waiting(
         "tariff_name": payment.tariff.name if payment.tariff else "—",
         "amount": payment.amount,
         "currency": payment.currency,
+        "bot_url": _bot_url(),
     })
 
 
 @router.get("/api/status/{payment_id}")
 async def portal_payment_status(
     payment_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> JSONResponse:
     result = await session.execute(
         select(Payment)
-        .options(
-            selectinload(Payment.subscription).selectinload(Subscription.vpn_keys)
-        )
+        .options(selectinload(Payment.subscription).selectinload(Subscription.vpn_keys))
         .where(Payment.id == payment_id)
     )
     payment = result.scalar_one_or_none()
@@ -253,7 +256,7 @@ async def portal_payment_status(
         "status_label": _STATUS_LABELS.get(status_val, status_val),
     }
 
-    # VPN key: check gift recipient sub first, then giver's sub
+    # VPN key + portal URL when paid
     active_sub = gift_sub or payment.subscription
     if status_val == "paid" and active_sub is not None:
         for key in active_sub.vpn_keys:
@@ -263,8 +266,56 @@ async def portal_payment_status(
                 except Exception:
                     pass
                 break
+        # Include portal URL so user can save it
+        user = await session.get(User, payment.user_id)
+        if user is not None:
+            if not user.portal_token:
+                user.portal_token = _portal_token()
+                await session.commit()
+            base = str(request.base_url).rstrip("/")
+            response["portal_url"] = f"{base}/portal/me/{user.portal_token}"
+            response["bot_url"] = _bot_url()
 
     return JSONResponse(response)
+
+
+# ── Login by email (for users who lost their portal link) ─────────────────────
+
+@router.get("/login", response_class=HTMLResponse)
+async def portal_login_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("portal/login.html", {
+        "request": request, "bot_url": _bot_url(), "error": None, "email": "",
+    })
+
+
+@router.post("/login", response_class=HTMLResponse)
+async def portal_login_submit(
+    request: Request,
+    email: str = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+) -> HTMLResponse | RedirectResponse:
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        return templates.TemplateResponse("portal/login.html", {
+            "request": request, "bot_url": _bot_url(),
+            "error": "Введите корректный email.", "email": email,
+        })
+
+    user_result = await session.execute(
+        select(User).where(User.email == email)
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return templates.TemplateResponse("portal/login.html", {
+            "request": request, "bot_url": _bot_url(),
+            "error": "Аккаунт с таким email не найден.", "email": email,
+        })
+
+    if not user.portal_token:
+        user.portal_token = _portal_token()
+        await session.commit()
+
+    return RedirectResponse(f"/portal/me/{user.portal_token}", status_code=303)
 
 
 @router.get("/me/{token}", response_class=HTMLResponse)
