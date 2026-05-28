@@ -139,6 +139,15 @@ class MarzbanClient:
 
     # ─── Reality params ────────────────────────────────────────────────────────
 
+    def _clean_sni(self, raw: str) -> str:
+        """Strip Markdown link formatting from SNI — e.g. [foo](url) → foo."""
+        cleaned = _MARKDOWN_LINK_RE.sub(r"\1", raw).strip()
+        if cleaned != raw:
+            logger.warning(
+                "SNI contained Markdown formatting — cleaned: %r → %r", raw, cleaned
+            )
+        return cleaned
+
     async def get_reality_params(self) -> tuple[str, str, str] | None:
         """Return (public_key, short_id, sni) from the cached XRay config.
 
@@ -175,7 +184,7 @@ class MarzbanClient:
 
                 short_id = next((s for s in short_ids if s), "")
                 raw_sni = server_names[0] if server_names else "www.microsoft.com"
-                sni = _MARKDOWN_LINK_RE.sub(r"\1", raw_sni)
+                sni = self._clean_sni(raw_sni)
 
                 self._reality_cache = (public_key, short_id, sni)
                 return self._reality_cache
@@ -215,7 +224,7 @@ class MarzbanClient:
         qs = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
         qs["security"] = "reality"
         qs["pbk"] = public_key
-        qs["sni"] = sni
+        qs["sni"] = self._clean_sni(sni)  # always sanitize — defence against Markdown in config
         qs["fp"] = "chrome"
         qs["type"] = "tcp"
         qs["flow"] = "xtls-rprx-vision"

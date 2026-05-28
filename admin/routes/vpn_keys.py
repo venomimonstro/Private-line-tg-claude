@@ -781,16 +781,19 @@ async def fix_keys_safe(
                 m = _re2.match(r'https?://([^:/]+)', client._base)
                 host = m.group(1) if m else client._base
 
-                # ── 6. Build fresh VLESS URL ──────────────────────────────
-                new_url = (
-                    f"vless://{uuid}@{host}:{port}"
-                    f"?type=tcp&security=reality"
-                    f"&pbk={public_key}&sni={sni}&fp=chrome"
-                    f"&flow=xtls-rprx-vision"
-                )
+                # ── 6. Build fresh VLESS URL (use urlencode for correct escaping) ──
+                import re as _re3
+                _MD = _re3.compile(r'\[([^\]]+)\]\([^)]*\)')
+                clean_sni = _MD.sub(r"\1", sni).strip()
+                _params = {
+                    "type": "tcp", "security": "reality",
+                    "pbk": public_key, "sni": clean_sni,
+                    "fp": "chrome", "flow": "xtls-rprx-vision",
+                }
                 if short_id:
-                    new_url += f"&sid={short_id}"
-                new_url += f"#{username}"
+                    _params["sid"] = short_id
+                from urllib.parse import urlencode as _ue
+                new_url = f"vless://{uuid}@{host}:{port}?{_ue(_params)}#{username}"
 
                 # ── 7. Update DB (only if changed) ────────────────────────
                 try:
