@@ -144,10 +144,14 @@ class MarzbanClient:
         if not raw:
             return raw
 
-        # Always log repr so we can see exact bytes in production logs
-        logger.warning("_clean_sni input repr: %r (hex: %s)", raw, raw.encode("utf-8").hex())
-
         cleaned = raw.strip()
+
+        # If there are no brackets, the string is already a clean hostname
+        if "[" not in cleaned and "]" not in cleaned:
+            return cleaned
+
+        # Log repr + hex so we can see exact bytes in production when Markdown is present
+        logger.warning("_clean_sni input repr: %r (hex: %s)", raw, raw.encode("utf-8").hex())
 
         # Method 1: standard ASCII Markdown regex [text](url)
         result = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
