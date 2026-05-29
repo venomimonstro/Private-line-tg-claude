@@ -152,10 +152,9 @@ services:
     image: nginx:1.25-alpine
     ports:
       - "80:80"
-      - "443:443"
+      - "29148:29148"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/cloudflare_ips.conf:/etc/nginx/cloudflare_ips.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - nginx_logs:/var/log/nginx
     restart: unless-stopped
