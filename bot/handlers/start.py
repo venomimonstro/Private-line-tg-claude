@@ -38,7 +38,7 @@ async def _build_welcome_text() -> str:
             .where(
                 Tariff.is_active == True,
                 Tariff.is_visible == True,
-                Tariff.trial_days.is_(None),
+                Tariff.price_monthly > 0,
             )
             .order_by(Tariff.price_monthly.asc(), Tariff.sort_order.asc())
         )
