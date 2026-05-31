@@ -7,8 +7,15 @@
              placeholder="Поиск по username, telegram_id, имени..."
              value="{{ q }}">
     </div>
+    <div class="col-auto">
+      <select name="tariff_type" class="form-select" onchange="this.form.submit()">
+        <option value="" {% if not tariff_type %}selected{% endif %}>Все тарифы</option>
+        <option value="trial" {% if tariff_type == 'trial' %}selected{% endif %}>Только пробные</option>
+        <option value="regular" {% if tariff_type == 'regular' %}selected{% endif %}>Только обычные</option>
+      </select>
+    </div>
     <div class="col-auto"><button type="submit" class="btn btn-primary">Поиск</button></div>
-    {% if q %}<div class="col-auto"><a href="/admin/users" class="btn btn-outline-secondary">Сбросить</a></div>{% endif %}
+    {% if q or tariff_type %}<div class="col-auto"><a href="/admin/users" class="btn btn-outline-secondary">Сбросить</a></div>{% endif %}
     <div class="col-auto ms-auto d-flex gap-2">
       <a href="/admin/users/create" class="btn btn-primary">
         <i class="bi bi-person-plus-fill"></i> Создать
@@ -32,12 +39,14 @@
             <th>Username</th>
             <th>Имя</th>
             <th>Статус</th>
+            <th>Тариф</th>
             <th>Создан</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
         {% for user in users %}
+        {% set ti = user_tariff_map.get(user.id) %}
         <tr>
           <td><input type="checkbox" name="user_ids" value="{{ user.id }}" class="row-checkbox"></td>
           <td>{{ user.id }}</td>
@@ -45,11 +54,23 @@
           <td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td>
           <td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td>
           <td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td>
+          <td>
+            {% if ti %}
+              {% if ti.is_trial %}
+                <span class="badge bg-warning text-dark">Пробный</span>
+              {% else %}
+                <span class="badge bg-primary">Обычный</span>
+              {% endif %}
+              <small class="text-muted ms-1">{{ ti.slug }}</small>
+            {% else %}
+              <span class="text-muted">&mdash;</span>
+            {% endif %}
+          </td>
           <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
           <td><a href="/admin/users/{{ user.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="text-center text-muted py-4">Пользователи не найдены</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-4">Пользователи не найдены</td></tr>
         {% endfor %}
         </tbody>
       </table>

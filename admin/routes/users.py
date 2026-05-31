@@ -34,6 +34,7 @@ async def list_users(
     page: int = 1,
     q: str = "",
     search: str = "",  # legacy alias kept for backward compat
+    tariff_type: str = "",  # "trial" | "regular" | ""
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
@@ -50,6 +51,18 @@ async def list_users(
             )
         )
 
+    # Filter by trial/regular tariff
+    if tariff_type in ("trial", "regular"):
+        active_statuses = [SubscriptionStatus.active.value, SubscriptionStatus.expires_soon.value]
+        trial_filter = Tariff.trial_days.isnot(None) if tariff_type == "trial" else Tariff.trial_days.is_(None)
+        sub_sq = (
+            select(Subscription.user_id)
+            .join(Tariff, Subscription.tariff_id == Tariff.id)
+            .where(Subscription.status.in_(active_statuses), trial_filter)
+            .subquery()
+        )
+        query = query.where(User.id.in_(select(sub_sq)))
+
     total_result = await session.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar_one() or 0
 
@@ -57,10 +70,34 @@ async def list_users(
     result = await session.execute(query.order_by(User.created_at.desc()).offset(offset).limit(_PAGE_SIZE))
     users = result.scalars().all()
 
+    # Load active tariff info for the current page's users
+    user_ids = [u.id for u in users]
+    user_tariff_map: dict[int, dict] = {}
+    if user_ids:
+        active_statuses = [SubscriptionStatus.active.value, SubscriptionStatus.expires_soon.value]
+        subs_result = await session.execute(
+            select(Subscription, Tariff)
+            .join(Tariff, Subscription.tariff_id == Tariff.id)
+            .where(
+                Subscription.user_id.in_(user_ids),
+                Subscription.status.in_(active_statuses),
+            )
+            .order_by(Subscription.expires_at.desc())
+        )
+        for sub, tariff in subs_result.all():
+            if sub.user_id not in user_tariff_map:
+                user_tariff_map[sub.user_id] = {
+                    "name": tariff.name,
+                    "slug": tariff.slug,
+                    "is_trial": tariff.trial_days is not None,
+                }
+
     return templates.TemplateResponse("users_list.html", {
         "request": request, "admin": admin, "users": users,
         "page": page, "total": total, "page_size": _PAGE_SIZE,
-        "q": effective_q, "search": effective_q,  # pass both for templates
+        "q": effective_q, "search": effective_q,
+        "tariff_type": tariff_type,
+        "user_tariff_map": user_tariff_map,
         "page_title": "Пользователи",
     })
 

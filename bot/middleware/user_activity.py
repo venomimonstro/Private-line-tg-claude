@@ -9,7 +9,8 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from app.database import async_session_maker
-from app.enums import UserStatus
+from app.enums import ReferralStatus, UserStatus
+from app.models.referral import Referral
 from app.models.user import User
 from sqlalchemy import select
 
@@ -108,6 +109,15 @@ class UserActivityMiddleware(BaseMiddleware):
                     referrer_id=referrer_id,
                 )
                 session.add(user)
+                await session.flush()  # get user.id before commit
+
+                if referrer_id is not None and referrer_id != user.id:
+                    session.add(Referral(
+                        referrer_id=referrer_id,
+                        invited_user_id=user.id,
+                        status=ReferralStatus.pending,
+                    ))
+
                 await session.commit()
                 await session.refresh(user)
             else:

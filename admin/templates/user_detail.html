@@ -9,6 +9,22 @@
         <tr><td>Username</td><td>{% if user.username %}@{{ user.username }}{% else %}&mdash;{% endif %}</td></tr>
         <tr><td>Имя</td><td>{{ user.first_name or '' }} {{ user.last_name or '' }}</td></tr>
         <tr><td>Статус</td><td><span class="badge {% if user.status.value == 'active' %}bg-success{% elif user.status.value == 'blocked' %}bg-danger{% else %}bg-secondary{% endif %}">{{ user.status.value }}</span></td></tr>
+        {% for sub in user.subscriptions if sub.status.value in ['active', 'expires_soon'] %}{% if loop.first %}
+        <tr>
+          <td>Тариф</td>
+          <td>
+            {% if sub.tariff %}
+              {{ sub.tariff.name }}
+              {% if sub.tariff.trial_days %}
+                <span class="badge bg-warning text-dark ms-1">Пробный</span>
+              {% else %}
+                <span class="badge bg-primary ms-1">Обычный</span>
+              {% endif %}
+              <small class="text-muted">({{ sub.tariff.slug }})</small>
+            {% else %}&mdash;{% endif %}
+          </td>
+        </tr>
+        {% endif %}{% endfor %}
         <tr><td>Зарегистрирован</td><td>{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
         <tr><td>Последняя активность</td><td>{{ user.last_activity_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
         <tr><td>Принял правила</td><td>{% if user.rules_accepted_at %}{{ user.rules_accepted_at.strftime('%d.%m.%Y') }}{% else %}&mdash;{% endif %}</td></tr>
