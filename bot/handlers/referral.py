@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 router = Router(name="referral")
 
 _MIN_WITHDRAWAL = Decimal("500")
-_REVSHARE_PERCENT = 10
+_REVSHARE_PERCENT = 20
 _MILESTONES = [(1, 7, "7 дней"), (3, 30, "1 месяц"), (10, 90, "3 месяца")]
 
 

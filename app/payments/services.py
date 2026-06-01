@@ -300,7 +300,7 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
     await _process_referral_reward(payment.user_id, session, payment=payment)
 
 
-_REVSHARE_PERCENT = Decimal("0.10")
+_REVSHARE_PERCENT = Decimal("0.20")
 _MIN_REVSHARE_AMOUNT = Decimal("0.01")
 
 
@@ -312,8 +312,20 @@ async def _process_referral_reward(user_id: int, session: AsyncSession, payment:
     if referral is None:
         return
 
-    # First payment: activate referral, then check milestones
-    if referral.status == ReferralStatus.pending:
+    # First payment: activate referral, then check milestones.
+    # Only for real paid tariffs — skip free/trial activations.
+    _skip_activation = True
+    if (
+        referral.status == ReferralStatus.pending
+        and payment is not None
+        and payment.amount is not None
+        and payment.amount > Decimal("0")
+    ):
+        _paid_tariff = await session.get(Tariff, payment.tariff_id) if payment.tariff_id else None
+        if _paid_tariff is None or _paid_tariff.trial_days is None:
+            _skip_activation = False
+
+    if referral.status == ReferralStatus.pending and not _skip_activation:
         referral.status = ReferralStatus.activated
         referral.activated_at = datetime.utcnow()
         await session.flush()

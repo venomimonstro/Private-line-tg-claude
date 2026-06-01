@@ -103,12 +103,11 @@ async def speed_test(message: Message, db_user: User) -> None:
     for server, ms in results:
         emoji = _latency_emoji(ms)
         ms_str = f"{ms:.0f} мс" if ms is not None else "недоступен"
-        load_pct = int(server.current_users / server.max_users * 100) if server.max_users else 0
         flag = server.flag_emoji or ""
         marker = " ← <b>Ваш</b>" if server.id == user_server_id else ""
         lines.append(
             f"{emoji} {flag} <b>{server.name}</b>{marker}\n"
-            f"   Пинг: {ms_str} | Нагрузка: {load_pct}%\n"
+            f"   Пинг: {ms_str}\n"
         )
 
     lines.append(
