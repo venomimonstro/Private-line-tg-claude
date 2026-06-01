@@ -84,13 +84,20 @@ async def show_my_access(message: Message, db_user: User) -> None:
     tariff_name = tariff.name if tariff else "—"
     traffic_limit_str = f"{tariff.traffic_limit_gb} ГБ/мес" if (tariff and tariff.traffic_limit_gb) else "Без ограничений"
 
+    keys_count = len(active_keys)
+    max_keys = tariff.max_keys if tariff else 1
+    max_dev = tariff.max_devices if tariff else 0
+    dev_str = f"до {max_dev}" if max_dev else "без ограничений"
+
     text = (
         f"<b>Ваш доступ</b>\n\n"
         f"📋 Тариф: <b>{tariff_name}</b>\n"
         f"📊 Статус: {status_label}\n"
         f"📅 Действует до: <b>{expires_str}</b>\n"
         f"📦 Лимит трафика: <b>{traffic_limit_str}</b>\n"
-        f"📈 Использовано: {traffic_used} ГБ"
+        f"📈 Использовано: {traffic_used} ГБ\n"
+        f"🔑 VPN-ключей: <b>{keys_count} из {max_keys}</b>\n"
+        f"📱 Устройств одновременно: <b>{dev_str}</b>"
     )
 
     await message.answer(text, parse_mode="HTML", reply_markup=my_access_keyboard())

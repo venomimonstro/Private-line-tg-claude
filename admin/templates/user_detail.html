@@ -24,6 +24,27 @@
             {% else %}&mdash;{% endif %}
           </td>
         </tr>
+        {% set active_keys_sub = user.vpn_keys | selectattr("subscription_id", "equalto", sub.id) | selectattr("status.value", "equalto", "active") | list %}
+        <tr>
+          <td>VPN-ключей</td>
+          <td>
+            <b>{{ active_keys_sub | length }}</b>
+            {% if sub.tariff and sub.tariff.max_keys %} из {{ sub.tariff.max_keys }}{% endif %}
+            {% if active_keys_sub | length == 0 %}
+              <span class="badge bg-warning text-dark ms-1">нет активных</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>Устройств одновременно</td>
+          <td>
+            {% if sub.tariff and sub.tariff.max_devices %}
+              до <b>{{ sub.tariff.max_devices }}</b>
+            {% else %}
+              <span class="text-muted">без ограничений</span>
+            {% endif %}
+          </td>
+        </tr>
         {% endif %}{% endfor %}
         <tr><td>Зарегистрирован</td><td>{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
         <tr><td>Последняя активность</td><td>{{ user.last_activity_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
@@ -57,9 +78,10 @@
         {% endif %}
       </div>
       <table class="table table-sm">
-        <thead><tr><th>#</th><th>Тариф</th><th>Статус</th><th>До</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Тариф</th><th>Статус</th><th>До</th><th>Ключи</th><th></th></tr></thead>
         <tbody>
         {% for sub in user.subscriptions %}
+        {% set sub_keys = user.vpn_keys | selectattr("subscription_id", "equalto", sub.id) | selectattr("status.value", "equalto", "active") | list %}
         <tr>
           <td>{{ sub.id }}</td>
           <td>{{ sub.tariff.slug if sub.tariff else "—" }}</td>
@@ -73,9 +95,14 @@
             {% else %}<span class="badge bg-secondary">{{ sub.status.value }}</span>{% endif %}
           </td>
           <td>{{ sub.expires_at.strftime('%d.%m.%Y') if sub.expires_at else '—' }}</td>
+          <td>
+            <span class="{% if sub_keys | length == 0 %}text-muted{% endif %}">
+              {{ sub_keys | length }}{% if sub.tariff and sub.tariff.max_keys %}/{{ sub.tariff.max_keys }}{% endif %}
+            </span>
+          </td>
           <td><a href="/admin/subscriptions/{{ sub.id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
         </tr>
-        {% else %}<tr><td colspan="5" class="text-muted text-center">Нет подписок</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="6" class="text-muted text-center">Нет подписок</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>
