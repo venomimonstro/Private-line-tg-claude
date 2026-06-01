@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timedelta
 
 import psutil
 from fastapi import APIRouter, Depends, Request
@@ -8,11 +9,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from admin.dependencies import get_current_admin
 from app.config import settings
 from app.database import get_async_session
-from app.enums import VpnKeyStatus, VpnServerStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
+from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
@@ -41,16 +44,47 @@ async def load_analytics(
     )
     active_keys = active_keys_result.scalar_one() or 0
 
-    top_users_result = await session.execute(
-        select(VpnKey).where(VpnKey.status == VpnKeyStatus.active)
-        .order_by(VpnKey.traffic_used_gb.desc()).limit(10)
+    # Top users by traffic — with user info
+    top_keys_result = await session.execute(
+        select(VpnKey)
+        .options(selectinload(VpnKey.user))
+        .where(VpnKey.traffic_used_gb > 0)
+        .order_by(VpnKey.traffic_used_gb.desc())
+        .limit(15)
     )
-    top_users = top_users_result.scalars().all()
+    top_users = top_keys_result.scalars().all()
 
     total_traffic_result = await session.execute(
         select(func.coalesce(func.sum(VpnKey.traffic_used_gb), 0))
     )
     total_traffic_gb = float(total_traffic_result.scalar_one() or 0)
+
+    # Recently active users (last 60 minutes)
+    hour_ago = datetime.utcnow() - timedelta(hours=1)
+    recent_result = await session.execute(
+        select(User)
+        .where(User.last_activity_at >= hour_ago)
+        .order_by(User.last_activity_at.desc())
+        .limit(30)
+    )
+    recent_users = recent_result.scalars().all()
+
+    # Users active in last 24h count
+    day_ago = datetime.utcnow() - timedelta(hours=24)
+    active_24h = (await session.execute(
+        select(func.count(User.id)).where(User.last_activity_at >= day_ago)
+    )).scalar_one() or 0
+
+    # Users with most active subscriptions (potential heavy users)
+    heavy_result = await session.execute(
+        select(User, func.sum(VpnKey.traffic_used_gb).label("total_gb"))
+        .join(VpnKey, VpnKey.user_id == User.id)
+        .where(VpnKey.status == VpnKeyStatus.active)
+        .group_by(User.id)
+        .order_by(func.sum(VpnKey.traffic_used_gb).desc())
+        .limit(10)
+    )
+    heavy_users = heavy_result.all()
 
     warnings = []
     if cpu_pct > 80:
@@ -69,9 +103,12 @@ async def load_analytics(
         "request": request, "admin": admin, "page_title": "Аналитика нагрузки",
         "cpu_pct": cpu_pct, "ram_pct": ram.percent,
         "ram_used_mb": round(ram.used / (1024 ** 2), 1),
+        "ram_total_mb": round(ram.total / (1024 ** 2), 1),
         "disk_used_pct": round(disk_used_pct, 1), "free_disk_gb": round(free_disk_gb, 2),
         "servers": servers, "active_keys": active_keys,
         "top_users": top_users, "total_traffic_gb": round(total_traffic_gb, 2),
+        "recent_users": recent_users, "active_24h": active_24h,
+        "heavy_users": heavy_users,
         "warnings": warnings,
     }
     return templates.TemplateResponse("load_analytics.html", context)
