@@ -30,7 +30,7 @@ async def load_analytics(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
-    cpu_pct = psutil.cpu_percent(interval=1)
+    cpu_pct = psutil.cpu_percent()  # non-blocking, uses cached value
     ram = psutil.virtual_memory()
     disk = shutil.disk_usage(settings.APP_DIR)
     disk_used_pct = disk.used / disk.total * 100
@@ -75,16 +75,26 @@ async def load_analytics(
         select(func.count(User.id)).where(User.last_activity_at >= day_ago)
     )).scalar_one() or 0
 
-    # Users with most active subscriptions (potential heavy users)
+    # Users with most total traffic — return plain dicts to avoid lazy-load issues
     heavy_result = await session.execute(
-        select(User, func.sum(VpnKey.traffic_used_gb).label("total_gb"))
+        select(
+            User.id, User.first_name, User.username, User.telegram_id,
+            func.coalesce(func.sum(VpnKey.traffic_used_gb), 0).label("total_gb"),
+        )
         .join(VpnKey, VpnKey.user_id == User.id)
         .where(VpnKey.status == VpnKeyStatus.active)
-        .group_by(User.id)
+        .group_by(User.id, User.first_name, User.username, User.telegram_id)
         .order_by(func.sum(VpnKey.traffic_used_gb).desc())
         .limit(10)
     )
-    heavy_users = heavy_result.all()
+    heavy_users = [
+        {
+            "id": row.id, "first_name": row.first_name,
+            "username": row.username, "telegram_id": row.telegram_id,
+            "total_gb": float(row.total_gb or 0),
+        }
+        for row in heavy_result.all()
+    ]
 
     warnings = []
     if cpu_pct > 80:

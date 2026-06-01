@@ -114,12 +114,12 @@
       <table class="table table-sm">
         <thead><tr><th>Пользователь</th><th>TG ID</th><th class="text-end">Итого ГБ</th></tr></thead>
         <tbody>
-        {% for user, total_gb in heavy_users %}
+        {% for hu in heavy_users %}
         <tr>
-          <td><a href="/admin/users/{{ user.id }}">{{ user.first_name or '' }} {% if user.username %}(@{{ user.username }}){% endif %}</a></td>
-          <td><code class="small">{{ user.telegram_id }}</code></td>
-          <td class="text-end fw-bold {% if total_gb > 100 %}text-danger{% elif total_gb > 50 %}text-warning{% endif %}">
-            {{ "%.2f"|format(total_gb) }}
+          <td><a href="/admin/users/{{ hu.id }}">{{ hu.first_name or '' }} {% if hu.username %}(@{{ hu.username }}){% endif %}</a></td>
+          <td><code class="small">{{ hu.telegram_id }}</code></td>
+          <td class="text-end fw-bold {% if hu.total_gb > 100 %}text-danger{% elif hu.total_gb > 50 %}text-warning{% endif %}">
+            {{ "%.2f"|format(hu.total_gb) }}
           </td>
         </tr>
         {% else %}<tr><td colspan="3" class="text-muted text-center">Нет данных</td></tr>{% endfor %}
