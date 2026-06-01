@@ -27,6 +27,13 @@ async def _job_check_expiring_soon() -> None:
         await check_expiring_soon(session, notify_user_callback=notify_expiring_soon)
 
 
+async def _job_expiry_reminders() -> None:
+    logger.info("Running: expiry_reminders")
+    from app.services.expiry_reminders import check_expiry_reminders
+    async with async_session_maker() as session:
+        await check_expiry_reminders(session)
+
+
 async def _job_sync_traffic() -> None:
     logger.info("Running: sync_traffic_stats")
     from app.services.vpn_key import sync_traffic_stats
@@ -233,6 +240,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
     scheduler.add_job(_job_check_expiring_soon, "cron", hour=9, minute=0)
+    scheduler.add_job(_job_expiry_reminders, "interval", minutes=30)
     scheduler.add_job(_job_sync_traffic, "interval", hours=2)
     scheduler.add_job(_job_daily_backup, "cron", hour=4, minute=0)
     scheduler.add_job(_job_health_check, "interval", hours=1)

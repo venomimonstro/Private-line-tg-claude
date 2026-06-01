@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import PaymentStatus, ReferralStatus, SubscriptionStatus
@@ -312,20 +312,40 @@ async def _process_referral_reward(user_id: int, session: AsyncSession, payment:
     if referral is None:
         return
 
-    # First payment: award bonus days and mark referral as activated
+    # First payment: activate referral, then check milestones
     if referral.status == ReferralStatus.pending:
-        referrer_sub_result = await session.execute(
-            select(Subscription).where(
-                Subscription.user_id == referral.referrer_id,
-                Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
-            ).order_by(Subscription.expires_at.desc())
-        )
-        sub = referrer_sub_result.scalars().first()
-        if sub is not None:
-            await subscription_service.extend_subscription(sub, referral.bonus_days_awarded, session)
         referral.status = ReferralStatus.activated
         referral.activated_at = datetime.utcnow()
         await session.flush()
+
+        # Count total activated referrals for this referrer (including the one just activated)
+        count_result = await session.execute(
+            select(func.count(Referral.id)).where(
+                Referral.referrer_id == referral.referrer_id,
+                Referral.status == ReferralStatus.activated,
+            )
+        )
+        activated_count = count_result.scalar_one() or 0
+
+        _MILESTONES = {1: 7, 3: 30, 10: 90}
+        if activated_count in _MILESTONES:
+            bonus_days = _MILESTONES[activated_count]
+            referrer_sub_result = await session.execute(
+                select(Subscription).where(
+                    Subscription.user_id == referral.referrer_id,
+                    Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+                ).order_by(Subscription.expires_at.desc())
+            )
+            ref_sub = referrer_sub_result.scalars().first()
+            if ref_sub is not None:
+                await subscription_service.extend_subscription(ref_sub, bonus_days, session)
+            # Notify referrer about milestone
+            referrer_obj = await session.get(User, referral.referrer_id)
+            if referrer_obj:
+                from app.services.user_notifications import notify_referral_milestone
+                await notify_referral_milestone(
+                    referrer_obj.telegram_id, activated_count, bonus_days
+                )
 
     # Rev-share: credit 10% of payment to referrer's balance on every payment
     if payment is not None and payment.amount and payment.amount >= _MIN_REVSHARE_AMOUNT:

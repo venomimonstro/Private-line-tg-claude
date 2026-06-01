@@ -10,6 +10,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🆓 Пробный период"), KeyboardButton(text="📱 Как подключиться")],
             [KeyboardButton(text="📊 Проверить лимит"), KeyboardButton(text="💳 Мои платежи")],
             [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="🌐 Веб-портал")],
+            [KeyboardButton(text="🚀 Проверить скорость")],
             [KeyboardButton(text="🎫 Тикеты"), KeyboardButton(text="❓ Помощь"), KeyboardButton(text="🆘 Поддержка")],
             [KeyboardButton(text="📋 Правила сервиса")],
         ],

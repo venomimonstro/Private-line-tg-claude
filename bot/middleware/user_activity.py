@@ -116,6 +116,7 @@ class UserActivityMiddleware(BaseMiddleware):
                         referrer_id=referrer_id,
                         invited_user_id=user.id,
                         status=ReferralStatus.pending,
+                        bonus_days_awarded=0,  # milestones handle bonuses now
                     ))
 
                 await session.commit()

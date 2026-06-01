@@ -23,6 +23,7 @@ from app.models.withdrawal_request import WithdrawalRequest
 from app.models.release import Release
 from app.models.ticket import Ticket
 from app.models.ticket_message import TicketMessage
+from app.models.subscription_notification import SubscriptionNotification
 
 __all__ = [
     "User",
@@ -51,4 +52,5 @@ __all__ = [
     "Release",
     "Ticket",
     "TicketMessage",
+    "SubscriptionNotification",
 ]

@@ -134,6 +134,33 @@ async def notify_expiring_soon(user_id: int, days: int) -> None:
         logger.error("notify_expiring_soon failed for user %d: %s", user_id, exc)
 
 
+async def notify_referral_milestone(
+    telegram_id: int,
+    friend_count: int,
+    bonus_days: int,
+) -> None:
+    """Notify referrer that they hit a milestone bonus."""
+    from app.bot_instance import get_bot
+
+    bot = get_bot()
+    if bot is None:
+        return
+    month_map = {7: "7 дней", 30: "1 месяц", 90: "3 месяца"}
+    bonus_str = month_map.get(bonus_days, f"{bonus_days} дней")
+    try:
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=(
+                f"🎉 <b>Milestone!</b> Вы пригласили <b>{friend_count}</b> "
+                f"{'друга' if friend_count == 1 else 'друзей'}!\n\n"
+                f"🎁 Ваша подписка продлена на <b>{bonus_str}</b> бесплатно."
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.error("notify_referral_milestone failed for %d: %s", telegram_id, exc)
+
+
 async def notify_gift_sent(sender_telegram_id: int, recipient_telegram_id: int, tariff_name: str) -> None:
     """Notify gift sender that the gift was delivered."""
     from app.bot_instance import get_bot
