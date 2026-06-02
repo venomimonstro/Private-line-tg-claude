@@ -12,12 +12,9 @@ Token format:  base64url(telegram_id) + "." + hmac_sha256(SECRET_KEY, telegram_i
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import logging
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,40 +22,12 @@ from app.database import get_async_session
 from app.enums import VpnKeyStatus
 from app.models.user import User
 from app.models.vpn_key import VpnKey
+from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
 from app.services.vpn_key import get_access_url
-from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["subscription"])
-
-
-def make_sub_token(telegram_id: int, secret: str) -> str:
-    """Generate a stable, verifiable subscription token for the given Telegram user."""
-    tid = str(telegram_id).encode()
-    tid_b64 = base64.urlsafe_b64encode(tid).rstrip(b"=").decode()
-    sig = hmac.new(secret.encode(), tid, hashlib.sha256).hexdigest()[:12]
-    return f"{tid_b64}.{sig}"
-
-
-def _verify_sub_token(token: str, secret: str) -> int | None:
-    """Return telegram_id if token is valid, else None."""
-    try:
-        if "." not in token:
-            return None
-        tid_b64, sig = token.split(".", 1)
-        # Restore base64 padding
-        pad = 4 - len(tid_b64) % 4
-        if pad != 4:
-            tid_b64 += "=" * pad
-        tid = base64.urlsafe_b64decode(tid_b64)
-        telegram_id = int(tid.decode())
-        expected = hmac.new(secret.encode(), tid, hashlib.sha256).hexdigest()[:12]
-        if hmac.compare_digest(sig, expected):
-            return telegram_id
-        return None
-    except Exception:
-        return None
 
 
 @router.get("/sub/{token}")

@@ -9,7 +9,7 @@ def _build_sub_url(telegram_id: int) -> str | None:
     """Build the subscription URL for this user, or None if base URL not configured."""
     try:
         from app.config import settings
-        from admin.routes.vpn_subscription import make_sub_token
+        from app.services.sub_token import make_sub_token
         base = (settings.WEBHOOK_BASE_URL or "").rstrip("/")
         if not base:
             return None
