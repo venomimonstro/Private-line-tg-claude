@@ -419,8 +419,26 @@ async def repair_marzban_keys(
             if client is None:
                 errors += 1
                 continue
+
+            # When user is missing (DB wipe scenario) extract the UUID from our stored
+            # URL and pass it to Marzban so the recreated user gets the SAME UUID.
+            # Same UUID + same Reality config = identical vless:// link → client key
+            # keeps working without any user action.
+            preserved_uuid: str | None = None
+            if user_missing and old_url:
+                try:
+                    _parsed = urlparse(old_url)
+                    if _parsed.scheme == "vless" and _parsed.username:
+                        preserved_uuid = _parsed.username
+                        logger.info(
+                            "repair_marzban_keys: preserving UUID %s for key %d",
+                            preserved_uuid, key.id,
+                        )
+                except Exception:
+                    pass
+
             try:
-                raw = await client.create_key(name=key.outline_key_id)
+                raw = await client.create_key(name=key.outline_key_id, uuid=preserved_uuid)
                 if raw.access_url:
                     new_url = raw.access_url
                     if old_url != new_url:

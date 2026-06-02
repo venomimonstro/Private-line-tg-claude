@@ -303,6 +303,7 @@ class MarzbanClient:
         name: str,
         traffic_limit_gb: float | None = None,
         ip_limit: int = 0,
+        uuid: str | None = None,
     ) -> MarzbanKey:
         headers = await self._headers()
         safe_name = name[:32]
@@ -321,9 +322,12 @@ class MarzbanClient:
         logger.info("Creating key %s with VLESS inbounds: %s", safe_name, vless_inbounds)
 
         # ── 2. Create / update user in Marzban ──────────────────────────────
+        vless_proxy: dict = {"flow": "xtls-rprx-vision"}
+        if uuid:
+            vless_proxy["id"] = uuid  # preserve UUID so existing client keys keep working
         body: dict = {
             "username": safe_name,
-            "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
+            "proxies": {"vless": vless_proxy},
             "inbounds": {"vless": vless_inbounds},
             "status": "active",
             "data_limit_reset_strategy": "no_reset",
