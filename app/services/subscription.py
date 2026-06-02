@@ -84,6 +84,14 @@ async def activate_subscription(
             f"⚠️ Subscription #{subscription.id}: all {len(servers)} server(s) failed. "
             f"Last error: {last_exc}"
         )
+        try:
+            from app.models.user import User
+            from app.services.user_notifications import notify_activation_failed
+            user = await session.get(User, subscription.user_id)
+            if user and user.telegram_id:
+                await notify_activation_failed(user.telegram_id)
+        except Exception as notify_exc:
+            logger.warning("Could not notify user of activation failure: %s", notify_exc)
         return None
 
     subscription.status = SubscriptionStatus.active

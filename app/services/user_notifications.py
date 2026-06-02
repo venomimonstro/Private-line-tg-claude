@@ -161,6 +161,28 @@ async def notify_referral_milestone(
         logger.error("notify_referral_milestone failed for %d: %s", telegram_id, exc)
 
 
+async def notify_activation_failed(telegram_id: int) -> None:
+    """Notify user that key activation failed — they should contact support."""
+    from app.bot_instance import get_bot
+
+    bot = get_bot()
+    if bot is None:
+        return
+    try:
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=(
+                "⚠️ <b>Не удалось выдать VPN-ключ</b>\n\n"
+                "Мы уже работаем над этим — ключ будет выдан автоматически "
+                "в течение нескольких минут.\n\n"
+                "Если ключ не придёт в течение 10 минут — напишите в поддержку."
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.error("notify_activation_failed failed for %d: %s", telegram_id, exc)
+
+
 async def notify_gift_sent(sender_telegram_id: int, recipient_telegram_id: int, tariff_name: str) -> None:
     """Notify gift sender that the gift was delivered."""
     from app.bot_instance import get_bot
