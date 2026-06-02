@@ -37,6 +37,7 @@ from admin.routes import (
     updates,
     users,
     vpn_keys,
+    vpn_subscription,
     web_portal,
     withdrawals,
 )
@@ -131,6 +132,7 @@ app.include_router(promo_codes.router)
 app.include_router(bulk_actions.router)
 app.include_router(integrations.router)
 app.include_router(webhook_router)
+app.include_router(vpn_subscription.router)
 app.include_router(web_portal.router)
 
 

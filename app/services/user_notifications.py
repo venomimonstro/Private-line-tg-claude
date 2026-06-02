@@ -5,6 +5,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _build_sub_url(telegram_id: int) -> str | None:
+    """Build the subscription URL for this user, or None if base URL not configured."""
+    try:
+        from app.config import settings
+        from admin.routes.vpn_subscription import make_sub_token
+        base = (settings.WEBHOOK_BASE_URL or "").rstrip("/")
+        if not base:
+            return None
+        token = make_sub_token(telegram_id, settings.SECRET_KEY)
+        return f"{base}/sub/{token}"
+    except Exception:
+        return None
+
+
 async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     """Send all access keys to user after activation, then send onboarding."""
     from app.bot_instance import get_bot
@@ -21,6 +35,13 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     try:
         first_url: str = ""
 
+        sub_url = _build_sub_url(user_id)
+        sub_hint = (
+            f"\n\n🔗 <b>Ссылка-подписка</b> (рекомендуется — ключ обновляется автоматически):\n"
+            f"<code>{sub_url}</code>\n"
+            "В приложении: «+» → «Добавить подписку» → вставьте ссылку."
+        ) if sub_url else ""
+
         _app_hint = (
             "📱 <b>Приложения для подключения:</b>\n"
             "• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -36,7 +57,8 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
             first_url = url
             text = (
                 "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
-                f"<code>{url}</code>\n\n"
+                f"<code>{url}</code>"
+                + sub_hint + "\n\n"
                 + _app_hint
             )
         else:
@@ -47,6 +69,8 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
                     first_url = url
                 label = getattr(key, "label", None) or "VPN"
                 lines.append(f"<b>{label}:</b>\n<code>{url}</code>\n")
+            if sub_hint:
+                lines.append(sub_hint)
             lines.append(_app_hint)
             text = "\n".join(lines)
 
