@@ -38,19 +38,6 @@ _STATUS_LABELS: dict[str, str] = {
 }
 
 
-def _get_sub_url(telegram_id: int) -> str | None:
-    """Build subscription URL for this user. Returns None if base URL not configured."""
-    try:
-        from app.config import settings
-        from app.services.sub_token import make_sub_token
-        base = (settings.WEBHOOK_BASE_URL or "").rstrip("/")
-        if not base:
-            return None
-        return f"{base}/sub/{make_sub_token(telegram_id, settings.SECRET_KEY)}"
-    except Exception:
-        return None
-
-
 async def _get_active_subscription(
     user_id: int,
 ) -> tuple[Subscription | None, list[VpnKey], Tariff | None]:
@@ -130,13 +117,6 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer()
         return
 
-    sub_url = _get_sub_url(db_user.telegram_id)
-    sub_block = (
-        f"\n\n🔗 <b>Ссылка-подписка</b> (ключ обновляется сам):\n"
-        f"<code>{sub_url}</code>\n"
-        f"<i>Добавьте в приложение: «+» → «Подписка»</i>"
-    ) if sub_url else ""
-
     if len(active_keys) == 1:
         key = active_keys[0]
         try:
@@ -147,9 +127,8 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
         label_part = f" ({key.label})" if key.label else ""
         await callback.message.answer(  # type: ignore[union-attr]
             f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
-            f"<code>{access_url}</code>"
-            + sub_block +
-            f"\n\n📱 Приложения:\n"
+            f"<code>{access_url}</code>\n\n"
+            f"📱 Приложения:\n"
             f"• <b>Android:</b> Hiddify, V2RayNG\n"
             f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
             f"• <b>Windows/macOS:</b> Hiddify\n"
@@ -166,8 +145,6 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
                 continue
             label = key.label or "VPN"
             lines.append(f"<b>{label}:</b>\n<code>{url}</code>")
-        if sub_block:
-            lines.append(sub_block)
         lines.append(
             "\n📱 Скопируйте любой ключ и добавьте в приложение:\n"
             "• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -468,19 +445,12 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
             access_url = get_access_url(new_key)
 
     remaining_after = _MAX_DAILY_REISSUES - (used + 1)
-    sub_url = _get_sub_url(db_user.telegram_id)
-    sub_block = (
-        f"\n\n🔗 <b>Ссылка-подписка</b> (следующие обновления придут сами):\n"
-        f"<code>{sub_url}</code>\n"
-        f"<i>Добавьте в приложение: «+» → «Подписка»</i>"
-    ) if sub_url else ""
 
     await callback.message.answer(  # type: ignore[union-attr]
         f"✅ <b>Ключ успешно обновлён!</b>\n\n"
         f"🔑 <b>Ваш новый ключ доступа:</b>\n\n"
-        f"<code>{access_url}</code>"
-        + sub_block +
-        f"\n\n📱 Удалите старый ключ и добавьте новый:\n"
+        f"<code>{access_url}</code>\n\n"
+        f"📱 Удалите старый ключ и добавьте новый:\n"
         f"• <b>Android:</b> Hiddify, V2RayNG\n"
         f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
         f"• <b>Windows/macOS:</b> Hiddify\n"

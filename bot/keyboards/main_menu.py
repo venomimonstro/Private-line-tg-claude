@@ -7,12 +7,10 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="💳 Купить доступ"), KeyboardButton(text="🔑 Мой доступ")],
-            [KeyboardButton(text="🆓 Пробный период"), KeyboardButton(text="📱 Как подключиться")],
-            [KeyboardButton(text="📊 Проверить лимит"), KeyboardButton(text="💳 Мои платежи")],
-            [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="🌐 Веб-портал")],
-            [KeyboardButton(text="🚀 Проверить скорость")],
-            [KeyboardButton(text="🎫 Тикеты"), KeyboardButton(text="❓ Помощь"), KeyboardButton(text="🆘 Поддержка")],
-            [KeyboardButton(text="📋 Правила сервиса")],
+            [KeyboardButton(text="🆘 Поддержка"), KeyboardButton(text="📱 Как подключиться")],
+            [KeyboardButton(text="🆓 Пробный период"), KeyboardButton(text="👥 Пригласить друга")],
+            [KeyboardButton(text="📊 Проверить лимит"), KeyboardButton(text="🚀 Проверить скорость")],
+            [KeyboardButton(text="💳 Мои платежи"), KeyboardButton(text="🎫 Тикеты"), KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
