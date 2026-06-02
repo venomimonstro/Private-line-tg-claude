@@ -94,16 +94,19 @@ async def create_vpn_key(
     old_keys_result = await session.execute(
         select(VpnKey).where(VpnKey.subscription_id == subscription_id)
     )
-    # Transfer bot-reissue daily counter from the active key so it survives purge
+    # Transfer counters from the active key so they survive purge
     _today = date.today()
     _inherited_reissue_count: int = 0
     _inherited_reissue_date: date | None = None
+    _inherited_traffic_gb: float = 0.0
     for old_key in old_keys_result.scalars().all():
         if old_key.status == VpnKeyStatus.active:
             # Capture reissue tracking before deletion
             if old_key.reissue_date == _today:
                 _inherited_reissue_count = old_key.reissue_count_today or 0
                 _inherited_reissue_date = _today
+            # Preserve accumulated traffic so the subscription limit stays accurate
+            _inherited_traffic_gb = old_key.traffic_used_gb or 0.0
             # Best-effort: remove from VPN server
             try:
                 old_server_result = await session.get(VpnServer, old_key.server_id)
@@ -187,10 +190,9 @@ async def create_vpn_key(
         outline_key_id=raw_key.id,           # stores Marzban username or Outline key id
         access_url_encrypted=encrypt(raw_key.access_url),
         status=VpnKeyStatus.active,
-        traffic_used_gb=0.0,
+        traffic_used_gb=_inherited_traffic_gb,
         traffic_limit_gb=traffic_limit_gb,
         label=label,
-        # Carry bot-reissue counter forward so the daily limit is preserved
         reissue_count_today=_inherited_reissue_count,
         reissue_date=_inherited_reissue_date,
     )
