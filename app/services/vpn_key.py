@@ -362,6 +362,18 @@ async def repair_marzban_keys(
         except Exception as exc:
             logger.error("repair_marzban_keys: cannot build client for server %d: %s", sid, exc)
 
+    # Fetch all registered Marzban usernames per server.
+    # If a key's username is missing from Marzban (e.g. DB was wiped), force-recreate it.
+    server_usernames: dict[int, set[str] | None] = {}
+    for sid, client in clients.items():
+        try:
+            stats = await client.get_transfer_stats()
+            server_usernames[sid] = set(stats.keys())
+            logger.info("repair_marzban_keys: server %d has %d registered users in Marzban", sid, len(stats))
+        except Exception as exc:
+            logger.warning("repair_marzban_keys: cannot fetch user list from server %d: %s", sid, exc)
+            server_usernames[sid] = None  # unknown — fall back to URL-only check
+
     fixed = 0
     skipped = 0
     errors = 0
@@ -371,25 +383,35 @@ async def repair_marzban_keys(
 
     try:
         for key in keys:
-            # Check the existing URL FIRST — skip healthy keys without touching Marzban.
-            # This prevents disrupting active connections on every bot restart.
             try:
                 old_url = decrypt(key.access_url_encrypted) if key.access_url_encrypted else ""
             except Exception:
                 old_url = ""
 
-            if not _key_url_needs_repair(old_url):
+            url_broken = _key_url_needs_repair(old_url)
+
+            # Also check if the Marzban user actually exists (guards against DB wipe).
+            known_users = server_usernames.get(key.server_id)
+            user_missing = known_users is not None and key.outline_key_id not in known_users
+
+            if not url_broken and not user_missing:
                 logger.debug(
-                    "repair_marzban_keys: key %d (user=%s) URL is healthy — skipping",
+                    "repair_marzban_keys: key %d (user=%s) is healthy — skipping",
                     key.id, key.outline_key_id,
                 )
                 skipped += 1
                 continue
 
-            logger.info(
-                "repair_marzban_keys: key %d (user=%s) needs repair — SNI or params broken",
-                key.id, key.outline_key_id,
-            )
+            if user_missing:
+                logger.warning(
+                    "repair_marzban_keys: key %d user '%s' NOT FOUND in Marzban — recreating (DB may have been wiped)",
+                    key.id, key.outline_key_id,
+                )
+            else:
+                logger.info(
+                    "repair_marzban_keys: key %d (user=%s) needs repair — SNI or params broken",
+                    key.id, key.outline_key_id,
+                )
 
             client = clients.get(key.server_id)
             if client is None:

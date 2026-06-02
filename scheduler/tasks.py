@@ -254,12 +254,12 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
     scheduler.add_job(_job_subscription_watchdog, "interval", minutes=30, jitter=60)
-    # Repair Marzban users with wrong inbounds immediately on startup, then every 6h.
-    # This fixes keys created while inbound detection was broken.
+    # Repair Marzban users: check URL params AND verify user exists in Marzban DB.
+    # Runs on startup and every hour — detects DB wipes and config changes quickly.
     scheduler.add_job(
         _job_repair_marzban_inbounds,
         "interval",
-        hours=6,
+        hours=1,
         next_run_time=datetime.now(_tz.utc),
     )
     return scheduler
