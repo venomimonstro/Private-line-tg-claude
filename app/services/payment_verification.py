@@ -71,8 +71,15 @@ async def check_payment_status_yoomoney(
     payment: object,
     session: AsyncSession,
 ) -> bool:
+    """Do not fulfill YooMoney orders from operation-history alone.
+
+    For incoming QuickPay transfers the history amount is the wallet settlement
+    after commission, while the signed HTTP notification carries
+    withdraw_amount (the sender debit/order amount). A percentage tolerance on
+    history data would permit underpayment. Signed webhooks are authoritative;
+    polling is retained only to surface a candidate operation in logs.
+    """
     from app.payments.registry import get_provider_db
-    from app.payments.services import confirm_payment_auto
 
     p = payment  # type: ignore[assignment]
     label = p.provider_payment_id
@@ -82,9 +89,11 @@ async def check_payment_status_yoomoney(
         provider = await get_provider_db("yoomoney", session)
         op_id = await provider.check_payment_by_label(label, float(p.amount))  # type: ignore[attr-defined]
         if op_id:
-            logger.info("YooMoney API confirmed payment %d (label=%s op=%s)", p.id, label, op_id)
-            await confirm_payment_auto(p, session)
-            return True
+            logger.warning(
+                "YooMoney candidate found for payment %d (label=%s op=%s), "
+                "but auto-fulfillment requires the signed webhook",
+                p.id, label, op_id,
+            )
     except Exception as exc:
         logger.error("YooMoney status check failed for payment %d: %s", p.id, exc)
     return False
