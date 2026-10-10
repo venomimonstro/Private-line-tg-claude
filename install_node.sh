@@ -149,6 +149,8 @@ SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
 EOF
 
+chmod 600 "$MARZBAN_DIR/.env"
+
 info "Запускаю Marzban (первый запуск скачает XRay ~60МБ)..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
@@ -402,6 +404,7 @@ URL:      $PUBLIC_API_URL
 Пароль:   $MARZBAN_PASS
 EOF
 
+chmod 600 "$INFO_FILE"
 success "Конфигурация сохранена: $INFO_FILE"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
