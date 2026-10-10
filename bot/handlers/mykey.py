@@ -94,7 +94,7 @@ async def on_resend_key(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
         return
 
-    label_part = f" ({key.label})" if key.label else ""
+    label_part = f" ({escape(key.label)})" if key.label else ""
     await callback.message.answer(  # type: ignore[union-attr]
         f"📨 <b>Ключ доступа{label_part} повторно:</b>\n\n"
         f"<code>{escape(url)}</code>\n\n"
