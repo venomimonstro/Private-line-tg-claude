@@ -95,15 +95,21 @@ async def activate_subscription(
         return None
 
     subscription.status = SubscriptionStatus.active
+    subscription.last_activation_error = None
+    subscription.activation_attempts = 0
     subscription.started_at = datetime.utcnow()
     subscription.expires_at = datetime.utcnow() + timedelta(days=tariff.duration_days)
     await session.flush()
 
     if send_key_callback is not None:
         try:
-            await send_key_callback(subscription.user_id, created_keys)
+            from app.models.user import User
+            user = await session.get(User, subscription.user_id)
+            if user is None or not user.telegram_id:
+                raise ValueError(f"No Telegram ID for user {subscription.user_id}")
+            await send_key_callback(user.telegram_id, created_keys)
         except Exception as exc:
-            logger.error("Failed to send keys to user %s: %s", subscription.user_id, exc)
+            logger.error("Failed to deliver VPN key for subscription %s: %s", subscription.id, exc)
 
     return created_keys[0]
 
