@@ -51,8 +51,8 @@ async def _get_active_subscription(
                 Subscription.status.in_([
                     SubscriptionStatus.active,
                     SubscriptionStatus.expires_soon,
-                    SubscriptionStatus.activation_error,
                 ]),
+                Subscription.expires_at > _dt.utcnow(),
             )
             .order_by(Subscription.expires_at.desc())
         )
@@ -86,7 +86,7 @@ async def show_my_access(message: Message, db_user: User) -> None:
     traffic_limit_str = f"{tariff.traffic_limit_gb} ГБ/мес" if (tariff and tariff.traffic_limit_gb) else "Без ограничений"
 
     keys_count = len(active_keys)
-    max_keys = tariff.max_keys if tariff else 1
+    max_keys = max(tariff.max_keys if tariff else 1, keys_count)
     max_dev = tariff.max_devices if tariff else 0
     dev_str = f"до {max_dev}" if max_dev else "без ограничений"
 
