@@ -47,6 +47,7 @@ async def add_subscription_server_key(
     if (
         server is None or server.status != VpnServerStatus.active
         or not server.is_selectable
+        or server.provider != "marzban"
         or _server_protocol(server) != "marzban"
     ):
         raise ServerSelectionError("Этот VPN-сервер пока недоступен")
