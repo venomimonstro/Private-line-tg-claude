@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.encryption import encrypt
 from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
+from app.models.tariff import Tariff
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _make_client, _server_protocol, get_client_access_url
@@ -64,6 +65,12 @@ async def add_subscription_server_key(
     if server.max_users and server.current_users >= server.max_users:
         raise ServerSelectionError("На выбранном сервере закончились свободные места")
 
+    tariff = await session.get(Tariff, subscription.tariff_id)
+    if tariff is None:
+        raise ServerSelectionError("У подписки не найден тариф")
+    traffic_limit = getattr(tariff, "traffic_limit_gb", None)
+    ip_limit = int(getattr(tariff, "max_devices", 0) or 0)
+
     client = _make_client(server)
     try:
         if not await client.check_connection():
@@ -103,7 +110,7 @@ async def add_subscription_server_key(
         # A username is scoped to Marzban's own database (a separate database
         # on each server). Creating it on a second node does not affect Spain.
         username = f"u{user_id}s{subscription_id}"[:32]
-        raw = await client.create_key(name=username, traffic_limit_gb=None)
+        raw = await client.create_key(name=username, traffic_limit_gb=traffic_limit, ip_limit=ip_limit)
         if not raw.access_url or not raw.access_url.startswith("vless://"):
             raise ServerSelectionError("Нода вернула некорректный VLESS-ключ")
 
@@ -128,7 +135,7 @@ async def add_subscription_server_key(
             outline_key_id=raw.id,
             access_url_encrypted=encrypt(raw.access_url),
             status=VpnKeyStatus.active,
-            traffic_limit_gb=None,
+            traffic_limit_gb=traffic_limit,
             label=server.name,
         )
         session.add(key)
