@@ -175,6 +175,22 @@ async def reconcile_marzban_server(
                     raise MarzbanConfigError(
                         f"Could not repair Marzban public host (HTTP {saved.status_code})"
                     )
+                verify_hosts = await client._client.get(
+                    f"{client._base}/api/hosts", headers=headers
+                )
+                if verify_hosts.status_code != 200 or not isinstance(verify_hosts.json(), dict):
+                    raise MarzbanConfigError("Could not verify repaired Marzban public host")
+                persisted = verify_hosts.json().get(tag, [])
+                if (
+                    not isinstance(persisted, list)
+                    or len(persisted) != 1
+                    or not isinstance(persisted[0], dict)
+                    or persisted[0].get("address") != public_host
+                    or persisted[0].get("port") not in (port, str(port))
+                    or persisted[0].get("sni") != sni
+                    or persisted[0].get("is_disabled") in (True, "true", "True")
+                ):
+                    raise MarzbanConfigError("Repaired Marzban public host did not persist exactly")
                 result.repaired_hosts += 1
             else:
                 result.errors += 1
