@@ -591,7 +591,13 @@ async def register_node(
     body: NodeRegistrationRequest,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
+    """Idempotently register only a live, externally reachable VPN node."""
+    import asyncio as _asyncio
+    import ipaddress as _ipaddress
     import json as _json
+    from urllib.parse import urlsplit as _urlsplit
+    from app.vpn.marzban import MarzbanClient
+
     client_ip = request.client.host if request.client else ""
     if not _check_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests")
@@ -600,25 +606,114 @@ async def register_node(
     if not incoming_token or incoming_token != stored_token:
         raise HTTPException(status_code=401, detail="Invalid registration token")
 
-    # Build credentials (no back-check — node initiates, admin trusts the token)
-    if body.marzban_password:
-        creds = _json.dumps({"protocol": "marzban", "username": body.marzban_username, "password": body.marzban_password})
-    else:
-        creds = _json.dumps({"protocol": "outline"})
+    if not body.marzban_password:
+        raise HTTPException(status_code=400, detail="Only verified Marzban nodes are supported")
+    try:
+        parsed = _urlsplit(body.api_url)
+        host = parsed.hostname or ""
+        api_port = parsed.port
+        ip = _ipaddress.ip_address(host)
+        if parsed.scheme != "http" or not ip.is_global or not api_port:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="api_url must use a globally routable IPv4 address")
 
-    server = VpnServer(
-        name=body.name,
-        country=body.country,
-        city=body.city or None,
-        country_code=body.country_code or None,
-        flag_emoji=body.flag_emoji or None,
-        provider=body.provider,
-        api_url=body.api_url,
-        api_secret_encrypted=encrypt(creds),
-        max_users=body.max_users,
-        status=VpnServerStatus.active,
-    )
-    session.add(server)
+    verifier = MarzbanClient(body.api_url, body.marzban_username, body.marzban_password)
+    try:
+        if not await verifier.check_connection():
+            raise HTTPException(status_code=400, detail="Marzban authentication failed")
+        cfg = await verifier._get_core_config()
+        reality = await verifier.get_reality_params()
+        if not cfg or not reality:
+            raise HTTPException(status_code=400, detail="VLESS Reality is not configured")
+        inbounds = [
+            item for item in cfg.get("inbounds", [])
+            if item.get("protocol") == "vless"
+            and item.get("streamSettings", {}).get("security") == "reality"
+        ]
+        if len(inbounds) != 1:
+            raise HTTPException(status_code=400, detail="Expected exactly one VLESS Reality inbound")
+        tag = inbounds[0].get("tag")
+        vpn_port = inbounds[0].get("port")
+        if not tag or not isinstance(vpn_port, int):
+            raise HTTPException(status_code=400, detail="Invalid VLESS Reality inbound")
+        hosts_resp = await verifier._client.get(
+            f"{verifier._base}/api/hosts", headers=await verifier._headers()
+        )
+        if hosts_resp.status_code != 200 or not isinstance(hosts_resp.json(), dict):
+            raise HTTPException(status_code=400, detail="Marzban hosts API unavailable")
+        entries = hosts_resp.json().get(tag, [])
+        host_ok = any(
+            isinstance(item, dict)
+            and item.get("address") == host
+            and item.get("port") in (vpn_port, str(vpn_port), None, "", 0, "0")
+            and item.get("is_disabled") not in (True, "true", "True")
+            for item in entries
+        )
+        if not host_ok:
+            raise HTTPException(status_code=400, detail="Marzban public host does not match node IP")
+        try:
+            _reader, writer = await _asyncio.wait_for(
+                _asyncio.open_connection(host, vpn_port), timeout=5.0
+            )
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Public VLESS TCP port is unreachable")
+    finally:
+        await verifier.aclose()
+
+    creds = _json.dumps({
+        "protocol": "marzban",
+        "username": body.marzban_username,
+        "password": body.marzban_password,
+    })
+    existing = (await session.execute(
+        select(VpnServer).where(VpnServer.api_url == body.api_url)
+    )).scalars().all()
+    if len(existing) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate server records already exist for this API URL; reconcile before registration",
+        )
+    if existing:
+        server = existing[0]
+        server.name = body.name
+        server.country = body.country
+        server.city = body.city or None
+        server.country_code = body.country_code or None
+        server.flag_emoji = body.flag_emoji or None
+        server.provider = "marzban"
+        server.api_secret_encrypted = encrypt(creds)
+        server.max_users = max(1, body.max_users)
+        server.status = VpnServerStatus.active
+        server.is_selectable = True
+        server.failure_count = 0
+        server.last_error = None
+        server.last_error_at = None
+        action = "updated"
+    else:
+        server = VpnServer(
+            name=body.name,
+            country=body.country,
+            city=body.city or None,
+            country_code=body.country_code or None,
+            flag_emoji=body.flag_emoji or None,
+            provider="marzban",
+            api_url=body.api_url,
+            api_secret_encrypted=encrypt(creds),
+            max_users=max(1, body.max_users),
+            status=VpnServerStatus.active,
+            is_selectable=True,
+        )
+        session.add(server)
+        action = "registered"
     await session.commit()
     await session.refresh(server)
-    return {"ok": True, "server_id": server.id, "message": f"Сервер '{body.name}' зарегистрирован (ID: {server.id})"}
+    return {
+        "ok": True,
+        "server_id": server.id,
+        "action": action,
+        "message": f"VPN node '{body.name}' verified and {action}",
+    }
+
