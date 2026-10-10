@@ -17,7 +17,7 @@ from app.models.system_update import SystemUpdate
 from app.services.notification import notify_admin
 from backup_manager.backup import create_backup
 from health_monitor.checker import run_health_check
-from update_manager.preflight import run_preflight_checks
+from update_manager.preflight import run_preflight_checks, safe_extract_zip
 from update_manager.rollback import perform_rollback
 
 logger = logging.getLogger(__name__)
@@ -86,8 +86,7 @@ async def install_update(zip_path: str, admin_id: int, session: AsyncSession) ->
         extract_dir = Path(tempfile.mkdtemp(prefix=f"pl_update_{update.id}_"))
         update_logger.info("Extracting ZIP to %s", extract_dir)
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+        safe_extract_zip(zip_path, extract_dir)
 
         # Step 4: Copy files to app dir
         files_dir = extract_dir / "files"
@@ -103,7 +102,11 @@ async def install_update(zip_path: str, admin_id: int, session: AsyncSession) ->
 
         # Step 5: Run migrations
         migrations_dir = extract_dir / "migrations"
-        if manifest.get("requires_db_migration") and migrations_dir.exists():
+        if manifest.get("requires_db_migration"):
+            raise RuntimeError(
+                "In-process database migrations are disabled; use host-level release deployment"
+            )
+        if False and migrations_dir.exists():  # defensive dead branch; kept for old package compatibility
             await _set_update_status(update, UpdateStatus.migrating, session)
             update_logger.info("Running database migrations...")
             result = subprocess.run(
