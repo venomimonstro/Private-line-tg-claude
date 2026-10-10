@@ -45,6 +45,17 @@ async def upload_update(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_super_admin),
 ) -> RedirectResponse:
+    # In-process ZIP updates cannot atomically restart both admin and bot,
+    # and cannot safely roll PostgreSQL schema back from inside a DB-connected
+    # process. Production updates are host-orchestrated through release scripts.
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "ZIP-обновления из админки отключены для безопасности. "
+            "Используйте host-level git/release deployment."
+        ),
+    )
+
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Файл должен иметь расширение .zip")
 
