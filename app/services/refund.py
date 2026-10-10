@@ -12,6 +12,7 @@ from app.models.payment import Payment
 from app.models.refund_request import RefundRequest
 from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
+from app.models.user import User
 from app.services.notification import notify_admin
 
 logger = logging.getLogger(__name__)
@@ -136,13 +137,24 @@ async def process_refund(
                 for key in keys_result.scalars().all():
                     server = await session.get(VpnServer, key.server_id)
                     if server:
-                        await vpn_key_service.disable_vpn_key(key, server, session)
+                        disabled = await vpn_key_service.disable_vpn_key(
+                            key, server, session
+                        )
+                        if disabled:
+                            server.current_users = max(0, server.current_users - 1)
+                        else:
+                            logger.error(
+                                "Refund %d: remote VPN disable not confirmed for key %d",
+                                req.id, key.id,
+                            )
 
+        db_user = await session.get(User, req.user_id)
+        telegram_id = db_user.telegram_id if db_user else None
         bot = get_bot()
-        if bot is not None:
+        if bot is not None and telegram_id:
             try:
                 await bot.send_message(
-                    chat_id=req.user_id,
+                    chat_id=telegram_id,
                     text=(
                         f"✅ Ваша заявка на возврат #{req.id} одобрена.\n"
                         f"Средства будут возвращены в течение 3–5 рабочих дней.\n"
@@ -152,11 +164,13 @@ async def process_refund(
             except Exception as exc:
                 logger.error("Failed to notify user %s about refund: %s", req.user_id, exc)
     else:
+        db_user = await session.get(User, req.user_id)
+        telegram_id = db_user.telegram_id if db_user else None
         bot = get_bot()
-        if bot is not None:
+        if bot is not None and telegram_id:
             try:
                 await bot.send_message(
-                    chat_id=req.user_id,
+                    chat_id=telegram_id,
                     text=(
                         f"❌ Заявка на возврат #{req.id} отклонена.\n"
                         f"Комментарий: {admin_comment or 'нет'}"
