@@ -94,29 +94,50 @@ if [[ "$READY" != true ]]; then
     exit 1
 fi
 
-echo "[4/4] Requesting HTTPS through VLESS REALITY / SOCKS5..."
-if curl -q -4 -fsS \
-    --noproxy '' \
-    --proxy "socks5h://127.0.0.1:$SOCKS_PORT" \
-    --connect-timeout 8 \
-    --max-time 25 \
-    https://api.ipify.org \
-    -o "$WORKDIR/egress.txt" 2>"$WORKDIR/curl.log"; then
-    EXIT_IP="$(cat "$WORKDIR/egress.txt")"
-    if [[ "$EXIT_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-        echo "PASS: real VPN tunnel works end-to-end!"
-        echo "VPN exit IPv4: $EXIT_IP"
-        echo "If your app still cannot connect, investigate the client app, its imported profile and your local network."
-        exit 0
+echo "[4/4] Testing multiple destinations through the SAME VLESS tunnel..."
+# A single HTTP endpoint can be blocked or unavailable even when the VPN works.
+# HTTPS + HTTP and IP + domain tests isolate egress / TLS / resolver failures.
+SUCCESS=0
+FAILURES=0
+probe() {
+    local label="$1" url="$2" body="$WORKDIR/egress.txt" err="$WORKDIR/curl.log"
+    local code exit_code
+    : > "$body"
+    : > "$err"
+    code="$(curl -q -4 -sS -o "$body" -w '%{http_code}' \
+        --noproxy '' --proxy "socks5h://127.0.0.1:$SOCKS_PORT" \
+        --connect-timeout 7 --max-time 16 \
+        "$url" 2>"$err")" && exit_code=0 || exit_code=$?
+    if [[ "$exit_code" == 0 && "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
+        echo "PASS: $label (HTTP $code)"
+        SUCCESS=$((SUCCESS + 1))
+        if [[ "$label" == "IPv4 via HTTPS" ]]; then
+            EXIT_IP="$(head -c 64 "$body" | tr -dc '0-9.')"
+            [[ "$EXIT_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && \
+                echo "VPN egress IPv4: $EXIT_IP"
+        fi
+    else
+        echo "FAIL: $label (curl_exit=$exit_code http_status=${code:-none})"
+        sed -E \
+            -e 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[UUID]/g' \
+            "$err" | tail -n 3
+        FAILURES=$((FAILURES + 1))
     fi
-fi
+}
+probe "IPv4 via HTTPS" "https://api.ipify.org"
+probe "Cloudflare HTTPS" "https://www.cloudflare.com/cdn-cgi/trace"
+probe "Google HTTPS" "https://www.google.com/generate_204"
+probe "Cloudflare HTTP (IP)" "http://1.1.1.1/cdn-cgi/trace"
+probe "Google HTTP" "http://connectivitycheck.gstatic.com/generate_204"
 
-echo "FAIL: HTTPS through real VLESS REALITY tunnel did not succeed."
-echo "Curl diagnostics:"
-tail -n 10 "$WORKDIR/curl.log" | \
-    sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[UUID]/g'
+echo "RESULT: $SUCCESS/5 destinations returned HTTP responses through the VPN."
+if (( SUCCESS >= 3 )); then
+    echo "PASS: tunnel has functional internet egress on multiple destinations."
+    exit 0
+fi
+echo "FAIL: insufficient internet egress through tunnel; inspect node DNS, outbound routing and firewall."
 echo "Temporary Xray client logs:"
-docker logs --tail 35 "$PROBE_NAME" 2>&1 | \
+docker logs --tail 25 "$PROBE_NAME" 2>&1 | \
     sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[UUID]/g'
-echo "Next: check Xray server logs on node 185.236.25.152, and outbound access from the node."
+echo "NEXT: on MAIN server run: ssh root@185.236.25.152 'bash -s' < scripts/inspect_node_vless.sh"
 exit 1
