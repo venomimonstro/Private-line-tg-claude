@@ -554,13 +554,6 @@ async def migrate_outline_to_vless(
             # Create-before-cutover: never remove the customer's working
             # credential until the replacement VLESS profile exists and passes
             # the same client formatter used by Telegram.
-            already_target = (await session.execute(
-                select(VpnKey.id).where(
-                    VpnKey.subscription_id == old_key.subscription_id,
-                    VpnKey.server_id == target.id,
-                    VpnKey.status == VpnKeyStatus.active,
-                ).limit(1)
-            )).scalar_one_or_none() is not None
             new_key = await create_vpn_key(
                 user_id=old_key.user_id,
                 subscription_id=old_key.subscription_id,
@@ -571,8 +564,6 @@ async def migrate_outline_to_vless(
             )
             from app.services.vpn_key import get_client_access_url
             get_client_access_url(new_key)  # strict VLESS Reality validation
-            if not already_target:
-                target.current_users += 1
             await session.flush()
 
             disabled = await disable_vpn_key(old_key, old_server, session)
