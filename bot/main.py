@@ -66,7 +66,13 @@ async def main() -> None:
         scheduler.start()
         logger.info("Scheduler started")
     except Exception as exc:
-        logger.error("Failed to start scheduler: %s", exc)
+        logger.critical(
+            "Scheduler startup failed; refusing to run bot without recovery/expiry/backup jobs: %s",
+            exc,
+            exc_info=True,
+        )
+        await shutdown(bot)
+        raise
 
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
