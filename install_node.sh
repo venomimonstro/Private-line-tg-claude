@@ -188,7 +188,7 @@ fi
 # recent: "PrivateKey:" / "Password:" / "Password (PublicKey):"
 # Match the label, never mistake Hash32 for the public key.
 PRIVATE_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^private ?key$/ { print $2; exit }')
-PUBLIC_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^(public ?key|password( \\(publickey\\))?)$/ { print $2; exit }')
+PUBLIC_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^(public ?key|password( \(publickey\))?)$/ { print $2; exit }')
 
 [[ "$PRIVATE_KEY" =~ ^[A-Za-z0-9_-]{43,44}$ && "$PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43,44}$ ]] || die "Не удалось извлечь корректные Reality ключи. Проверьте вывод xray x25519."
 
