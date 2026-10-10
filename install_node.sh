@@ -183,10 +183,14 @@ if [[ -z "$XRAY_KEYS" ]]; then
     die "Не удалось сгенерировать Reality ключи. Убедитесь что контейнер marzban запущен."
 fi
 
-PRIVATE_KEY=$(echo "$XRAY_KEYS" | grep "Private key" | awk '{print $3}')
-PUBLIC_KEY=$(echo "$XRAY_KEYS" | grep "Public key" | awk '{print $3}')
+# Xray outputs vary by release:
+# legacy: "Private key:" / "Public key:"
+# recent: "PrivateKey:" / "Password:" / "Password (PublicKey):"
+# Match the label, never mistake Hash32 for the public key.
+PRIVATE_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^private ?key$/ { print $2; exit }')
+PUBLIC_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^(public ?key|password( \\(publickey\\))?)$/ { print $2; exit }')
 
-[[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || die "Не удалось извлечь Reality ключи"
+[[ "$PRIVATE_KEY" =~ ^[A-Za-z0-9_-]{43,44}$ && "$PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43,44}$ ]] || die "Не удалось извлечь корректные Reality ключи. Проверьте вывод xray x25519."
 
 success "Reality Public Key: $PUBLIC_KEY"
 
@@ -300,9 +304,15 @@ ufw default deny incoming >/dev/null 2>&1
 ufw default allow outgoing >/dev/null 2>&1
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
 ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1
-ufw allow "${PROXY_PORT}/tcp" comment "Marzban API proxy" >/dev/null 2>&1
+if [[ -n "${MAIN_SERVER_IP:-}" ]]; then
+    ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp comment "Marzban API (main server only)" >/dev/null 2>&1
+    success "API порт $PROXY_PORT доступен только с основного сервера $MAIN_SERVER_IP"
+else
+    ufw allow "${PROXY_PORT}/tcp" comment "Marzban API proxy" >/dev/null 2>&1
+    warn "API порт $PROXY_PORT открыт всем. Задайте MAIN_SERVER_IP для ограничения доступа."
+fi
 ufw --force enable >/dev/null 2>&1
-success "Открыты порты: 22 (SSH), $VPN_PORT (VLESS Reality), $PROXY_PORT (API)"
+success "Открыты SSH 22 и VLESS Reality $VPN_PORT"
 
 # ─── Socat proxy: expose Marzban API externally ───────────────────────────────
 section "Настройка внешнего доступа к API"
@@ -355,7 +365,7 @@ HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Content-Type: application/json" \
     -H "X-Node-Token: ${NODE_TOKEN}" \
     -d "$PAYLOAD" \
-    --max-time 30)
+    --max-time 30 || printf '\n000')
 
 HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
 HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
