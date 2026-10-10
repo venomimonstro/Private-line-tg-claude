@@ -729,7 +729,9 @@ async def register_node(
         server.api_secret_encrypted = encrypt(creds)
         server.max_users = max(1, body.max_users)
         server.status = VpnServerStatus.active
-        server.is_selectable = True
+        # Existing published nodes stay published; a newly registered node must
+        # pass the control-plane disposable VLESS smoke before publication.
+        server.is_selectable = bool(server.is_selectable)
         server.failure_count = 0
         server.last_error = None
         server.last_error_at = None
@@ -746,7 +748,7 @@ async def register_node(
             api_secret_encrypted=encrypt(creds),
             max_users=max(1, body.max_users),
             status=VpnServerStatus.active,
-            is_selectable=True,
+            is_selectable=False,
         )
         session.add(server)
         action = "registered"
@@ -756,6 +758,9 @@ async def register_node(
         "ok": True,
         "server_id": server.id,
         "action": action,
-        "message": f"VPN node '{body.name}' verified and {action}",
+        "message": (
+            f"VPN node '{body.name}' structurally verified and {action}; "
+            "new nodes remain staging until production VLESS smoke passes"
+        ),
     }
 
