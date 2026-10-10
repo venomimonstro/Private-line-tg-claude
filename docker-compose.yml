@@ -71,7 +71,7 @@ services:
 
   admin:
     build: .
-    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --workers 1
+    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="*"
     env_file: .env
     environment:
       - PYTHONPATH=/app
