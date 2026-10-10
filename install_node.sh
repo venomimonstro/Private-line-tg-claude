@@ -32,11 +32,29 @@ case "$OS_ID" in
     *) die "Поддерживаются только Ubuntu и Debian. Обнаружена: $OS_ID" ;;
 esac
 
-# ─── Get server IP ────────────────────────────────────────────────────────────
-SERVER_IP=$(curl -s --max-time 10 ifconfig.me 2>/dev/null \
-    || curl -s --max-time 10 api.ipify.org 2>/dev/null \
-    || hostname -I | awk '{print $1}')
-success "IP сервера: $SERVER_IP"
+# ─── Get public IPv4 ────────────────────────────────────────────────────────
+# VLESS hosts and Marzban API must use a routable address. Do not silently
+# accept IPv6 from dual-stack IP echo endpoints: unbracketed IPv6 breaks URLs.
+# NODE_PUBLIC_IP lets operators override discovery (useful for NAT setups).
+SERVER_IP="${NODE_PUBLIC_IP:-}"
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP=$(curl -4 -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
+fi
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP=$(curl -4 -fsS --max-time 10 https://ifconfig.me/ip 2>/dev/null || true)
+fi
+if ! SERVER_IP="$SERVER_IP" python3 -c '
+import ipaddress, os, sys
+try:
+    ip = ipaddress.IPv4Address(os.environ["SERVER_IP"].strip())
+    if not ip.is_global:
+        sys.exit(1)
+except ValueError:
+    sys.exit(1)
+' ; then
+    die "Не удалось определить публичный IPv4. Укажите NODE_PUBLIC_IP=ваш_IP перед запуском."
+fi
+success "Публичный IPv4 сервера: $SERVER_IP"
 
 # ─── Install dependencies ─────────────────────────────────────────────────────
 section "Установка зависимостей"
