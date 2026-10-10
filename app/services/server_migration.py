@@ -78,18 +78,33 @@ async def migrate_key_to_server(
         return None
 
     try:
-        await vpn_key_service.disable_vpn_key(vpn_key, old_server, session)
-        old_server.current_users = max(0, old_server.current_users - 1)
+        disabled = await vpn_key_service.disable_vpn_key(
+            vpn_key, old_server, session
+        )
     except Exception as exc:
         logger.error(
             "Failed to disable old key %d during migration: %s",
             vpn_key.id,
-            exc,
+            type(exc).__name__,
         )
+        disabled = False
 
-    new_server.current_users += 1
+    # create_vpn_key/disable_vpn_key own both server capacity counters.
+    # If cutover cannot be confirmed, preserve the new verified key so the
+    # customer still has connectivity, but do not report the migration as
+    # complete. The old credential remains ERROR/queued for safe retry.
     new_key.last_reissued_at = datetime.utcnow()
     await session.flush()
+
+    if not disabled:
+        logger.error(
+            "Migration incomplete for subscription %d: new key %d works, "
+            "old key %d remote disable is pending",
+            vpn_key.subscription_id,
+            new_key.id,
+            vpn_key.id,
+        )
+        return None
 
     logger.info(
         "Migrated key for subscription %d from server %d to server %d (new key %d)",
