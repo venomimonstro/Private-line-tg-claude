@@ -103,6 +103,11 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         server = await session.get(VpnServer, op.server_id)
         if server is None:
             raise ValueError(f"Server {op.server_id} not found")
+        from app.enums import VpnServerStatus
+        if server.status != VpnServerStatus.active or not server.is_selectable:
+            raise ValueError("Queued VPN server is disabled or not selectable")
+        if server.max_users and server.current_users >= server.max_users:
+            raise ValueError("Queued VPN server is at capacity")
 
         payload = op.payload or {}
         user_id = payload.get("user_id")
@@ -133,20 +138,23 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
             and sub.expires_at <= datetime.utcnow()
         ):
             raise ValueError("Subscription expired; refusing queued key creation")
+        # Idempotency is per-node: a subscription may legitimately have
+        # active keys on several selectable VPN nodes.
         existing = (await session.execute(
             select(VpnKey).where(
                 VpnKey.subscription_id == op.subscription_id,
+                VpnKey.server_id == op.server_id,
                 VpnKey.status == VpnKeyStatus.active,
             )
         )).scalars().all()
         if existing:
             if len(existing) != 1:
-                raise ValueError("Multiple active keys require manual reconciliation")
+                raise ValueError("Multiple active keys on one node require reconciliation")
             op.vpn_key_id = existing[0].id
             logger.info(
-                "Skipping stale queued key creation for subscription %s: "
+                "Skipping stale queued key creation for subscription %s on server %s: "
                 "active key %s is already issued",
-                op.subscription_id, existing[0].id,
+                op.subscription_id, op.server_id, existing[0].id,
             )
             return
 
