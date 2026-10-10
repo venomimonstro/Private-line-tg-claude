@@ -112,6 +112,44 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         if user_id is None:
             raise ValueError("create_key payload missing user_id")
 
+        # A delayed create operation must not rotate/delete an already issued
+        # active key. Previously create_vpn_key() purged it before its API call,
+        # so stale retries could strand a paid user with an orphaned VLESS link.
+        from app.enums import SubscriptionStatus, VpnKeyStatus
+        from app.models.subscription import Subscription
+
+        sub = await session.get(Subscription, op.subscription_id)
+        if sub is None or sub.status not in (
+            SubscriptionStatus.activation_error,
+            SubscriptionStatus.active,
+            SubscriptionStatus.expires_soon,
+        ):
+            raise ValueError("Queued creation requires an eligible subscription")
+        if sub.user_id != int(user_id):
+            raise ValueError("Queued creation user/subscription mismatch")
+        if (
+            sub.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon)
+            and sub.expires_at is not None
+            and sub.expires_at <= datetime.utcnow()
+        ):
+            raise ValueError("Subscription expired; refusing queued key creation")
+        existing = (await session.execute(
+            select(VpnKey).where(
+                VpnKey.subscription_id == op.subscription_id,
+                VpnKey.status == VpnKeyStatus.active,
+            )
+        )).scalars().all()
+        if existing:
+            if len(existing) != 1:
+                raise ValueError("Multiple active keys require manual reconciliation")
+            op.vpn_key_id = existing[0].id
+            logger.info(
+                "Skipping stale queued key creation for subscription %s: "
+                "active key %s is already issued",
+                op.subscription_id, existing[0].id,
+            )
+            return
+
         vpn_key = await vpn_key_service.create_vpn_key(
             user_id=int(user_id),
             subscription_id=op.subscription_id,
