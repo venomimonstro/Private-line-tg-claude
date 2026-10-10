@@ -22,7 +22,10 @@ PY
 echo "[2/6] Checking production shell scripts..."
 for name in     install_node.sh     scripts/update_node_xray.sh     scripts/probe_vless_e2e.sh     scripts/inspect_node_vless.sh     scripts/smoke_vpn_node.sh     scripts/production_vpn_gate.sh     scripts/preflight_release.sh     scripts/update_vpn_stability.sh     scripts/repair_registered_node_ipv4.sh \
     scripts/validate_install_layout.sh \
-    scripts/migrate_marzban_env_admin.sh; do
+    scripts/migrate_marzban_env_admin.sh \
+    scripts/restore_postgres_backup.sh \
+    scripts/restore.sh \
+    scripts/verify_backup.sh; do
     bash -n "$name"
 done
 echo "PASS: shell syntax"
