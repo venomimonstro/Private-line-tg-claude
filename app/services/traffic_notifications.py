@@ -14,6 +14,7 @@ _THRESHOLDS = [80, 95]  # percent
 
 async def check_traffic_limits(session: AsyncSession) -> None:
     from app.models.vpn_key import VpnKey
+    from app.models.user import User
 
     result = await session.execute(
         select(VpnKey).where(
@@ -31,12 +32,15 @@ async def check_traffic_limits(session: AsyncSession) -> None:
         percent = (key.traffic_used_gb / key.traffic_limit_gb) * 100.0
         gb_remaining = key.traffic_limit_gb - key.traffic_used_gb
 
+        user = await session.get(User, key.user_id)
+        if user is None or not user.telegram_id:
+            continue
         if percent >= 95 and not key.notified_95pct:
-            await notify_traffic_threshold(key.user_id, 95, max(0.0, gb_remaining))
+            await notify_traffic_threshold(user.telegram_id, 95, max(0.0, gb_remaining))
             key.notified_95pct = True
             notifications_sent += 1
         elif percent >= 80 and not key.notified_80pct:
-            await notify_traffic_threshold(key.user_id, 80, max(0.0, gb_remaining))
+            await notify_traffic_threshold(user.telegram_id, 80, max(0.0, gb_remaining))
             key.notified_80pct = True
             notifications_sent += 1
 
@@ -47,13 +51,13 @@ async def check_traffic_limits(session: AsyncSession) -> None:
         logger.debug("No traffic threshold notifications needed")
 
 
-async def notify_traffic_threshold(user_id: int, percent: int, gb_remaining: float) -> None:
+async def notify_traffic_threshold(telegram_id: int, percent: int, gb_remaining: float) -> None:
     """Send Telegram notification for traffic threshold."""
     from app.bot_instance import get_bot
 
     bot = get_bot()
     if bot is None:
-        logger.warning("Bot not available for traffic notification to user %d", user_id)
+        logger.warning("Bot not available for traffic notification to Telegram %d", telegram_id)
         return
 
     if percent >= 95:
@@ -74,7 +78,7 @@ async def notify_traffic_threshold(user_id: int, percent: int, gb_remaining: flo
 
     try:
         await bot.send_message(
-            chat_id=user_id,
+            chat_id=telegram_id,
             text=text,
             parse_mode="HTML",
         )
