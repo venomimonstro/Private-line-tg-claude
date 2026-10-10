@@ -193,6 +193,7 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
 async def _find_best_server(session: AsyncSession) -> VpnServer | None:
     """Return the active server with the fewest recent errors."""
     from app.services.circuit_breaker import get_circuit_breaker, CircuitState
+    from app.services.vpn_key import _server_protocol
 
     result = await session.execute(
         select(VpnServer)
@@ -206,6 +207,8 @@ async def _find_best_server(session: AsyncSession) -> VpnServer | None:
     servers = result.scalars().all()
 
     for server in servers:
+        if _server_protocol(server) != "marzban":
+            continue
         if server.max_users and server.current_users >= server.max_users:
             continue
         cb = get_circuit_breaker(server.id)
