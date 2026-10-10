@@ -12,7 +12,7 @@ SUB_ID="${1:-}"
 }
 cd "$(dirname "$0")/.."
 
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.9"
+XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.9.9}"
 SOCKS_PORT=19580
 PROBE_NAME="private-line-vless-probe-$$"
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
