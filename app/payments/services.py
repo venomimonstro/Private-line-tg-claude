@@ -420,10 +420,27 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
     # ── Normal activation / renewal ───────────────────────────────────────────
     if subscription.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
         subscription.tariff_id = tariff.id
-        await subscription_service.extend_subscription(subscription, tariff.duration_days, session)
-        logger.info("Extended subscription %d by %d days (renewal)", subscription.id, tariff.duration_days)
+        await subscription_service.extend_subscription(
+            subscription, tariff.duration_days, session
+        )
+        renewal_key = await subscription_service.ensure_subscription_vpn_key(
+            subscription, tariff, session
+        )
+        if renewal_key is None:
+            raise RuntimeError(
+                f"Payment {payment.id} renewal has no coherent VPN credential"
+            )
+        logger.info(
+            "Extended subscription %d by %d days with verified VPN key %d",
+            subscription.id, tariff.duration_days, renewal_key.id,
+        )
         if telegram_id:
-            await notify_payment_confirmed(telegram_id, float(payment.amount), is_renewal=True, subscription=subscription)
+            await notify_payment_confirmed(
+                telegram_id,
+                float(payment.amount),
+                is_renewal=True,
+                subscription=subscription,
+            )
     else:
         subscription.status = SubscriptionStatus.pending_payment
         activated_key = await subscription_service.activate_subscription(
