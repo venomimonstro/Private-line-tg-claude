@@ -12,7 +12,7 @@ SUB_ID="${1:-}"
 }
 cd "$(dirname "$0")/.."
 
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.30"
+XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.9"
 SOCKS_PORT=19580
 PROBE_NAME="private-line-vless-probe-$$"
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
@@ -45,8 +45,23 @@ fi
 echo "[2/4] Preparing confidential Xray config for subscription $SUB_ID..."
 if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
     --subscription "$SUB_ID" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
-    echo "ERROR: could not prepare probe config; no secrets printed." >&2
-    exit 2
+    echo "No active VLESS key found under subscription $SUB_ID." >&2
+    if [[ ! -e /dev/tty ]]; then
+        echo "ERROR: no interactive terminal; use --stdin-url directly." >&2
+        exit 2
+    fi
+    printf 'Paste FULL vless:// link from Telegram (input hidden): ' > /dev/tty
+    VLESS_URL=""
+    IFS= read -r -s VLESS_URL < /dev/tty || { echo "No input received" >&2; exit 2; }
+    printf '\n' > /dev/tty
+    if ! printf '%s\n' "$VLESS_URL" | docker compose exec -T admin \
+        python -m app.vless_e2e_probe_config \
+        --stdin-url --socks-port "$SOCKS_PORT" >"$CONFIG"; then
+        unset VLESS_URL
+        echo "ERROR: pasted VLESS link did not pass validation." >&2
+        exit 2
+    fi
+    unset VLESS_URL
 fi
 python3 -m json.tool "$CONFIG" >/dev/null
 
@@ -80,8 +95,9 @@ if [[ "$READY" != true ]]; then
 fi
 
 echo "[4/4] Requesting HTTPS through VLESS REALITY / SOCKS5..."
-if curl -4 -fsS \
-    --socks5-hostname "127.0.0.1:$SOCKS_PORT" \
+if curl -q -4 -fsS \
+    --noproxy '' \
+    --proxy "socks5h://127.0.0.1:$SOCKS_PORT" \
     --connect-timeout 8 \
     --max-time 25 \
     https://api.ipify.org \
