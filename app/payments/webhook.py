@@ -107,7 +107,7 @@ async def payment_webhook(
         # PAID + fulfilled_at=NULL. confirm_payment_auto is row-lock/idempotent.
         if result.fulfilled_at is None:
             await confirm_payment_auto(result, session)
-            state = "recovered" if result.fulfilled_at is not None else "fulfillment_pending"
+            state = "recovery_processed"
         else:
             state = "already_processed"
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
