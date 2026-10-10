@@ -219,6 +219,12 @@ RELEASE_ID=$(py_cli create \
 [[ -n "$RELEASE_ID" ]] && ok "Release #$RELEASE_ID registered" || warn "Continuing without DB tracking"
 
 # ── Auto-rollback function ────────────────────────────────────────────────────
+# Keep an independent restore helper because git rollback may change/remove it.
+ROLLBACK_RESTORE_HELPER="/tmp/private-line-db-rollback-$$.sh"
+cp -p scripts/restore_postgres_backup.sh "$ROLLBACK_RESTORE_HELPER"
+chmod 700 "$ROLLBACK_RESTORE_HELPER"
+MIGRATION_TOUCHED=0
+
 auto_rollback() {
     local reason="$1"
     err "DEPLOY FAILED: $reason"
@@ -228,19 +234,33 @@ auto_rollback() {
         py_cli fail "$RELEASE_ID" --error "$reason" 2>/dev/null || true
     fi
 
-    warn "Reverting to ${PREV_COMMIT:0:7}..."
-    git checkout "$PREV_COMMIT" -- . 2>/dev/null || true
-    docker compose restart admin bot 2>/dev/null || true
+    warn "Reverting code to ${PREV_COMMIT:0:7}..."
+    git reset --hard "$PREV_COMMIT" >/dev/null 2>&1 || {
+        err "FATAL: Git rollback failed"
+        exit 2
+    }
 
-    sleep 5
-    if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; then
-        ok "Rollback successful — system restored to ${PREV_COMMIT:0:7}"
+    if [[ "$MIGRATION_TOUCHED" -eq 1 ]]; then
+        warn "Database migration was attempted; restoring pre-release dump..."
+        if ! PRIVATE_LINE_ROOT="$DEPLOY_DIR" PRIVATE_LINE_SKIP_LAYOUT_VALIDATION=1 \
+            bash "$ROLLBACK_RESTORE_HELPER" "$PRE_RELEASE_BACKUP"; then
+            err "FATAL: database rollback failed. Backup: $PRE_RELEASE_BACKUP"
+            exit 2
+        fi
     else
-        err "Rollback done but system still unhealthy — manual intervention required!"
+        docker compose restart admin bot >/dev/null 2>&1 || true
+    fi
+
+    rm -f "$ROLLBACK_RESTORE_HELPER"
+    sleep 3
+    if curl -sf --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+        ok "Rollback successful — code and required database state restored"
+    else
+        err "Rollback completed but admin is unhealthy — manual intervention required"
+        exit 2
     fi
     exit 1
 }
-
 # ── Step 5: Validate NEW Python files ────────────────────────────────────────
 log "🔍 [5/8] Validating new Python files..."
 SYNTAX_ERRORS=0
