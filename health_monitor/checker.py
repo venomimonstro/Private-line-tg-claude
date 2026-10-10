@@ -16,7 +16,7 @@ from app.models.health_check import SystemHealthCheck
 from app.models.subscription import Subscription
 from app.models.vpn_server import VpnServer
 from app.services.notification import notify_admin
-from app.services.vpn_key import _make_client  # reuse protocol detection
+from app.services.vpn_key import _make_client, _server_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,10 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
             VpnServer.provider != "private-line-primary",
         )
     )
-    vpn_servers = list(vpn_server_result.scalars().all())
+    vpn_servers = [
+        s for s in vpn_server_result.scalars().all()
+        if _server_protocol(s) == "marzban"
+    ]
     if vpn_servers:
         failures: list[str] = []
         from app.services.vpn_reconcile import reconcile_marzban_server
