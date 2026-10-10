@@ -234,9 +234,23 @@ async def _job_repair_marzban_inbounds() -> None:
         logger.error("repair_marzban_inbounds job failed: %s", exc, exc_info=True)
 
 
-def create_scheduler() -> AsyncIOScheduler:
-    from datetime import datetime, timezone as _tz
+async def _job_vpn_integrity_audit() -> None:
+    """Read-only VPN fleet audit. Never rotates or rewrites user credentials."""
+    logger.info("Running: vpn_integrity_audit")
+    try:
+        from app.audit_vpn_nodes import audit
+        from app.services.notification import notify_admin
+        rc = await audit()
+        if rc != 0:
+            await notify_admin(
+                "🔴 VPN integrity audit failed. Automatic credential repair is disabled; "
+                "run the explicit stabilization command."
+            )
+    except Exception as exc:
+        logger.error("vpn_integrity_audit failed: %s", type(exc).__name__, exc_info=True)
 
+
+def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(_job_expire_subscriptions, "cron", hour=2, minute=0)
     scheduler.add_job(_job_check_expiring_soon, "cron", hour=9, minute=0)
@@ -254,12 +268,12 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
     scheduler.add_job(_job_subscription_watchdog, "interval", minutes=30, jitter=60)
-    # Repair Marzban users: check URL params AND verify user exists in Marzban DB.
-    # Runs on startup and every 15 min — detects DB wipes and config changes quickly.
+    # Production safety: scheduled jobs are read-only with respect to VPN
+    # credentials. Destructive/repair actions require an explicit operator run.
     scheduler.add_job(
-        _job_repair_marzban_inbounds,
+        _job_vpn_integrity_audit,
         "interval",
-        minutes=15,
-        next_run_time=datetime.now(_tz.utc),
+        minutes=30,
+        jitter=60,
     )
     return scheduler
