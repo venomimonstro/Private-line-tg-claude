@@ -20,7 +20,37 @@ async def enqueue_create_key(
     payload: dict[str, Any],
     session: AsyncSession,
 ) -> PendingOperation:
-    """Enqueue a create_key operation for later processing."""
+    """Enqueue at most one live create operation per subscription/node.
+
+    Repeated API failures must not build a retry storm that races the same
+    Marzban username and later replays stale provisioning attempts.
+    """
+    existing = (await session.execute(
+        select(PendingOperation).where(
+            PendingOperation.operation_type == PendingOperationType.create_key.value,
+            PendingOperation.subscription_id == subscription_id,
+            PendingOperation.server_id == server_id,
+            PendingOperation.completed_at.is_(None),
+        ).order_by(PendingOperation.id.desc())
+    )).scalars().first()
+    if existing is not None:
+        # Keep the latest desired non-secret metadata and bring an exhausted
+        # transient operation back into a bounded retry window.
+        existing.payload = payload
+        if existing.attempts >= existing.max_attempts:
+            existing.attempts = 0
+            existing.last_error = None
+        existing.next_retry_at = min(
+            existing.next_retry_at or datetime.utcnow(),
+            datetime.utcnow() + timedelta(minutes=2),
+        )
+        await session.flush()
+        logger.info(
+            "Reusing pending create operation %d for subscription %d on server %d",
+            existing.id, subscription_id, server_id,
+        )
+        return existing
+
     op = PendingOperation(
         operation_type=PendingOperationType.create_key.value,
         subscription_id=subscription_id,
@@ -33,9 +63,7 @@ async def enqueue_create_key(
     await session.flush()
     logger.info(
         "Enqueued create_key operation %d for subscription %d on server %d",
-        op.id,
-        subscription_id,
-        server_id,
+        op.id, subscription_id, server_id,
     )
     return op
 
