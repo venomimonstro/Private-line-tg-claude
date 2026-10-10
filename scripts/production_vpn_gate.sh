@@ -51,6 +51,17 @@ curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "
 CURRENT_STEP="2/10 preflight"; echo "=== 2/10 Static/release preflight ==="
 bash scripts/preflight_release.sh
 
+echo "Applying tested Python code to long-running processes..."
+docker compose restart admin bot >/dev/null
+for _ in $(seq 1 30); do
+    if curl -q -fsS --max-time 3 http://127.0.0.1:8000/_health >/dev/null 2>&1; then
+        break
+    fi
+    sleep 2
+done
+curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "Admin did not recover after tested-code restart"
+docker compose ps admin bot db nginx
+
 CURRENT_STEP="3/10 control-plane integration"; echo "=== 3/10 Control-plane integration ==="
 docker compose exec -T admin python -m app.verify_control_plane
 
