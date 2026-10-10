@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import logging
 import re
 from dataclasses import dataclass
@@ -443,8 +444,8 @@ class MarzbanClient:
             from urllib.parse import parse_qs as _pqs, urlparse as _uparse
             _actual_sni = _pqs(_uparse(access_url).query).get("sni", [sni])[0]
             logger.info(
-                "Applied Reality params for %s: pbk=%.8s... sid=%s sni_in_url=%s (raw=%s)",
-                safe_name, public_key, short_id, _actual_sni, sni,
+                "Applied verified Reality params for %s (sni=%s)",
+                safe_name, _actual_sni,
             )
         else:
             logger.error(
@@ -460,9 +461,50 @@ class MarzbanClient:
 
         if not access_url.startswith("vless://"):
             raise MarzbanConfigError(
-                f"Final access URL for '{safe_name}' does not start with vless://: "
-                f"{access_url[:80]}"
+                f"Final access URL for '{safe_name}' is not a VLESS share URI"
             )
+
+        # Fail closed if Marzban generated a client endpoint that differs from
+        # its published public host. A syntactically valid VLESS URI pointing at
+        # localhost/API/private IP must never be stored as an active customer key.
+        config = await self._get_core_config()
+        reality_inbounds = [
+            item for item in (config or {}).get("inbounds", [])
+            if item.get("protocol") == "vless"
+            and item.get("streamSettings", {}).get("security") == "reality"
+        ]
+        if len(reality_inbounds) != 1:
+            raise MarzbanConfigError("Expected exactly one VLESS Reality inbound")
+        inbound_tag = reality_inbounds[0].get("tag")
+        inbound_port = reality_inbounds[0].get("port")
+        if not inbound_tag or not isinstance(inbound_port, int):
+            raise MarzbanConfigError("Invalid VLESS Reality inbound metadata")
+
+        hosts_resp = await self._client.get(
+            f"{self._base}/api/hosts", headers=headers
+        )
+        if hosts_resp.status_code != 200 or not isinstance(hosts_resp.json(), dict):
+            raise MarzbanConfigError("Marzban public hosts are unavailable")
+        host_entries = hosts_resp.json().get(inbound_tag, [])
+        public_hosts = []
+        for item in host_entries if isinstance(host_entries, list) else []:
+            if not isinstance(item, dict) or item.get("is_disabled") in (True, "true", "True"):
+                continue
+            address = item.get("address")
+            try:
+                if isinstance(address, str) and ipaddress.ip_address(address).is_global:
+                    public_hosts.append(item)
+            except ValueError:
+                continue
+        if len(public_hosts) != 1:
+            raise MarzbanConfigError("Expected exactly one active globally routable Marzban host")
+
+        final = urlparse(access_url)
+        expected_host = public_hosts[0].get("address")
+        configured_port = public_hosts[0].get("port")
+        expected_port = inbound_port if configured_port in (None, "", 0, "0") else int(configured_port)
+        if final.hostname != expected_host or final.port != expected_port:
+            raise MarzbanConfigError("Generated VLESS endpoint differs from published Marzban host")
 
         logger.info("Key ready for %s (credentials omitted)", safe_name)
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
