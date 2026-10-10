@@ -183,12 +183,9 @@ async def create_vpn_key(
             f"{subscription_id}: {raw_key.access_url[:60]}"
         )
 
-    logger.info(
-        "Storing key for sub %d user %d: %s...%s",
-        subscription_id, user_id,
-        raw_key.access_url[:40],
-        raw_key.access_url[-20:] if len(raw_key.access_url) > 60 else "",
-    )
+    # Never log raw VLESS URLs (even partial strings include the client's UUID).
+    logger.info("VPN access key issued for subscription %d, user %d, server %d",
+                subscription_id, user_id, server.id)
 
     vpn_key = VpnKey(
         user_id=user_id,
