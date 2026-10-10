@@ -84,8 +84,6 @@ async def disable_key(
         )
 
     disabled = await vpn_key_service.disable_vpn_key(key, server, session)
-    if disabled:
-        server.current_users = max(0, server.current_users - 1)
 
     session.add(AdminLog(
         admin_user_id=admin.id,
