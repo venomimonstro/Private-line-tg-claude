@@ -116,19 +116,27 @@ async def reality_debug(
         return {"error": f"Failed to connect to Marzban: {exc}", "api_url": server.api_url}
 
     if reality is None:
-        # Try to get raw config for debugging
+        # Never return raw /api/core/config: it contains Reality privateKey.
+        # Report only non-secret structural metadata.
         try:
-            headers = await client._headers()
-            resp = await client._client.get(f"{client._base}/api/core/config", headers=headers)
-            raw = resp.text[:2000]
+            cfg = await client._get_core_config()
+            inbound_summary = [
+                {
+                    "tag": item.get("tag"),
+                    "protocol": item.get("protocol"),
+                    "port": item.get("port"),
+                    "security": item.get("streamSettings", {}).get("security"),
+                }
+                for item in (cfg or {}).get("inbounds", [])
+            ]
         except Exception as exc:
-            raw = str(exc)
+            inbound_summary = [{"error": type(exc).__name__}]
         await client.aclose()
         return {
             "ok": False,
             "error": "No Reality config found in /api/core/config (no inbound with security=reality)",
             "api_url": server.api_url,
-            "raw_config_snippet": raw,
+            "inbounds": inbound_summary,
         }
 
     public_key, short_id, sni = reality
@@ -136,14 +144,14 @@ async def reality_debug(
     # Extract VPN port from server config for accurate sample URL
     _vpn_port = 443
     try:
-        _cfg = await client.get_core_config() if hasattr(client, "get_core_config") else None
-        if _cfg is None:
-            import json as _j2
-            _raw2 = (await client._client.get(
-                f"{client._base}/api/core/config",
-                headers=await client._headers(),
-            )).json()
-            _vpn_port = _raw2.get("inbounds", [{}])[0].get("port", 443)
+        _cfg = await client._get_core_config()
+        for _inbound in (_cfg or {}).get("inbounds", []):
+            if (
+                _inbound.get("protocol") == "vless"
+                and _inbound.get("streamSettings", {}).get("security") == "reality"
+            ):
+                _vpn_port = _inbound.get("port", 443)
+                break
     except Exception:
         pass
 
@@ -241,7 +249,7 @@ async def test_server(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> dict:
-    """Read-only production-grade node test; never promotes or repairs."""
+    """Read-only structural/API node test; never claims end-to-end VPN health."""
     server = await session.get(VpnServer, server_id)
     if server is None:
         raise HTTPException(status_code=404)
@@ -270,7 +278,7 @@ async def test_server(
             "protocol": "marzban",
             "integrity_errors": result.errors,
             "active_keys_checked": result.checked_keys,
-            "note": "read-only; use safe reconcile to repair/publish",
+            "note": "structural/API check only; run production VLESS smoke for real tunnel health",
         }
     except Exception as exc:
         return {
@@ -657,7 +665,7 @@ async def register_node(
         raise HTTPException(status_code=429, detail="Too many requests")
     stored_token = await _get_or_create_token(session)
     incoming_token = request.headers.get("X-Node-Token", "")
-    if not incoming_token or incoming_token != stored_token:
+    if not incoming_token or not secrets.compare_digest(incoming_token, stored_token):
         raise HTTPException(status_code=401, detail="Invalid registration token")
 
     if not body.marzban_password:
