@@ -119,6 +119,32 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("repair_marzban_keys", block)
         self.assertIn("is disabled", block)
 
+
+    def test_admin_vpn_key_disable_does_not_adjust_capacity_twice(self):
+        text = (ROOT / "admin" / "routes" / "vpn_keys.py").read_text(encoding="utf-8")
+        start = text.index('router.post("/{key_id}/disable")')
+        end = text.index('router.post("/{key_id}/reissue")', start)
+        block = text[start:end]
+        self.assertNotIn("current_users", block)
+        self.assertIn("disable_vpn_key", block)
+
+    def test_server_migration_has_no_manual_capacity_mutation(self):
+        text = (ROOT / "app" / "services" / "server_migration.py").read_text(encoding="utf-8")
+        self.assertNotIn("current_users +=", text)
+        self.assertNotIn("current_users = max", text)
+        self.assertIn("if not disabled:", text)
+
+    def test_legacy_update_script_delegates_to_production_gate(self):
+        text = (ROOT / "scripts" / "update_vpn_stability.sh").read_text(encoding="utf-8")
+        self.assertIn("production_vpn_gate.sh", text)
+        self.assertNotIn("app.stabilize_vless", text)
+
+    def test_direct_ipv4_repair_script_is_retired(self):
+        text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
+        self.assertIn("retired", text.lower())
+        self.assertNotIn("UPDATE vpn_servers", text)
+        self.assertNotIn("/api/hosts", text.split("EOF")[0])
+
     def test_public_subscription_brand(self):
         route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
         self.assertIn('"profile-title": "Private Line VPN"', route)
