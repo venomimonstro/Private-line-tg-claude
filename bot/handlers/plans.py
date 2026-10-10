@@ -554,6 +554,7 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
                 session,
                 provider_name=provider_name,
                 amount_override=final_amount,
+                reuse_existing_subscription=gift_recipient_tg_id is None,
             )
 
             # Tag as gift if recipient was entered
