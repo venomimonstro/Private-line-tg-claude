@@ -162,29 +162,33 @@ while IFS= read -r -d '' pyfile; do
     fi
 done < <(find app bot admin backup_manager health_monitor update_manager releases \
          -name "*.py" -not -path "*/\.*" -print0 2>/dev/null)
-[[ "$SYNTAX_OK" -eq 1 ]] && ok "Current code valid: $CHECKED files" || warn "Current code has syntax errors (will still try to deploy new code)"
+[[ "$SYNTAX_OK" -eq 1 ]] && ok "Current code valid: $CHECKED files" || fail "Current checkout has Python syntax errors; refusing deployment"
 
-# ── Step 2: Create pre-release DB backup ──────────────────────────────────────
-log "💾 [2/8] Creating pre-release database backup..."
-BACKUP_OK=0
-if docker compose exec -T admin python3 -c "
+# ── Step 2: Create mandatory pre-release DB backup ────────────────────────────
+log "💾 [2/8] Creating mandatory pre-release database backup..."
+BACKUP_META="$(docker compose exec -T admin python3 -c "
 import asyncio
+from pathlib import Path
 from app.database import async_session_maker
 from app.enums import BackupType
 from backup_manager.backup import create_backup
 async def _():
     async with async_session_maker() as s:
         b = await create_backup(BackupType.pre_update, s, created_by='release.sh')
-        print(b.id)
+        print(f'{b.id}|{Path(b.file_path).name}')
 asyncio.run(_())
-" 2>/tmp/backup_err; then
-    BACKUP_OK=1
-    ok "Backup created"
-else
-    warn "Backup failed: $(cat /tmp/backup_err | tail -3)"
-    warn "Continuing without backup — rollback may not restore DB"
-fi
-
+" 2>/tmp/backup_err)" || {
+    err "Pre-release backup failed: $(tail -3 /tmp/backup_err 2>/dev/null || true)"
+    fail "Deployment aborted before code changes because rollback would be unsafe"
+}
+BACKUP_META="$(printf '%s\n' "$BACKUP_META" | tail -1 | tr -d '\r')"
+BACKUP_ID="${BACKUP_META%%|*}"
+BACKUP_NAME="${BACKUP_META#*|}"
+[[ "$BACKUP_ID" =~ ^[1-9][0-9]*$ ]] || fail "Invalid backup ID returned by backup manager"
+[[ -n "$BACKUP_NAME" && "$BACKUP_NAME" != "$BACKUP_META" ]] || fail "Invalid backup filename returned by backup manager"
+PRE_RELEASE_BACKUP="$DEPLOY_DIR/backups/$BACKUP_NAME"
+[[ -s "$PRE_RELEASE_BACKUP" ]] || fail "Pre-release backup file is missing or empty: $PRE_RELEASE_BACKUP"
+ok "Backup created and verified: $BACKUP_NAME"
 # ── Step 3: Fetch new code ────────────────────────────────────────────────────
 log "⬇  [3/8] Pulling code from '$BRANCH'..."
 git fetch origin "$BRANCH" 2>&1 | sed 's/^/    /'
