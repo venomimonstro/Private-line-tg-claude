@@ -14,7 +14,7 @@ from app.enums import SubscriptionStatus, VpnServerStatus
 from app.models.vpn_server import VpnServer
 from app.models.user import User
 from app.services.server_access import ServerSelectionError, add_subscription_server_key
-from app.services.vpn_key import get_client_access_url
+from app.services.vpn_key import get_client_access_url, _server_protocol
 from bot.handlers.access import _get_active_subscription
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,6 @@ async def cmd_servers(message: Message, db_user: User) -> None:
             select(VpnServer).where(
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider != "private-line-primary",
                 VpnServer.provider != "private-line-primary",
             ).order_by(VpnServer.id.asc())
         )).scalars().all()
@@ -71,11 +70,13 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
                 VpnServer.provider != "private-line-primary",
-                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc())
         )
-        servers = list(result.scalars().all())
+        servers = [
+            srv for srv in result.scalars().all()
+            if _server_protocol(srv) == "marzban"
+        ]
 
     if not servers:
         await callback.answer("Пока нет доступных VPN-нод.", show_alert=True)
