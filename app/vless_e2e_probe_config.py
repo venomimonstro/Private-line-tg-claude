@@ -76,7 +76,7 @@ async def get_config(subscription_id: int, socks_port: int) -> dict:
             raise ValueError("Invalid Reality public key bytes") from exc
 
         return {
-            "log": {"loglevel": "warning"},
+            "log": {"loglevel": "info"},
             "inbounds": [{
                 "tag": "probe-socks",
                 "listen": "127.0.0.1",
