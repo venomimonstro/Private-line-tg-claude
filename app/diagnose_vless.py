@@ -155,6 +155,7 @@ async def main(sub_id: int, repair: bool) -> int:
                 problems.append("wrong VPN port")
             for key_name, expected in {
                 "security": "reality",
+                "encryption": "none",
                 "pbk": public_key,
                 "sid": short_id,
                 "sni": sni,
