@@ -64,6 +64,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
     echo "[1/5] Downloading container images and Xray 26.9.9..."
     docker pull "$MARZBAN_IMAGE" >/dev/null
     docker pull "$XRAY_IMAGE" >/dev/null
+    MARZBAN_PIN="$(docker image inspect "$MARZBAN_IMAGE" --format '{{index .RepoDigests 0}}')"
+    [[ "$MARZBAN_PIN" == *@sha256:* ]] || {
+        echo "ERROR: cannot pin Marzban image digest"; exit 2;
+    }
     mkdir -p "$DATA_DIR/xray-core"
     chmod 700 "$NODE_DIR"
     CID="$(docker create "$XRAY_IMAGE")"
@@ -78,12 +82,13 @@ if [[ ! -f "$ENV_FILE" ]]; then
 
     # Generate secrets in private root-owned files and never show credentials.
     echo "[2/5] Creating independent Reality credentials and configuration..."
-    python3 - "$NODE_DIR" "$PRIMARY_IP" "$NETWORK" "$XRAY_BIN" <<'PY'
+    python3 - "$NODE_DIR" "$PRIMARY_IP" "$NETWORK" "$XRAY_BIN" "$MARZBAN_PIN" <<'PY'
 import json, os, pathlib, re, secrets, subprocess, sys
 node=pathlib.Path(sys.argv[1])
 ip=sys.argv[2]
 network=sys.argv[3]
 binary=sys.argv[4]
+marzban_pin=sys.argv[5]
 result=subprocess.run([binary,"x25519"],capture_output=True,text=True,check=True)
 keys={}
 for line in result.stdout.splitlines():
@@ -132,6 +137,7 @@ env.write_text(
     "XRAY_JSON=/var/lib/marzban/xray_config.json\n"
     "XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/xray\n"
     f"PRIMARY_VPN_NETWORK={network}\n"
+    f"PRIMARY_MARZBAN_IMAGE={marzban_pin}\n"
 )
 os.chmod(env,0o600)
 credentials=node/"credentials.json"
@@ -156,7 +162,7 @@ fi
 cat > "$NODE_DIR/docker-compose.yml" <<'YAML'
 services:
   marzban:
-    image: gozargah/marzban:latest
+    image: ${PRIMARY_MARZBAN_IMAGE}
     container_name: private-line-primary-node
     restart: unless-stopped
     env_file: .env
