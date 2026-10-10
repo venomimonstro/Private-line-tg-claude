@@ -175,59 +175,108 @@ async def create_payment(
     return payment, payment_result
 
 
+async def _locked_payment(payment_id: int, session: AsyncSession) -> Payment:
+    locked = (await session.execute(
+        select(Payment).where(Payment.id == payment_id).with_for_update()
+    )).scalar_one_or_none()
+    if locked is None:
+        raise RuntimeError(f"Payment {payment_id} disappeared")
+    return locked
+
+
+async def _fulfill_paid_payment(payment_id: int, session: AsyncSession) -> bool:
+    """Exactly-once subscription fulfillment for an already-paid payment.
+
+    Returns True when this call performed fulfillment, False if another worker
+    already completed it. The payment row lock serializes webhook, polling, and
+    recovery workers.
+    """
+    payment = await _locked_payment(payment_id, session)
+    if payment.status != PaymentStatus.paid:
+        raise RuntimeError(f"Payment {payment.id} is not paid")
+    if payment.fulfilled_at is not None:
+        logger.info("Payment %d already fulfilled; duplicate event ignored", payment.id)
+        return False
+
+    await _activate_from_payment(payment, session)
+    payment.fulfilled_at = datetime.utcnow()
+    payment.updated_at = datetime.utcnow()
+    await session.flush()
+    return True
+
+
 async def confirm_payment(
     payment: Payment,
     admin_id: int,
     session: AsyncSession,
 ) -> None:
-    """Confirm payment by admin (manual). Caller must commit."""
-    payment.status = PaymentStatus.paid
-    payment.confirmed_at = datetime.utcnow()
-    payment.confirmed_by_id = admin_id
-    payment.updated_at = datetime.utcnow()
-    await session.flush()
-
-    await _activate_from_payment(payment, session)
+    """Confirm a manual payment exactly once. Caller commits."""
+    payment = await _locked_payment(payment.id, session)
+    if payment.fulfilled_at is not None:
+        return
+    if payment.status != PaymentStatus.paid:
+        payment.status = PaymentStatus.paid
+        payment.confirmed_at = datetime.utcnow()
+        payment.confirmed_by_id = admin_id
+        payment.updated_at = datetime.utcnow()
+        await session.flush()
+    await _fulfill_paid_payment(payment.id, session)
 
 
 async def confirm_payment_auto(
     payment: Payment,
     session: AsyncSession,
 ) -> None:
-    """Auto-confirm from webhook/stars. Commits itself."""
-    payment.status = PaymentStatus.paid
-    payment.confirmed_at = datetime.utcnow()
-    payment.updated_at = datetime.utcnow()
-    await session.flush()
-    # Commit payment as paid FIRST — so retried webhooks see it as already_processed
-    # even if subscription activation below fails.
-    await session.commit()
-    logger.info("Payment %d committed as paid", payment.id)
+    """Persist provider confirmation, then fulfill exactly once.
+
+    Paid status is committed before external VPN provisioning so provider
+    retries are idempotent. fulfilled_at remains NULL until subscription/VPN
+    provisioning has completed and becomes the durable recovery marker.
+    """
+    payment_id = payment.id
+    locked = await _locked_payment(payment_id, session)
+    if locked.fulfilled_at is not None:
+        logger.info("Payment %d duplicate confirmation ignored (already fulfilled)", payment_id)
+        return
+
+    if locked.status != PaymentStatus.paid:
+        locked.status = PaymentStatus.paid
+        locked.confirmed_at = locked.confirmed_at or datetime.utcnow()
+        locked.updated_at = datetime.utcnow()
+        await session.flush()
+        await session.commit()
+        logger.info("Payment %d durably committed as paid; fulfillment pending", payment_id)
 
     try:
-        await _activate_from_payment(payment, session)
+        performed = await _fulfill_paid_payment(payment_id, session)
         await session.commit()
+        if performed:
+            logger.info("Payment %d fulfillment committed", payment_id)
     except Exception as exc:
+        # Keep PAID + fulfilled_at=NULL as a recoverable durable state. Changes
+        # such as activation_error made before the exception are useful to the
+        # recovery worker, so persist them when possible.
         logger.error(
-            "Payment %d confirmed but activation failed (will need manual resend): %s",
-            payment.id, exc, exc_info=True,
+            "Payment %d paid but fulfillment failed; recovery remains pending: %s",
+            payment_id, type(exc).__name__, exc_info=True,
         )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
 
 
 async def _activate_from_payment(payment: Payment, session: AsyncSession) -> None:
     if payment.subscription_id is None:
-        logger.error("Payment %d has no subscription_id", payment.id)
-        return
+        raise RuntimeError(f"Payment {payment.id} has no subscription_id")
 
     subscription = await session.get(Subscription, payment.subscription_id)
     if subscription is None:
-        logger.error("No subscription for payment %d", payment.id)
-        return
+        raise RuntimeError(f"No subscription for payment {payment.id}")
 
     tariff = await session.get(Tariff, payment.tariff_id)
     if tariff is None:
-        logger.error("Tariff %d not found for payment %d", payment.tariff_id, payment.id)
-        return
+        raise RuntimeError(f"Tariff {payment.tariff_id} not found for payment {payment.id}")
 
     from app.services.user_notifications import notify_gift_sent, notify_payment_confirmed, send_key_to_user
 
@@ -270,9 +319,11 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         session.add(gift_sub)
         await session.flush()
 
-        await subscription_service.activate_subscription(
+        gift_key = await subscription_service.activate_subscription(
             gift_sub, tariff, session, send_key_callback=send_key_to_user,
         )
+        if gift_key is None:
+            raise RuntimeError(f"Gift payment {payment.id} VPN activation failed")
 
         await notify_admin(
             f"🎁 Подарочная подписка #{payment.id}\n"
@@ -293,9 +344,11 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
             await notify_payment_confirmed(telegram_id, float(payment.amount), is_renewal=True, subscription=subscription)
     else:
         subscription.status = SubscriptionStatus.pending_payment
-        await subscription_service.activate_subscription(
+        activated_key = await subscription_service.activate_subscription(
             subscription, tariff, session, send_key_callback=send_key_to_user,
         )
+        if activated_key is None:
+            raise RuntimeError(f"Payment {payment.id} VPN activation failed")
 
     await _process_referral_reward(payment.user_id, session, payment=payment)
 
