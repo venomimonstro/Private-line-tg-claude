@@ -6,17 +6,61 @@ services:
     environment:
       - PYTHONPATH=/app
     volumes:
-      - ./app:/app/app
-      - ./bot:/app/bot
-      - ./backup_manager:/app/backup_manager
-      - ./health_monitor:/app/health_monitor
-      - ./update_manager:/app/update_manager
-      - ./scheduler:/app/scheduler
-      - ./alembic:/app/alembic
-      - ./migrations:/app/migrations
-      - ./data:/app/data
-      - ./backups:/app/backups
-      - ./logs:/app/logs
+      - type: bind
+        source: ./app
+        target: /app/app
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./bot
+        target: /app/bot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backup_manager
+        target: /app/backup_manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./health_monitor
+        target: /app/health_monitor
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./update_manager
+        target: /app/update_manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./scheduler
+        target: /app/scheduler
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./alembic
+        target: /app/alembic
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./migrations
+        target: /app/migrations
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backups
+        target: /app/backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /app/logs
+        bind:
+          create_host_path: false
     restart: unless-stopped
     mem_limit: 512m
     depends_on:
@@ -32,21 +76,84 @@ services:
     environment:
       - PYTHONPATH=/app
     volumes:
-      - ./app:/app/app
-      - ./admin:/app/admin
-      - ./bot:/app/bot
-      - ./backup_manager:/app/backup_manager
-      - ./health_monitor:/app/health_monitor
-      - ./update_manager:/app/update_manager
-      - ./scheduler:/app/scheduler
-      - ./alembic:/app/alembic
-      - ./migrations:/app/migrations
-      - ./data:/app/data
-      - ./backups:/app/backups
-      - ./logs:/app/logs
-      - ./tests:/app/tests:ro
-      - ./install_node.sh:/app/install_node.sh:ro
-      - ./fix_reality.sh:/app/fix_reality.sh:ro
+      - type: bind
+        source: ./app
+        target: /app/app
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./admin
+        target: /app/admin
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./bot
+        target: /app/bot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backup_manager
+        target: /app/backup_manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./health_monitor
+        target: /app/health_monitor
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./update_manager
+        target: /app/update_manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./scheduler
+        target: /app/scheduler
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./alembic
+        target: /app/alembic
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./migrations
+        target: /app/migrations
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backups
+        target: /app/backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /app/logs
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tests
+        target: /app/tests
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./install_node.sh
+        target: /app/install_node.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./fix_reality.sh
+        target: /app/fix_reality.sh
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
@@ -68,7 +175,7 @@ services:
     environment:
       POSTGRES_DB: privateline
       POSTGRES_USER: privateline
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     command: >
       postgres
       -c shared_buffers=64MB
@@ -96,7 +203,12 @@ services:
     profiles: ["monitoring"]
     image: prom/prometheus:v2.51.0
     volumes:
-      - ./monitoring/prometheus:/etc/prometheus
+      - type: bind
+        source: ./monitoring/prometheus
+        target: /etc/prometheus
+        read_only: true
+        bind:
+          create_host_path: false
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -115,7 +227,12 @@ services:
     profiles: ["monitoring"]
     image: prom/alertmanager:v0.27.0
     volumes:
-      - ./monitoring/alertmanager:/etc/alertmanager
+      - type: bind
+        source: ./monitoring/alertmanager
+        target: /etc/alertmanager
+        read_only: true
+        bind:
+          create_host_path: false
     command:
       - '--config.file=/etc/alertmanager/config.yml'
     restart: unless-stopped
@@ -128,7 +245,7 @@ services:
     profiles: ["monitoring"]
     image: grafana/grafana:10.4.0
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
       GF_SERVER_ROOT_URL: http://localhost:3000
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -136,8 +253,18 @@ services:
       GF_RENDERING_CONCURRENT_RENDER_LIMIT: 2
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - type: bind
+        source: ./monitoring/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./monitoring/grafana/dashboards
+        target: /var/lib/grafana/dashboards
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
@@ -154,7 +281,13 @@ services:
     command:
       - '--path.rootfs=/host'
     volumes:
-      - /:/host:ro,rslave
+      - type: bind
+        source: /
+        target: /host
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     mem_limit: 48m
     memswap_limit: 48m
@@ -167,8 +300,18 @@ services:
       - "80:80"
       - "29148:29148"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - type: bind
+        source: ./nginx/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nginx/ssl
+        target: /etc/nginx/ssl
+        read_only: true
+        bind:
+          create_host_path: false
       - nginx_logs:/var/log/nginx
     restart: unless-stopped
     mem_limit: 48m
