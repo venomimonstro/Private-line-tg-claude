@@ -4,7 +4,7 @@ import hashlib
 import hmac as hmac_module
 import logging
 import urllib.parse
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import parse_qsl, quote, urlencode
 
 import httpx
 
@@ -26,15 +26,19 @@ _API_BASE = "https://yoomoney.ru/api"
 
 
 def _parse_body(body: bytes) -> dict[str, str]:
-    """Parse x-www-form-urlencoded, values decoded."""
-    result: dict[str, str] = {}
-    for pair in body.decode("utf-8", errors="replace").split("&"):
-        if "=" in pair:
-            k, _, v = pair.partition("=")
-            result[unquote(k)] = unquote(v)
-        elif pair:
-            result[unquote(pair)] = ""
-    return result
+    """Parse application/x-www-form-urlencoded exactly once.
+
+    parse_qsl handles both percent escapes and plus-as-space, matching
+    YooMoney notification encoding. Empty values must be preserved because
+    they participate in the HMAC input.
+    """
+    return dict(
+        parse_qsl(
+            body.decode("utf-8", errors="strict"),
+            keep_blank_values=True,
+            strict_parsing=False,
+        )
+    )
 
 
 
@@ -92,9 +96,11 @@ class YooMoneyProvider(PaymentProviderBase):
             notification_type = params.get("notification_type", "")
             operation_id      = params.get("operation_id", "")
             amount            = params.get("amount", "")
+            withdraw_amount   = params.get("withdraw_amount", "")
+            currency          = params.get("currency", "")
             label             = params.get("label", "")
             unaccepted        = params.get("unaccepted", "false").lower()
-            is_test           = "test_notification" in params
+            is_test           = params.get("test_notification", "false").lower() == "true"
 
             logger.info(
                 "YooMoney webhook: type=%s label=%s amount=%s operation=%s "
@@ -109,6 +115,16 @@ class YooMoneyProvider(PaymentProviderBase):
 
             if unaccepted == "true":
                 logger.warning("YooMoney: payment %s is unaccepted (held), skipping", operation_id)
+                return None
+
+            if notification_type not in ("p2p-incoming", "card-incoming"):
+                logger.warning("YooMoney: unsupported notification_type=%r", notification_type)
+                return None
+            if currency != "643":
+                logger.warning("YooMoney: unexpected currency=%r", currency)
+                return None
+            if not operation_id or not withdraw_amount:
+                logger.warning("YooMoney: operation_id/withdraw_amount missing")
                 return None
 
             # ── try NEW format first (sign / HMAC-SHA256) ────────────────────
@@ -143,7 +159,9 @@ class YooMoneyProvider(PaymentProviderBase):
             return IncomingPayment(
                 our_payment_id=our_payment_id,
                 provider_payment_id=operation_id,
-                amount=float(amount),
+                # QuickPay sum is the sender debit. Signed withdraw_amount is
+                # the exact order amount; amount is net settlement after fee.
+                amount=float(withdraw_amount),
                 currency="RUB",
             )
 
@@ -176,8 +194,8 @@ class YooMoneyProvider(PaymentProviderBase):
         ok = hmac_module.compare_digest(expected, sign_got)
         if not ok:
             logger.error(
-                "YooMoney HMAC-SHA256 mismatch: expected=%s got=%s secret_len=%d check_str=%r",
-                expected, sign_got, len(self._secret), check_str,
+                "YooMoney HMAC-SHA256 mismatch (signature values redacted; fields=%s)",
+                [k for k, _ in items],
             )
         return ok
 
@@ -193,10 +211,7 @@ class YooMoneyProvider(PaymentProviderBase):
         expected = hashlib.sha1(check_str.encode("utf-8")).hexdigest()
         ok = hmac_module.compare_digest(expected, sha1_got)
         if not ok:
-            logger.error(
-                "YooMoney SHA1 mismatch: expected=%s got=%s secret_len=%d",
-                expected, sha1_got, len(self._secret),
-            )
+            logger.error("YooMoney legacy SHA1 mismatch (signature values redacted)")
         return ok
 
     # ── fallback: API polling ─────────────────────────────────────────────────
