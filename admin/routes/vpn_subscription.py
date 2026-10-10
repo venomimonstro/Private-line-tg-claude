@@ -65,8 +65,7 @@ async def vpn_subscription(
             VpnKey.status == VpnKeyStatus.active,
             Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
             Subscription.expires_at > datetime.utcnow(),
-            VpnServer.status == VpnServerStatus.active,
-            VpnServer.is_selectable.is_(True),
+            VpnServer.status != VpnServerStatus.disabled,
             VpnServer.provider != "private-line-primary",
         )
         .order_by(VpnServer.id.asc(), VpnKey.id.asc())
