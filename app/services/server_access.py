@@ -61,10 +61,6 @@ async def add_subscription_server_key(
     if keys:
         return keys[0], False
 
-    count = await session.scalar(select(VpnKey.id).where(
-        VpnKey.server_id == server_id,
-        VpnKey.status == VpnKeyStatus.active,
-    ).limit(1))
     if server.max_users and server.current_users >= server.max_users:
         raise ServerSelectionError("На выбранном сервере закончились свободные места")
 
@@ -78,6 +74,31 @@ async def add_subscription_server_key(
         )
         if response.status_code != 200 or response.json().get("started") is not True:
             raise ServerSelectionError("Xray на выбранной ноде ещё не запущен")
+
+        # Validate published Marzban host BEFORE creating a remote user.
+        # Otherwise users can be orphaned on a node with a private Docker address.
+        config = await client._get_core_config()
+        inbounds = [
+            item for item in (config or {}).get("inbounds", [])
+            if item.get("protocol") == "vless"
+            and item.get("streamSettings", {}).get("security") == "reality"
+        ]
+        if len(inbounds) != 1 or not inbounds[0].get("tag"):
+            raise ServerSelectionError("У VPN-ноды некорректный Reality inbound")
+        host_resp = await client._client.get(
+            f"{client._base}/api/hosts", headers=headers,
+        )
+        if host_resp.status_code != 200:
+            raise ServerSelectionError("VPN-нода не публикует адрес для клиентов")
+        entries = host_resp.json().get(inbounds[0]["tag"], [])
+        if len(entries) != 1 or entries[0].get("is_disabled") is True:
+            raise ServerSelectionError("VPN-нода не имеет активного публичного адреса")
+        expected_host = entries[0].get("address", "")
+        try:
+            if not ipaddress.ip_address(expected_host).is_global:
+                raise ValueError("not global")
+        except ValueError as exc:
+            raise ServerSelectionError("VPN-нода публикует внутренний адрес") from exc
 
         # A username is scoped to Marzban's own database (a separate database
         # on each server). Creating it on a second node does not affect Spain.
@@ -96,6 +117,8 @@ async def add_subscription_server_key(
             raise ServerSelectionError(
                 "Нода не настроена для клиентов: адрес VPN не публичный"
             )
+        if host != expected_host:
+            raise ServerSelectionError("VLESS-ссылка не совпадает с публичным адресом ноды")
         canonical_client_link(raw.access_url, "Private Line VPN")
 
         key = VpnKey(
