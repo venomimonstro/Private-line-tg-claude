@@ -18,7 +18,7 @@ fi
 }
 cd "$(dirname "$0")/.."
 
-XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.9.9}"
+XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.6.27}"
 SOCKS_PORT=19580
 PROBE_NAME="private-line-vless-probe-$$"
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
