@@ -275,7 +275,11 @@ async def reissue_vpn_key(
 
 async def sync_traffic_stats(session: AsyncSession) -> None:
     result = await session.execute(
-        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+        select(VpnServer).where(
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+            VpnServer.provider == "marzban",
+        )
     )
     servers = result.scalars().all()
 
