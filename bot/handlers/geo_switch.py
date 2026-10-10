@@ -33,7 +33,7 @@ async def cmd_servers(message: Message, db_user: User) -> None:
             select(VpnServer).where(
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider != "private-line-primary",
+                VpnServer.provider == "marzban",
             ).order_by(VpnServer.id.asc())
         )).scalars().all()
     if not servers:
@@ -69,7 +69,7 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
             .where(
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider != "private-line-primary",
+                VpnServer.provider == "marzban",
             )
             .order_by(VpnServer.id.asc())
         )
