@@ -50,6 +50,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
         echo "STOP: main VPS port 443 is already occupied; no modifications"
         exit 2
     fi
+    # Reality requires a reachable real TLS1.3 destination on this host.
+    if command -v openssl >/dev/null 2>&1; then
+        if ! timeout 12 openssl s_client -connect www.microsoft.com:443 \
+            -servername www.microsoft.com -tls1_3 </dev/null >/dev/null 2>&1; then
+            echo "STOP: main host cannot reach Reality camouflage TLS target"
+            exit 2
+        fi
+    fi
     MEM_AVAIL="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
     if (( MEM_AVAIL < 524288 )); then
         echo "STOP: main VPS needs at least 512 MiB available RAM"
