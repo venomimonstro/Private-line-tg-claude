@@ -161,8 +161,23 @@ async def create_vpn_key(
     if len(existing_active) > 1:
         raise ValueError("Multiple active keys on the same VPN node require reconciliation")
     if existing_active:
+        # DB state alone is not proof that the remote Marzban user still exists.
+        # Reconcile the exact subscription first, preserving the UUID already
+        # issued to the customer. Only then may activation/retry reuse the row.
+        from app.services.vpn_reconcile import reconcile_marzban_server
+        result = await reconcile_marzban_server(
+            session,
+            server.id,
+            apply=True,
+            only_subscription_id=subscription_id,
+        )
+        if result.errors:
+            raise ValueError(
+                f"Existing VPN key failed remote reconciliation ({result.errors} error(s))"
+            )
+        await session.refresh(existing_active[0])
         logger.info(
-            "Reusing active VPN key %d for subscription %d on server %d",
+            "Reusing verified VPN key %d for subscription %d on server %d",
             existing_active[0].id, subscription_id, server.id,
         )
         return existing_active[0]
