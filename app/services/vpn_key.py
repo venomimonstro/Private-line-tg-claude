@@ -206,7 +206,20 @@ async def create_vpn_key(
     return vpn_key
 
 
-async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSession) -> None:
+async def disable_vpn_key(
+    vpn_key: VpnKey,
+    server: VpnServer,
+    session: AsyncSession,
+    *,
+    enqueue_on_failure: bool = True,
+    raise_on_failure: bool = False,
+) -> bool:
+    """Disable a remote VPN credential and update local state only after confirmation.
+
+    On remote failure the key becomes ERROR (not DISABLED), because the remote
+    credential may still work. One retry operation is queued. The pending worker
+    calls this with enqueue_on_failure=False and raise_on_failure=True.
+    """
     client = _make_client(server)
     try:
         if isinstance(client, MarzbanClient):
@@ -214,26 +227,47 @@ async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSess
         else:
             await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
-        logger.error("Failed to delete key %s: %s", vpn_key.outline_key_id, exc)
-        try:
-            from app.models.pending_operation import PendingOperation, PendingOperationType
-            op = PendingOperation(
-                operation_type=PendingOperationType.disable_key.value,
-                vpn_key_id=vpn_key.id,
-                server_id=server.id,
-                payload={},
-                attempts=0,
-                next_retry_at=datetime.utcnow(),
-            )
-            session.add(op)
-        except Exception as enqueue_exc:
-            logger.error("Failed to enqueue disable_key operation: %s", enqueue_exc)
+        logger.error(
+            "Remote VPN disable failed for key %d on server %d: %s",
+            vpn_key.id, server.id, type(exc).__name__,
+        )
+        vpn_key.status = VpnKeyStatus.error
+        vpn_key.disabled_at = None
+        if enqueue_on_failure:
+            try:
+                from app.models.pending_operation import PendingOperation, PendingOperationType
+                pending = (await session.execute(
+                    select(PendingOperation).where(
+                        PendingOperation.operation_type == PendingOperationType.disable_key.value,
+                        PendingOperation.vpn_key_id == vpn_key.id,
+                        PendingOperation.completed_at.is_(None),
+                    )
+                )).scalars().first()
+                if pending is None:
+                    session.add(PendingOperation(
+                        operation_type=PendingOperationType.disable_key.value,
+                        vpn_key_id=vpn_key.id,
+                        server_id=server.id,
+                        payload={},
+                        attempts=0,
+                        next_retry_at=datetime.utcnow(),
+                    ))
+            except Exception as enqueue_exc:
+                logger.error(
+                    "Failed to queue remote disable retry for key %d: %s",
+                    vpn_key.id, type(enqueue_exc).__name__,
+                )
+        await session.flush()
+        if raise_on_failure:
+            raise
+        return False
     finally:
         await client.aclose()
 
     vpn_key.status = VpnKeyStatus.disabled
     vpn_key.disabled_at = datetime.utcnow()
     await session.flush()
+    return True
 
 
 async def reissue_vpn_key(
