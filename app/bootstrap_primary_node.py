@@ -127,7 +127,8 @@ async def apply(data: dict, commit: bool) -> int:
                     print("STOP: existing primary entry has another API address")
                     return 2
                 row.status = VpnServerStatus.active
-                row.is_selectable = True
+                # Keep its previous publish state on repeated configuration runs.
+                # The primary node must pass an actual VLESS smoke test first.
             else:
                 row = VpnServer(
                     name=NAME,
@@ -139,7 +140,7 @@ async def apply(data: dict, commit: bool) -> int:
                     api_url=API,
                     api_secret_encrypted="",
                     status=VpnServerStatus.active,
-                    is_selectable=True,
+                    is_selectable=False,
                     max_users=20,
                     current_users=0,
                 )
@@ -152,7 +153,7 @@ async def apply(data: dict, commit: bool) -> int:
             row.flag_emoji = "🏠"
             await db.commit()
             print(f"REGISTERED: verified main VPN node, server ID={row.id}, public IPv4={ip}")
-            print("The node is now selectable in Telegram -> Сменить страну")
+            print("STAGED: run the VLESS smoke test before publishing this server in Telegram")
             return 0
     except Exception as exc:
         print(f"FAIL: primary node setup ({type(exc).__name__}); check container logs locally")
