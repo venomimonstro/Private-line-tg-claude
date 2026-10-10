@@ -498,28 +498,63 @@ async def on_do_pay(callback: CallbackQuery, state: FSMContext, db_user: User) -
     await state.clear()
 
     try:
-        from app.payments.services import create_payment
+        from app.payments.services import (
+            calculate_payment_amount,
+            create_payment,
+            get_enabled_providers,
+        )
         from app.services.promo import apply_promo, validate_promo
 
         async with async_session_maker() as session:
-            r = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
+            r = await session.execute(select(Tariff).where(
+                Tariff.slug == tariff_slug,
+                Tariff.is_active == True,  # noqa: E712
+            ))
             tariff = r.scalar_one_or_none()
             if tariff is None:
                 await callback.message.answer("❌ Тариф не найден. Начните заново /plans")  # type: ignore[union-attr]
                 return
 
+            enabled = await get_enabled_providers(session)
+            if provider_name not in enabled:
+                await callback.message.answer(
+                    "❌ Этот способ оплаты сейчас недоступен. Выберите другой."
+                )  # type: ignore[union-attr]
+                return
+
             promo_obj = None
             if promo_code:
-                promo_obj, _err = await validate_promo(promo_code, tariff_slug, db_user.id, session)
+                promo_obj, promo_error = await validate_promo(
+                    promo_code, tariff_slug, db_user.id, session
+                )
+                if promo_obj is None:
+                    await callback.message.answer(
+                        f"❌ {promo_error}\nСоздайте счёт заново."
+                    )  # type: ignore[union-attr]
+                    return
+
+            # The external invoice must be created with the final amount.
+            # Gift pricing is the regular monthly price; otherwise use the same
+            # first-payment calculation as create_payment().
+            if gift_recipient_tg_id:
+                base_amount = Decimal(str(tariff.price_monthly)).quantize(Decimal("0.01"))
+            else:
+                base_amount = await calculate_payment_amount(
+                    db_user.id, tariff, session
+                )
+            final_amount = base_amount
+            if promo_obj is not None:
+                final_amount = Decimal(str(await apply_promo(
+                    promo_obj, float(base_amount), session
+                ))).quantize(Decimal("0.01"))
 
             payment, result = await create_payment(
-                db_user.id, tariff_slug, session, provider_name=provider_name
+                db_user.id,
+                tariff_slug,
+                session,
+                provider_name=provider_name,
+                amount_override=final_amount,
             )
-
-            if promo_obj is not None:
-                disc = await apply_promo(promo_obj, float(payment.amount), session)
-                payment.amount = Decimal(str(disc))
-                await session.flush()
 
             # Tag as gift if recipient was entered
             if gift_recipient_tg_id:
