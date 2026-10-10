@@ -12,6 +12,7 @@ Token format:  base64url(telegram_id) + "." + hmac_sha256(SECRET_KEY, telegram_i
 """
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import datetime
 
