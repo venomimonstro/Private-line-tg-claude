@@ -4,9 +4,10 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from packaging.version import Version
 from sqlalchemy import select
@@ -18,13 +19,51 @@ from app.models.system_update import SystemUpdate
 
 _REQUIRED_ZIP_ENTRIES = {"manifest.json", "checksums.json"}
 _MAX_ZIP_SIZE_MB = 500
+_MAX_UNCOMPRESSED_ZIP_MB = 1024
 _MIN_FREE_DISK_MB = 512
+
+
+
+def _validate_zip_members(zf: zipfile.ZipFile) -> list[str]:
+    errors: list[str] = []
+    total = 0
+    for info in zf.infolist():
+        path = PurePosixPath(info.filename)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not path.parts
+            or ":" in path.parts[0]
+        ):
+            errors.append(f"Unsafe ZIP path: {info.filename!r}")
+            continue
+        mode = (info.external_attr >> 16) & 0xFFFF
+        if stat.S_ISLNK(mode):
+            errors.append(f"ZIP symlinks are forbidden: {info.filename!r}")
+        total += max(0, info.file_size)
+    if total > _MAX_UNCOMPRESSED_ZIP_MB * 1024 * 1024:
+        errors.append(
+            f"ZIP uncompressed size exceeds {_MAX_UNCOMPRESSED_ZIP_MB} MB"
+        )
+    return errors
+
+
+def safe_extract_zip(zip_path: str, extract_dir: Path) -> None:
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        errors = _validate_zip_members(zf)
+        if errors:
+            raise ValueError("; ".join(errors))
+        zf.extractall(extract_dir)
 
 
 def _verify_checksums(extract_dir: Path, checksums: dict[str, str]) -> list[str]:
     errors: list[str] = []
     for relative_path, expected_hash in checksums.items():
-        file_path = extract_dir / relative_path
+        rel = PurePosixPath(relative_path)
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts or ":" in rel.parts[0]:
+            errors.append(f"Unsafe checksum path: {relative_path}")
+            continue
+        file_path = extract_dir / Path(*rel.parts)
         if not file_path.exists():
             errors.append(f"File missing from ZIP: {relative_path}")
             continue
@@ -77,6 +116,7 @@ async def run_preflight_checks(zip_path: str, session: AsyncSession) -> list[str
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             zip_entries = set(zf.namelist())
+            failures.extend(_validate_zip_members(zf))
     except zipfile.BadZipFile:
         failures.append("Повреждённый ZIP-архив.")
         return failures
@@ -90,8 +130,7 @@ async def run_preflight_checks(zip_path: str, session: AsyncSession) -> list[str
 
     extract_dir = Path(tempfile.mkdtemp(prefix="pl_preflight_"))
     try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+        safe_extract_zip(zip_path, extract_dir)
 
         # 4. Validate manifest.json
         manifest_path = extract_dir / "manifest.json"
@@ -104,6 +143,12 @@ async def run_preflight_checks(zip_path: str, session: AsyncSession) -> list[str
 
         if manifest.get("product") != "Private Line":
             failures.append("manifest.json: поле product должно быть 'Private Line'")
+
+        if manifest.get("requires_db_migration"):
+            failures.append(
+                "ZIP-updater не поддерживает production DB migrations; "
+                "используйте host-level release deployment."
+            )
 
         new_version_str = manifest.get("version")
         if not new_version_str:
