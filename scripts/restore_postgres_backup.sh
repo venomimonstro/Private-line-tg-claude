@@ -16,6 +16,7 @@ DB_CID="$(docker compose ps -q db)"
 DB_USER="$(docker inspect "$DB_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^POSTGRES_USER=//p' | head -1)"
 DB_NAME="$(docker inspect "$DB_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^POSTGRES_DB=//p' | head -1)"
 [[ -n "$DB_USER" && -n "$DB_NAME" ]] || { echo "FAIL: cannot determine PostgreSQL database/user" >&2; exit 2; }
+[[ "$DB_NAME" =~ ^[A-Za-z0-9_]+$ ]] || { echo "FAIL: unsafe PostgreSQL database name" >&2; exit 2; }
 
 docker compose exec -T db pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null
 
@@ -41,7 +42,7 @@ echo "[3/6] Stopping application writers..."
 docker stop private-line-bot-1 private-line-admin-1 >/dev/null 2>&1 || true
 
 terminate_connections() {
-  docker compose exec -T db psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1     --set=db_name="$DB_NAME"     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db_name' AND pid <> pg_backend_pid();"     >/dev/null
+  docker compose exec -T db psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB_NAME' AND pid <> pg_backend_pid();"     >/dev/null
 }
 
 restore_file() {
