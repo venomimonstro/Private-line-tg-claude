@@ -75,6 +75,16 @@ async def audit() -> int:
         ops = (await db.execute(select(PendingOperation).where(
             PendingOperation.completed_at.is_(None)
         ))).scalars().all()
+        pending_disable_ids = {
+            op.vpn_key_id for op in ops
+            if op.operation_type == PendingOperationType.disable_key.value
+            and op.vpn_key_id is not None
+        }
+        for key in keys:
+            if key.status == VpnKeyStatus.error and key.id not in pending_disable_ids:
+                failures.append(
+                    f"key#{key.id}: ERROR state without a pending remote-disable retry"
+                )
         for op in ops:
             if op.operation_type == PendingOperationType.create_key.value:
                 if op.subscription_id is None or op.server_id is None:
