@@ -86,11 +86,10 @@ async def payment_webhook(
         logger.error("Webhook payment %d has invalid monetary amount", result.id)
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    amount_ok = (
-        incoming_amount >= (expected_amount * Decimal("0.97")).quantize(Decimal("0.01"))
-        if provider_name == "yoomoney"
-        else incoming_amount == expected_amount
-    )
+    # Provider adapters normalize IncomingPayment.amount to the customer/order
+    # amount. Keep the shared authorization invariant exact; never allow a
+    # provider-specific underpayment tolerance here.
+    amount_ok = incoming_amount == expected_amount
     provider_ok = result.provider == provider_name
     currency_ok = (incoming.currency or "").upper() == (result.currency or "").upper() == "RUB"
     if not (provider_ok and currency_ok and amount_ok):
