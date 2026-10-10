@@ -362,6 +362,42 @@ PYEOF
         || die "Marzban /api/hosts не сохранил публичный VPN endpoint."
 fi
 
+# ─── Persist sudo admin in Marzban DB ────────────────────────────────────────
+# Marzban explicitly recommends DB-backed admins instead of SUDO_* env values.
+# Keeping the env-only pseudo-admin triggers a known DELETE/reporting bug in
+# Marzban 0.8.4 (the user can be deleted but the API returns HTTP 500).
+section "Фиксация Marzban admin в БД"
+
+info "Переношу bootstrap-admin из env в БД Marzban..."
+docker compose exec -T marzban marzban-cli admin import-from-env -y </dev/null     || die "Не удалось импортировать Marzban admin в БД."
+
+python3 - <<'PYEOF'
+from pathlib import Path
+import os, re
+path = Path("/opt/marzban/.env")
+lines = path.read_text().splitlines()
+lines = [
+    line for line in lines
+    if not re.match(r"^\s*(?:export\s+)?SUDO_(?:USERNAME|PASSWORD)\s*=", line)
+]
+tmp = path.with_name(".env.db-admin")
+tmp.write_text("\n".join(lines) + "\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PYEOF
+
+docker compose up -d --no-deps --force-recreate marzban </dev/null
+DB_ADMIN_READY=false
+for i in $(seq 1 24); do
+    if curl -sf -X POST "${API_URL}/api/admin/token"         -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}"         >/dev/null 2>&1; then
+        DB_ADMIN_READY=true
+        break
+    fi
+    sleep 2
+done
+[[ "$DB_ADMIN_READY" == true ]] || die "DB-backed Marzban admin не авторизуется после миграции."
+success "Marzban admin хранится в БД; SUDO_USERNAME/SUDO_PASSWORD удалены из runtime env."
+
 # ─── Firewall ─────────────────────────────────────────────────────────────────
 section "Настройка файерволла"
 
