@@ -19,8 +19,8 @@ async def main(subscription_id: int) -> int:
     async with async_session_maker() as db:
         rows = (await db.execute(
             select(VpnServer)
+            .join(VpnKey, VpnKey.server_id == VpnServer.id)
             .join(Subscription, Subscription.id == VpnKey.subscription_id)
-            .join(VpnServer, VpnServer.id == VpnKey.server_id)
             .where(
                 VpnKey.subscription_id == subscription_id,
                 VpnKey.status == VpnKeyStatus.active,
