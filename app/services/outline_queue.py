@@ -141,6 +141,7 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         user_id = payload.get("user_id")
         traffic_limit_gb = payload.get("traffic_limit_gb")
         label = payload.get("label")
+        ip_limit = int(payload.get("ip_limit") or 0)
 
         if user_id is None:
             raise ValueError("create_key payload missing user_id")
@@ -158,6 +159,17 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
             SubscriptionStatus.expires_soon,
         ):
             raise ValueError("Queued creation requires an eligible subscription")
+        if sub.status == SubscriptionStatus.activation_error:
+            # Subscription-level recovery owns this state because it must set
+            # dates/status and delivery atomically with successful provisioning.
+            # A low-level queued create here would leave an active remote UUID
+            # attached to an activation_error subscription.
+            op.last_error = "delegated to subscription activation recovery"
+            logger.info(
+                "Pending create operation %d delegated to subscription recovery",
+                op.id,
+            )
+            return
         if sub.user_id != int(user_id):
             raise ValueError("Queued creation user/subscription mismatch")
         if (
@@ -193,6 +205,7 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
             traffic_limit_gb=traffic_limit_gb,
             label=label,
             session=session,
+            ip_limit=ip_limit,
         )
         op.vpn_key_id = vpn_key.id
         logger.info("Created VPN key %d via pending operation %d", vpn_key.id, op.id)
