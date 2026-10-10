@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import delete as sa_delete, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_current_admin, require_super_admin
@@ -525,7 +525,15 @@ async def migrate_outline_to_vless(
     )
     all_servers = list(servers_result.scalars().all())
 
-    marzban_servers = [s for s in all_servers if _server_protocol(s) == "marzban"]
+    marzban_servers = [
+        s for s in all_servers
+        if _server_protocol(s) == "marzban"
+        and s.status == VpnServerStatus.active
+        and s.is_selectable
+        and s.provider != "private-line-primary"
+        and (not s.max_users or s.current_users < s.max_users)
+    ]
+    marzban_servers.sort(key=lambda s: (s.failure_count or 0, s.current_users or 0, s.id))
     if not marzban_servers:
         raise HTTPException(
             status_code=400,
@@ -580,9 +588,23 @@ async def migrate_outline_to_vless(
             logger.error("Migration failed for key %d: %s", old_key.id, exc)
             failed += 1
 
-    # Disable the old Outline servers so new subscriptions go to Marzban
+    # Disable an old Outline server only after every active credential on
+    # that exact server has been confirmed migrated/disabled. Partial migration
+    # must never strand users.
     for s in outline_servers.values():
-        s.status = VpnServerStatus.disabled
+        remaining = await session.scalar(
+            select(func.count(VpnKey.id)).where(
+                VpnKey.server_id == s.id,
+                VpnKey.status == VpnKeyStatus.active,
+            )
+        )
+        if int(remaining or 0) == 0:
+            s.status = VpnServerStatus.disabled
+        else:
+            logger.warning(
+                "Outline server %d remains enabled: %d active key(s) not migrated",
+                s.id, int(remaining or 0),
+            )
 
     log = AdminLog(
         admin_user_id=admin.id,
