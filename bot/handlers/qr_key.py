@@ -19,7 +19,7 @@ async def on_get_key_qr(callback: CallbackQuery, db_user: User) -> None:
     from sqlalchemy.orm import selectinload
     from app.database import async_session_maker
     from app.models.subscription import Subscription
-    from app.services.vpn_key import get_access_url
+    from app.services.vpn_key import get_client_access_url
 
     async with async_session_maker() as session:
         result = await session.execute(
@@ -42,7 +42,7 @@ async def on_get_key_qr(callback: CallbackQuery, db_user: User) -> None:
             return
 
         try:
-            access_url = get_access_url(active_key)
+            access_url = get_client_access_url(active_key)
         except Exception:
             await callback.answer("Ошибка получения ключа.", show_alert=True)
             return
@@ -68,7 +68,7 @@ async def on_get_key_qr(callback: CallbackQuery, db_user: User) -> None:
             photo=BufferedInputFile(buf.read(), filename="vpn_key_qr.png"),
             caption=(
                 "📷 <b>QR-код вашего ключа доступа</b>\n\n"
-                "Отсканируйте в приложении Outline для быстрого подключения."
+                "Отсканируйте в V2RayNG, Hiddify, Streisand или V2Box. Outline не поддерживает VLESS Reality."
             ),
             parse_mode="HTML",
         )
