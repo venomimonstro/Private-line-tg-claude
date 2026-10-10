@@ -14,6 +14,7 @@ from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
+from app.services.vpn_key import _server_protocol
 
 
 async def audit() -> int:
@@ -56,7 +57,8 @@ async def audit() -> int:
             elif (
                 server.status != VpnServerStatus.active
                 or not server.is_selectable
-                or server.provider != "marzban"
+                or server.provider == "private-line-primary"
+                or _server_protocol(server) != "marzban"
             ):
                 failures.append(f"key#{key.id}: active key on non-production server#{server.id}")
 
