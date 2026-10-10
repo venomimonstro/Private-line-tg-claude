@@ -86,7 +86,7 @@ def build_config_from_url(raw: str, socks_port: int) -> dict:
     }
 
 
-async def get_url_from_db(subscription_id: int) -> str:
+async def get_url_from_db(subscription_id: int, server_id: int | None = None) -> str:
     async with async_session_maker() as db:
         sub = await db.get(Subscription, subscription_id)
         if sub is None:
@@ -101,12 +101,17 @@ async def get_url_from_db(subscription_id: int) -> str:
                 f"Subscription {subscription_id} not found in the current database. "
                 f"Existing subscriptions: {summary}"
             )
-        keys = (await db.execute(select(VpnKey).where(
+        query = select(VpnKey).where(
             VpnKey.subscription_id == subscription_id,
             VpnKey.status == VpnKeyStatus.active,
-        ))).scalars().all()
-        if len(keys) != 1:
-            raise ValueError(f"Subscription {subscription_id} has {len(keys)} active keys, expected 1")
+        ).order_by(VpnKey.id)
+        if server_id is not None:
+            query = query.where(VpnKey.server_id == server_id)
+        keys = (await db.execute(query)).scalars().all()
+        if not keys:
+            raise ValueError(f"Subscription {subscription_id} has no active key on requested node")
+        if len(keys) > 1 and server_id is not None:
+            raise ValueError("Multiple active keys on one node")
         return get_access_url(keys[0])
 
 
@@ -117,8 +122,9 @@ def main() -> None:
     mode.add_argument("--stdin-url", action="store_true",
                       help="Read full VLESS URL from stdin (never supplied as a command-line argument)")
     parser.add_argument("--socks-port", default=19580, type=int)
+    parser.add_argument("--server", type=int, help="Specific VPN server ID for multi-node subscriptions")
     options = parser.parse_args()
-    if (options.subscription is not None and options.subscription <= 0) or not (1025 <= options.socks_port <= 65535):
+    if (options.subscription is not None and options.subscription <= 0) or (options.server is not None and options.server <= 0) or not (1025 <= options.socks_port <= 65535):
         parser.error("Invalid subscription number or SOCKS port")
     try:
         if options.stdin_url:
@@ -126,7 +132,7 @@ def main() -> None:
             if not raw:
                 raise ValueError("No VLESS URL supplied via stdin")
         else:
-            raw = asyncio.run(get_url_from_db(options.subscription))
+            raw = asyncio.run(get_url_from_db(options.subscription, options.server))
         config = build_config_from_url(raw, options.socks_port)
     except Exception as exc:
         print(f"Cannot prepare client probe: {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
