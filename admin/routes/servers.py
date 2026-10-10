@@ -741,9 +741,11 @@ async def register_node(
         server.api_secret_encrypted = encrypt(creds)
         server.max_users = max(1, body.max_users)
         server.status = VpnServerStatus.active
-        # Existing published nodes stay published; a newly registered node must
-        # pass the control-plane disposable VLESS smoke before publication.
-        server.is_selectable = bool(server.is_selectable)
+        # Any registration can change credentials/runtime metadata. Pause
+        # new assignments until the control plane proves a disposable VLESS
+        # user can reach HTTPS through this node. Existing paid keys remain
+        # deliverable because is_selectable is admission control only.
+        server.is_selectable = False
         server.failure_count = 0
         server.last_error = None
         server.last_error_at = None
