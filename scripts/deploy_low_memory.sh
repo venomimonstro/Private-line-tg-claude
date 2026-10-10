@@ -5,6 +5,9 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
+# Never let Docker recreate containers from a damaged/partial checkout.
+bash scripts/validate_install_layout.sh
+
 fail() {
   echo "FAIL: $*" >&2
   echo "--- admin/nginx/db status ---" >&2
