@@ -75,11 +75,8 @@ docker compose exec -T admin python -m app.stabilize_vpn_fleet --apply
 CURRENT_STEP="6/11 data integrity"; echo "=== 6/11 Central data invariants ==="
 docker compose exec -T admin python -m app.audit_data_integrity
 
-CURRENT_STEP="7/11 node integrity"; echo "=== 7/11 Deep read-only node audit ==="
-docker compose exec -T admin python -m app.audit_vpn_nodes
-
-CURRENT_STEP="8/11 disposable-user end-to-end"; echo "=== 8/11 Disposable-user lifecycle on every dedicated VPN node ==="
-NODE_RAW="$(docker compose exec -T admin python -m app.production_probe_targets)"     || fail "No verified dedicated VPN nodes"
+CURRENT_STEP="7/11 disposable-user end-to-end"; echo "=== 7/11 Disposable-user lifecycle on every dedicated VPN node ==="
+NODE_RAW="$(docker compose exec -T admin python -m app.production_probe_targets)"     || fail "No dedicated VPN nodes"
 mapfile -t NODE_IDS <<<"$NODE_RAW"
 [[ "${#NODE_IDS[@]}" -gt 0 ]] || fail "No VPN node IDs returned"
 for server_id in "${NODE_IDS[@]}"; do
@@ -87,6 +84,9 @@ for server_id in "${NODE_IDS[@]}"; do
     echo "--- disposable smoke: server $server_id ---"
     bash scripts/smoke_vpn_node.sh "$server_id" --publish
 done
+
+CURRENT_STEP="8/11 node integrity"; echo "=== 8/11 Deep read-only node audit after publication ==="
+docker compose exec -T admin python -m app.audit_vpn_nodes
 
 CURRENT_STEP="9/11 published subscription"; echo "=== 9/11 Published Telegram/subscription profile ==="
 docker compose exec -T admin python -m app.verify_vpn_delivery     --subscription "$SUB_ID"
