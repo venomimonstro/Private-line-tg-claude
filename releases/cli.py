@@ -108,6 +108,34 @@ async def _cmd_rollback(args: argparse.Namespace) -> None:
     print(release.previous_commit or "", flush=True)
 
 
+async def _cmd_rollback_plan(args: argparse.Namespace) -> None:
+    """Print previous_commit|backup_id|backup_filename without mutating state."""
+    from pathlib import Path
+    from app.database import async_session_maker
+    from app.models.release import Release
+    from app.models.backup import Backup
+
+    async with async_session_maker() as session:
+        release = await session.get(Release, int(args.id))
+        if release is None:
+            print(f"ERROR: release {args.id} not found", file=sys.stderr)
+            sys.exit(1)
+        if not release.previous_commit or not release.backup_id:
+            print(
+                "ERROR: release has no rollback commit/backup association",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        backup = await session.get(Backup, int(release.backup_id))
+        if backup is None or not backup.file_path or not backup.checksum:
+            print("ERROR: release backup metadata is incomplete", file=sys.stderr)
+            sys.exit(2)
+        print(
+            f"{release.previous_commit}|{backup.id}|{Path(backup.file_path).name}",
+            flush=True,
+        )
+
+
 async def _cmd_list(_args: argparse.Namespace) -> None:
     from app.database import async_session_maker
     from app.models.release import Release
@@ -155,6 +183,9 @@ def main() -> None:
     p_rollback.add_argument("id")
     p_rollback.add_argument("--target-id", default="")
 
+    p_plan = sub.add_parser("rollback-plan")
+    p_plan.add_argument("id")
+
     sub.add_parser("list")
 
     args = parser.parse_args()
@@ -163,6 +194,7 @@ def main() -> None:
         "complete": _cmd_complete,
         "fail": _cmd_fail,
         "rollback": _cmd_rollback,
+        "rollback-plan": _cmd_rollback_plan,
         "list": _cmd_list,
     }
     fn = dispatch.get(args.cmd)
