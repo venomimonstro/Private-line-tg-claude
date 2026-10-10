@@ -419,10 +419,9 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
 
     # ── Normal activation / renewal ───────────────────────────────────────────
     if subscription.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
-        subscription.tariff_id = tariff.id
-        await subscription_service.extend_subscription(
-            subscription, tariff.duration_days, session
-        )
+        # Do not mutate tariff/expiry until VPN access is proven. Paid-payment
+        # recovery may retry this function; extending first would duplicate days
+        # on every failed fulfillment attempt.
         renewal_key = await subscription_service.ensure_subscription_vpn_key(
             subscription, tariff, session
         )
@@ -430,6 +429,10 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
             raise RuntimeError(
                 f"Payment {payment.id} renewal has no coherent VPN credential"
             )
+        subscription.tariff_id = tariff.id
+        await subscription_service.extend_subscription(
+            subscription, tariff.duration_days, session
+        )
         logger.info(
             "Extended subscription %d by %d days with verified VPN key %d",
             subscription.id, tariff.duration_days, renewal_key.id,
