@@ -13,6 +13,7 @@ static Reality configuration.
 from __future__ import annotations
 
 import ipaddress
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -30,6 +31,8 @@ from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _make_client, _server_protocol, get_access_url
 from app.services.vpn_link import canonical_client_link
 from app.vpn.marzban import MarzbanConfigError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -298,7 +301,11 @@ async def reconcile_marzban_server(
                         result.repaired_urls += 1
                     else:
                         result.errors += 1
-            except Exception:
+            except Exception as exc:
+                logger.error(
+                    "VPN reconcile key=%d server=%d failed: %s: %s",
+                    key.id, server.id, type(exc).__name__, str(exc)[:180],
+                )
                 result.errors += 1
 
         if apply and remote_changed:
