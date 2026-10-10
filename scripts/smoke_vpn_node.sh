@@ -6,8 +6,13 @@ umask 077
 cd "$(dirname "$0")/.."
 
 SERVER_ID="${1:-}"
+MODE="${2:-}"
 [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Usage: bash scripts/smoke_vpn_node.sh SERVER_ID" >&2
+    echo "Usage: bash scripts/smoke_vpn_node.sh SERVER_ID [--publish]" >&2
+    exit 2
+}
+[[ -z "$MODE" || "$MODE" == "--publish" ]] || {
+    echo "Invalid mode: $MODE" >&2
     exit 2
 }
 
