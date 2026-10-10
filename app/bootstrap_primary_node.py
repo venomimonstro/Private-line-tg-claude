@@ -32,6 +32,9 @@ async def apply(data: dict, commit: bool) -> int:
         ip = str(ipaddress.IPv4Address(data["public_ip"]))
         if not ipaddress.IPv4Address(ip).is_global:
             raise ValueError("Non-public IP")
+        public_port = int(data.get("public_port", 443))
+        if public_port not in (443, 8443):
+            raise ValueError("invalid primary port")
         user, password = data["username"], data["password"]
         if not isinstance(user, str) or not user or not isinstance(password, str) or len(password) < 12:
             raise ValueError("Invalid Marzban credentials")
@@ -75,7 +78,7 @@ async def apply(data: dict, commit: bool) -> int:
         expected = {
             "remark": NAME,
             "address": ip,
-            "port": 443,
+            "port": public_port,
             "sni": sni,
             "security": "inbound_default",
             "fingerprint": "chrome",
