@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database import async_session_maker
 from app.enums import VpnServerStatus
 from app.models.vpn_server import VpnServer
+from app.models.vpn_key import VpnKey
+from app.enums import VpnKeyStatus
 from app.services.vpn_key import _server_protocol
 from app.services.vpn_reconcile import reconcile_marzban_server
 
@@ -39,7 +41,10 @@ async def run(apply: bool) -> int:
             .order_by(VpnServer.id.asc())
         )).scalars().all()
 
-        marzban = [s for s in servers if _server_protocol(s) == "marzban"]
+        marzban = [
+            s for s in servers
+            if s.provider == "marzban" and _server_protocol(s) == "marzban"
+        ]
         if not marzban:
             print("FAIL: no dedicated Marzban VPN node registered")
             await session.rollback()
@@ -60,6 +65,14 @@ async def run(apply: bool) -> int:
                     f"errors={result.errors} "
                     f"core_resync={result.core_restarted}"
                 )
+                # current_users is a derived DB count; repair drift from retries.
+                active_count = await session.scalar(
+                    select(func.count(VpnKey.id)).where(
+                        VpnKey.server_id == server.id,
+                        VpnKey.status == VpnKeyStatus.active,
+                    )
+                )
+                server.current_users = int(active_count or 0)
                 if result.errors:
                     failures += 1
                     server.is_selectable = False
