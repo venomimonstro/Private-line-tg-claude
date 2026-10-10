@@ -128,10 +128,10 @@ async def apply(data: dict, commit: bool) -> int:
             else:
                 row = VpnServer(
                     name=NAME,
-                    country="Россия",
+                    country="Основной",
                     city="Основной сервер",
-                    country_code="RU",
-                    flag_emoji="🇷🇺",
+                    country_code=None,
+                    flag_emoji="🏠",
                     provider=PROVIDER,
                     api_url=API,
                     api_secret_encrypted="",
@@ -145,8 +145,8 @@ async def apply(data: dict, commit: bool) -> int:
                 {"protocol": "marzban", "username": user, "password": password},
             ))
             row.name = NAME
-            row.country = "Россия"
-            row.flag_emoji = "🇷🇺"
+            row.country = "Основной"
+            row.flag_emoji = "🏠"
             await db.commit()
             print(f"REGISTERED: verified main VPN node, server ID={row.id}, public IPv4={ip}")
             print("The node is now selectable in Telegram -> Сменить страну")
