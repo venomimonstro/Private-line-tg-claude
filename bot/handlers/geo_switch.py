@@ -29,13 +29,16 @@ async def cmd_servers(message: Message, db_user: User) -> None:
         await message.answer("Для выбора VPN-сервера нужна активная подписка.")
         return
     async with async_session_maker() as session:
-        servers = (await session.execute(
-            select(VpnServer).where(
-                VpnServer.status == VpnServerStatus.active,
-                VpnServer.is_selectable.is_(True),
-                VpnServer.provider != "private-line-primary",
-            ).order_by(VpnServer.id.asc())
-        )).scalars().all()
+        servers = [
+            srv for srv in (await session.execute(
+                select(VpnServer).where(
+                    VpnServer.status == VpnServerStatus.active,
+                    VpnServer.is_selectable.is_(True),
+                    VpnServer.provider != "private-line-primary",
+                ).order_by(VpnServer.id.asc())
+            )).scalars().all()
+            if _server_protocol(srv) == "marzban"
+        ]
     if not servers:
         await message.answer("Доступных VPN-нод пока нет.")
         return
