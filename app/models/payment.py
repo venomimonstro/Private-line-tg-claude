@@ -41,6 +41,9 @@ class Payment(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Durable exactly-once marker: payment may be PAID before external VPN
+    # provisioning finishes. Null means fulfillment/recovery is still required.
+    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     user: Mapped[User] = relationship("User", foreign_keys=[user_id], back_populates="payments")
