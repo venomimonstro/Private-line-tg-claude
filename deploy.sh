@@ -16,6 +16,9 @@ SPRINT_DIR="$DEPLOY_DIR/sprints"
 
 cd "$DEPLOY_DIR"
 
+# Abort before any Docker operation if bind sources are damaged/missing.
+bash scripts/validate_install_layout.sh
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 ok()   { echo "[$(date '+%H:%M:%S')] ✅ $*"; }
