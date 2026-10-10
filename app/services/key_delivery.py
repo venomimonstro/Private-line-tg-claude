@@ -81,8 +81,12 @@ async def retry_failed_activations(
                 try:
                     from app.services.vpn_key import get_access_url
                     url = get_access_url(vpn_key)
+                    from app.models.user import User
+                    user = await session.get(User, sub.user_id)
+                    if user is None or not user.telegram_id:
+                        raise RuntimeError(f"Telegram ID missing for user {sub.user_id}")
                     await bot.send_message(
-                        chat_id=sub.user_id,
+                        chat_id=user.telegram_id,
                         text=(
                             "✅ Ваш персональный ключ доступа готов!\n\n"
                             f"<code>{url}</code>\n\n"
