@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
 
 from sqlalchemy import func, select
 
@@ -16,6 +17,7 @@ from app.database import async_session_maker
 from app.enums import VpnServerStatus
 from app.models.vpn_server import VpnServer
 from app.models.vpn_key import VpnKey
+from app.models.pending_operation import PendingOperation, PendingOperationType
 from app.enums import VpnKeyStatus
 from app.services.vpn_key import _server_protocol
 from app.services.vpn_reconcile import reconcile_marzban_server
@@ -86,6 +88,29 @@ async def run(apply: bool) -> int:
                 print(f"FAIL: {type(exc).__name__}: {str(exc)[:180]}")
 
         if apply:
+            # Close stale create retries only when that exact subscription/node
+            # already has one active key. No remote or credential mutation.
+            pending = (await session.execute(
+                select(PendingOperation).where(
+                    PendingOperation.completed_at.is_(None),
+                    PendingOperation.operation_type == PendingOperationType.create_key.value,
+                )
+            )).scalars().all()
+            for op in pending:
+                if op.subscription_id is None or op.server_id is None:
+                    continue
+                active = (await session.execute(
+                    select(VpnKey).where(
+                        VpnKey.subscription_id == op.subscription_id,
+                        VpnKey.server_id == op.server_id,
+                        VpnKey.status == VpnKeyStatus.active,
+                    )
+                )).scalars().all()
+                if len(active) == 1:
+                    op.vpn_key_id = active[0].id
+                    op.completed_at = datetime.utcnow()
+                    op.last_error = None
+                    print(f"CLEANUP: stale create operation #{op.id} closed")
             await session.commit()
         else:
             await session.rollback()
