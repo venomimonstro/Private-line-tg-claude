@@ -219,13 +219,23 @@ async def reconcile_marzban_server(
                             "Marzban UUID differs from issued UUID; automatic overwrite refused"
                         )
                     remote_status = current.get("status")
-                    if remote_status != "active":
+                    if remote_status == "limited":
+                        # A quota-exhausted user is not a node failure.
+                        remote_limit = current.get("data_limit") or 0
+                        remote_used = current.get("used_traffic") or 0
+                        if not remote_limit or remote_used < remote_limit:
+                            raise MarzbanConfigError(
+                                "Marzban user is limited without an exhausted data quota"
+                            )
+                    elif remote_status != "active":
                         raise MarzbanConfigError(
                             f"Marzban user status is {remote_status!r}; automatic reactivation refused"
                         )
                     assigned = current.get("inbounds", {}).get("vless", [])
                     flow = current.get("proxies", {}).get("vless", {}).get("flow")
-                    if tag not in assigned or flow != "xtls-rprx-vision":
+                    if remote_status == "active" and (
+                        tag not in assigned or flow != "xtls-rprx-vision"
+                    ):
                         if not apply:
                             result.errors += 1
                         else:
