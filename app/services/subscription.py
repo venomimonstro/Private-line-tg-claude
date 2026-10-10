@@ -44,6 +44,72 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
     return sorted(available, key=lambda s: s.current_users)
 
 
+async def ensure_subscription_vpn_key(
+    subscription: Subscription,
+    tariff: Tariff,
+    session: AsyncSession,
+) -> VpnKey | None:
+    """Guarantee at least one remotely coherent key without changing dates/status.
+
+    Used for renewals where billing has succeeded but subscription duration
+    must not be reset by a fresh activation.
+    """
+    rows = (await session.execute(
+        select(VpnKey, VpnServer)
+        .join(VpnServer, VpnServer.id == VpnKey.server_id)
+        .where(
+            VpnKey.subscription_id == subscription.id,
+            VpnKey.user_id == subscription.user_id,
+            VpnKey.status == VpnKeyStatus.active,
+            VpnServer.status != VpnServerStatus.disabled,
+            VpnServer.provider != "private-line-primary",
+        )
+        .order_by(VpnKey.id.asc())
+    )).all()
+
+    # Existing paid credentials are preferred. is_selectable controls only new
+    # admission; it must not invalidate a credential already issued.
+    for key, server in rows:
+        if vpn_key_service._server_protocol(server) != "marzban":
+            continue
+        try:
+            from app.services.vpn_reconcile import reconcile_marzban_server
+            result = await reconcile_marzban_server(
+                session,
+                server.id,
+                apply=True,
+                only_subscription_id=subscription.id,
+            )
+            if result.errors == 0:
+                await session.refresh(key)
+                return key
+        except Exception as exc:
+            logger.warning(
+                "Existing renewal key %d failed reconciliation on server %d: %s",
+                key.id, server.id, type(exc).__name__,
+            )
+
+    # Preserve old rows and add a new key only on a fully production-selectable
+    # node. create_vpn_key performs the full Xray/Reality/hosts preflight.
+    for server in await _get_available_servers(session):
+        try:
+            return await vpn_key_service.create_vpn_key(
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                server=server,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                label=f"{server.flag_emoji or '🌍'} {server.country}",
+                session=session,
+                ip_limit=getattr(tariff, "max_devices", 0) or 0,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Renewal fallback server %d failed for subscription %d: %s",
+                server.id, subscription.id, type(exc).__name__,
+            )
+    return None
+
+
 async def activate_subscription(
     subscription: Subscription,
     tariff: Tariff,
