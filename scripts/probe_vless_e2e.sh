@@ -6,6 +6,12 @@ set -euo pipefail
 umask 077
 
 SUB_ID="${1:-}"
+SERVER_ID="${2:-}"
+SERVER_ARGS=()
+if [[ -n "$SERVER_ID" ]]; then
+    [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid server ID" >&2; exit 2; }
+    SERVER_ARGS=(--server "$SERVER_ID")
+fi
 [[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]] || {
     echo "Usage: bash scripts/probe_vless_e2e.sh SUBSCRIPTION_ID" >&2
     exit 2
@@ -44,7 +50,7 @@ fi
 
 echo "[2/4] Preparing confidential Xray config for subscription $SUB_ID..."
 if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
-    --subscription "$SUB_ID" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
+    --subscription "$SUB_ID" "${SERVER_ARGS[@]}" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
     echo "No active VLESS key found under subscription $SUB_ID." >&2
     if [[ ! -e /dev/tty ]]; then
         echo "ERROR: no interactive terminal; use --stdin-url directly." >&2
