@@ -45,7 +45,7 @@ class VlessShareLinkTests(unittest.TestCase):
 
     def test_rejects_duplicate_security_params(self):
         with self.assertRaises(ValueError):
-            canonical_client_link(self.URI + "&security=tls")
+            canonical_client_link(self.URI.replace("#old-profile", "&security=tls#old-profile"))
 
     def test_empty_short_id_supported(self):
         raw = self.URI.replace("sid=abcdef0123456789", "sid=")
