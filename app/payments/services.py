@@ -266,6 +266,42 @@ async def confirm_payment_auto(
             await session.rollback()
 
 
+async def recover_paid_unfulfilled_payments(
+    session: AsyncSession,
+    *,
+    limit: int = 50,
+) -> dict[str, int]:
+    """Finish paid payments left between provider confirmation and fulfillment."""
+    rows = (await session.execute(
+        select(Payment.id)
+        .where(
+            Payment.status == PaymentStatus.paid,
+            Payment.fulfilled_at.is_(None),
+        )
+        .order_by(Payment.confirmed_at.asc().nullsfirst(), Payment.id.asc())
+        .limit(limit)
+    )).scalars().all()
+
+    result = {"checked": len(rows), "fulfilled": 0, "failed": 0}
+    for payment_id in rows:
+        try:
+            performed = await _fulfill_paid_payment(payment_id, session)
+            await session.commit()
+            if performed:
+                result["fulfilled"] += 1
+        except Exception as exc:
+            result["failed"] += 1
+            logger.error(
+                "Paid payment %d recovery failed: %s",
+                payment_id, type(exc).__name__, exc_info=True,
+            )
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+    return result
+
+
 async def _activate_from_payment(payment: Payment, session: AsyncSession) -> None:
     if payment.subscription_id is None:
         raise RuntimeError(f"Payment {payment.id} has no subscription_id")
@@ -303,27 +339,36 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
 
         payment.gift_recipient_id = recipient.id
 
-        # Disable giver's placeholder subscription
-        subscription.status = SubscriptionStatus.disabled
-        subscription.updated_at = datetime.utcnow()
+        # On the first fulfillment attempt payment.subscription_id still points
+        # at the giver's placeholder. Switch it durably to the recipient's
+        # subscription so a crash/retry cannot create duplicate gift subs.
+        if subscription.user_id != recipient.id:
+            subscription.status = SubscriptionStatus.disabled
+            subscription.updated_at = datetime.utcnow()
+            gift_sub = Subscription(
+                user_id=recipient.id,
+                tariff_id=tariff.id,
+                status=SubscriptionStatus.pending_payment,
+                auto_renew=False,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            session.add(gift_sub)
+            await session.flush()
+            payment.subscription_id = gift_sub.id
+            subscription = gift_sub
+        else:
+            gift_sub = subscription
 
-        # Create and activate subscription for recipient
-        gift_sub = Subscription(
-            user_id=recipient.id,
-            tariff_id=tariff.id,
-            status=SubscriptionStatus.pending_payment,
-            auto_renew=False,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        session.add(gift_sub)
-        await session.flush()
-
-        gift_key = await subscription_service.activate_subscription(
-            gift_sub, tariff, session, send_key_callback=send_key_to_user,
-        )
-        if gift_key is None:
-            raise RuntimeError(f"Gift payment {payment.id} VPN activation failed")
+        if gift_sub.status not in (
+            SubscriptionStatus.active,
+            SubscriptionStatus.expires_soon,
+        ):
+            gift_key = await subscription_service.activate_subscription(
+                gift_sub, tariff, session, send_key_callback=send_key_to_user,
+            )
+            if gift_key is None:
+                raise RuntimeError(f"Gift payment {payment.id} VPN activation failed")
 
         await notify_admin(
             f"🎁 Подарочная подписка #{payment.id}\n"
@@ -332,7 +377,9 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
             f"Тариф: {tariff.name}"
         )
         if telegram_id:
-            await notify_gift_sent(telegram_id, payment.gift_recipient_telegram_id, tariff.name)
+            await notify_gift_sent(
+                telegram_id, payment.gift_recipient_telegram_id, tariff.name
+            )
         return
 
     # ── Normal activation / renewal ───────────────────────────────────────────
