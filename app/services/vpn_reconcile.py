@@ -179,19 +179,30 @@ async def reconcile_marzban_server(
             else:
                 result.errors += 1
 
+        eligible_statuses = [
+            SubscriptionStatus.active,
+            SubscriptionStatus.expires_soon,
+        ]
+        # Explicit single-subscription reconciliation is also used inside paid
+        # activation retries. Those rows can legitimately be pending/error and
+        # have no expires_at yet; fleet-wide reconciliation never touches them.
+        if only_subscription_id is not None:
+            eligible_statuses.extend([
+                SubscriptionStatus.pending_payment,
+                SubscriptionStatus.activation_error,
+            ])
+
         key_query = select(VpnKey, Subscription).join(
             Subscription, Subscription.id == VpnKey.subscription_id
         ).where(
             VpnKey.server_id == server.id,
             VpnKey.status == VpnKeyStatus.active,
-            Subscription.status.in_([
-                SubscriptionStatus.active,
-                SubscriptionStatus.expires_soon,
-            ]),
-            Subscription.expires_at > datetime.utcnow(),
+            Subscription.status.in_(eligible_statuses),
         )
         if only_subscription_id is not None:
             key_query = key_query.where(VpnKey.subscription_id == only_subscription_id)
+        else:
+            key_query = key_query.where(Subscription.expires_at > datetime.utcnow())
         rows = (await session.execute(key_query)).all()
 
         for key, subscription in rows:
