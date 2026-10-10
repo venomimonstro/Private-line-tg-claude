@@ -231,27 +231,34 @@ async def reissue_vpn_key(
     traffic_limit_gb: int | None,
     session: AsyncSession,
 ) -> VpnKey:
-    if tariff_slug == _START_TARIFF_SLUG and vpn_key.created_at:
-        cooldown_until = vpn_key.created_at + timedelta(days=_KEY_REISSUE_COOLDOWN_DAYS)
+    """Safely refresh a Marzban profile without deleting or rotating credentials.
+
+    Historical behavior deleted the live key first and could strand a paid user
+    if the subsequent create failed. Production self-service now preserves the
+    issued UUID and Reality credentials. Credential rotation, if ever required,
+    must be a separate explicit migration with create-before-cutover semantics.
+    """
+    if tariff_slug == _START_TARIFF_SLUG and vpn_key.last_reissued_at:
+        cooldown_until = vpn_key.last_reissued_at + timedelta(days=_KEY_REISSUE_COOLDOWN_DAYS)
         if datetime.utcnow() < cooldown_until:
             raise ValueError(
-                f"Перевыпуск ключа для тарифа «Старт» доступен раз в {_KEY_REISSUE_COOLDOWN_DAYS} дней."
+                f"Обновление профиля для тарифа «Старт» доступно раз в {_KEY_REISSUE_COOLDOWN_DAYS} дней."
             )
-
-    old_label = vpn_key.label
-    await disable_vpn_key(vpn_key, server, session)
-    vpn_key.status = VpnKeyStatus.reissued
-
-    new_key = await create_vpn_key(
-        user_id=vpn_key.user_id,
-        subscription_id=vpn_key.subscription_id,
-        server=server,
-        traffic_limit_gb=traffic_limit_gb,
-        label=old_label,
-        session=session,
+    if _server_protocol(server) != "marzban":
+        raise ValueError("Safe profile refresh is supported only for Marzban VLESS nodes")
+    from app.services.vpn_reconcile import reconcile_marzban_server
+    result = await reconcile_marzban_server(
+        session,
+        server.id,
+        apply=True,
+        only_subscription_id=vpn_key.subscription_id,
     )
-    new_key.last_reissued_at = datetime.utcnow()
-    return new_key
+    if result.errors:
+        raise ValueError(f"VPN profile reconciliation failed: {result.errors} integrity error(s)")
+    await session.refresh(vpn_key)
+    vpn_key.last_reissued_at = datetime.utcnow()
+    await session.flush()
+    return vpn_key
 
 
 async def sync_traffic_stats(session: AsyncSession) -> None:
@@ -316,98 +323,33 @@ async def repair_marzban_keys(
     session: AsyncSession,
     server_id: int | None = None,
 ) -> tuple[int, int, list[tuple[int, str]]]:
-    """Reconcile active subscriptions with node users, preserving issued UUIDs.
+    """Compatibility wrapper around the preserve-first reconciler.
 
-    A syntactically valid link is not proof that its UUID exists on the node.
-    Never reactivate expired/blocked subscriptions or exhausted traffic quotas.
+    Kept for older admin/service call sites. It no longer performs independent
+    mutation logic or user notifications with raw links.
     """
-    from uuid import UUID
-    from app.enums import SubscriptionStatus
-    from app.models.subscription import Subscription
-    from app.models.user import User
+    from app.services.vpn_reconcile import reconcile_marzban_server
 
-    servers = (await session.execute(select(VpnServer).where(
+    query = select(VpnServer).where(
         VpnServer.status == VpnServerStatus.active,
-    ))).scalars().all()
-    fixed, errors = 0, 0
-    notifications: list[tuple[int, str]] = []
+        VpnServer.provider != "private-line-primary",
+    )
+    if server_id is not None:
+        query = query.where(VpnServer.id == server_id)
+    servers = (await session.execute(query)).scalars().all()
+
+    fixed = 0
+    errors = 0
     for server in servers:
-        if server_id is not None and server.id != server_id:
-            continue
         if _server_protocol(server) != "marzban":
             continue
-        client = _make_client(server)
         try:
-            users = await client.get_users()
-            desired = set((await client.get_inbounds()).get("vless", []))
-            if not desired:
-                raise MarzbanConfigError("No VLESS inbounds")
-            keys = (await session.execute(select(VpnKey).where(
-                VpnKey.server_id == server.id,
-                VpnKey.status == VpnKeyStatus.active,
-            ))).scalars().all()
-            for key in keys:
-                try:
-                    # Lock the subscription so concurrent expiry/reissue cannot
-                    # race a network repair. Recheck eligibility after the lock.
-                    subscription = (await session.execute(
-                        select(Subscription).where(Subscription.id == key.subscription_id)
-                        .with_for_update().execution_options(populate_existing=True)
-                    )).scalar_one_or_none()
-                    if (subscription is None
-                        or subscription.user_id != key.user_id
-                        or subscription.status not in (
-                            SubscriptionStatus.active, SubscriptionStatus.expires_soon)
-                        or subscription.expires_at is None
-                        or subscription.expires_at <= datetime.utcnow()):
-                        continue
-                    await session.refresh(key)
-                    if key.status != VpnKeyStatus.active:
-                        continue
-                    old_url = get_access_url(key)
-                    parsed = urlparse(old_url)
-                    if parsed.scheme != "vless":
-                        raise MarzbanConfigError("Stored key is not VLESS")
-                    original_uuid = str(UUID(parsed.username or ""))
-                    current = users.get(key.outline_key_id)
-                    used = max(key.traffic_used_gb or 0,
-                               (current or {}).get("used_traffic", 0) / 1024**3)
-                    limit = key.traffic_limit_gb or 0
-                    if limit > 0 and used >= limit:
-                        continue
-                    # Preserve provider-side quota/expiry decisions as well.
-                    if current and current.get("status") in ("limited", "expired", "disabled"):
-                        logger.warning("Skipping inactive node user for key %d", key.id)
-                        continue
-                    proxy = (current or {}).get("proxies", {}).get("vless", {})
-                    mismatch = (current is None
-                        or proxy.get("id") != original_uuid
-                        or proxy.get("flow") != "xtls-rprx-vision"
-                        or not desired.issubset(set(current.get("inbounds", {}).get("vless", []))))
-                    if not mismatch and not _key_url_needs_repair(old_url):
-                        continue
-                    # Recreated users start at zero node traffic: grant only
-                    # their remaining quota, never the original full allowance.
-                    remaining = max(0, limit - used) if limit else None
-                    raw = await client.create_key(
-                        name=key.outline_key_id, uuid=original_uuid,
-                        traffic_limit_gb=remaining,
-                    )
-                    if str(UUID(urlparse(raw.access_url).username or "")) != original_uuid:
-                        raise MarzbanConfigError("Repair returned a different VLESS UUID")
-                    if old_url != raw.access_url:
-                        key.access_url_encrypted = encrypt(raw.access_url)
-                        user = await session.get(User, key.user_id)
-                        if user and user.telegram_id:
-                            notifications.append((user.telegram_id, raw.access_url))
-                    fixed += 1
-                except Exception as exc:
-                    logger.error("Repair failed for key %d: %s", key.id, type(exc).__name__)
-                    errors += 1
-        except Exception as exc:
-            logger.error("Repair failed for server %d: %s", server.id, type(exc).__name__)
+            result = await reconcile_marzban_server(session, server.id, apply=True)
+            fixed += result.repaired_hosts + result.repaired_users + result.repaired_urls
+            errors += result.errors
+        except Exception:
+            logger.exception("Safe Marzban reconciliation failed for server %d", server.id)
             errors += 1
-        finally:
-            await client.aclose()
     await session.commit()
-    return fixed, errors, notifications
+    return fixed, errors, []
+
