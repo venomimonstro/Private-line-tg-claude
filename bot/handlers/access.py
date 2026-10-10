@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 from datetime import date, datetime as _dt
 
 from aiogram import F, Router
@@ -17,7 +18,7 @@ from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import create_vpn_key, get_access_url
+from app.services.vpn_key import create_vpn_key, get_client_access_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
 
@@ -120,14 +121,14 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
     if len(active_keys) == 1:
         key = active_keys[0]
         try:
-            access_url = get_access_url(key)
+            access_url = get_client_access_url(key)
         except Exception:
             await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
             return
         label_part = f" ({key.label})" if key.label else ""
         await callback.message.answer(  # type: ignore[union-attr]
             f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
-            f"<code>{access_url}</code>\n\n"
+            f"<code>{escape(access_url)}</code>\n\n"
             f"📱 Приложения:\n"
             f"• <b>Android:</b> Hiddify, V2RayNG\n"
             f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
@@ -140,11 +141,11 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
         lines = ["🔑 <b>Ваши ключи доступа (выберите любой):</b>\n"]
         for key in active_keys:
             try:
-                url = get_access_url(key)
+                url = get_client_access_url(key)
             except Exception:
                 continue
             label = key.label or "VPN"
-            lines.append(f"<b>{label}:</b>\n<code>{url}</code>")
+            lines.append(f"<b>{label}:</b>\n<code>{escape(url)}</code>")
         lines.append(
             "\n📱 Скопируйте любой ключ и добавьте в приложение:\n"
             "• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -177,7 +178,7 @@ async def on_get_key_by_id(callback: CallbackQuery, db_user: User) -> None:
         return
 
     try:
-        access_url = get_access_url(target_key)
+        access_url = get_client_access_url(target_key)
     except Exception:
         await callback.answer("Ошибка получения ключа. Обратитесь в поддержку.", show_alert=True)
         return
@@ -185,7 +186,7 @@ async def on_get_key_by_id(callback: CallbackQuery, db_user: User) -> None:
     label_part = f" ({target_key.label})" if target_key.label else ""
     await callback.message.answer(  # type: ignore[union-attr]
         f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
-        f"<code>{access_url}</code>\n\n"
+        f"<code>{escape(access_url)}</code>\n\n"
         f"Скопируйте ключ и добавьте в приложение:\n"
         f"• <b>Android:</b> Hiddify, V2RayNG\n"
         f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
@@ -440,16 +441,16 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
             return
 
         try:
-            access_url = decrypt(new_key.access_url_encrypted)
+            access_url = get_client_access_url(new_key)
         except Exception:
-            access_url = get_access_url(new_key)
+            access_url = ""
 
     remaining_after = _MAX_DAILY_REISSUES - (used + 1)
 
     await callback.message.answer(  # type: ignore[union-attr]
         f"✅ <b>Ключ успешно обновлён!</b>\n\n"
         f"🔑 <b>Ваш новый ключ доступа:</b>\n\n"
-        f"<code>{access_url}</code>\n\n"
+        f"<code>{escape(access_url)}</code>\n\n"
         f"📱 Удалите старый ключ и добавьте новый:\n"
         f"• <b>Android:</b> Hiddify, V2RayNG\n"
         f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
