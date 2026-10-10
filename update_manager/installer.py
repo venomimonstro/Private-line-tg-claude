@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import subprocess
 import tempfile
 import zipfile
 from datetime import datetime
@@ -100,25 +99,13 @@ async def install_update(zip_path: str, admin_id: int, session: AsyncSession) ->
                     shutil.copy2(src, dst)
                     update_logger.info("Installed: %s", rel)
 
-        # Step 5: Run migrations
-        migrations_dir = extract_dir / "migrations"
+        # Step 5: Database migrations are intentionally unsupported here.
+        # They require host orchestration so the database can be restored with
+        # all application writers stopped if anything fails.
         if manifest.get("requires_db_migration"):
             raise RuntimeError(
                 "In-process database migrations are disabled; use host-level release deployment"
             )
-        if False and migrations_dir.exists():  # defensive dead branch; kept for old package compatibility
-            await _set_update_status(update, UpdateStatus.migrating, session)
-            update_logger.info("Running database migrations...")
-            result = subprocess.run(
-                ["alembic", "upgrade", "head"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                cwd=settings.APP_DIR,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"Migration failed:\n{result.stderr}")
-            update_logger.info("Migrations completed.")
 
         # Step 6: Health check
         await _set_update_status(update, UpdateStatus.health_check, session)
