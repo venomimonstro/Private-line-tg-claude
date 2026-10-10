@@ -11,8 +11,14 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     from app.services.vpn_key import get_access_url
 
     bot = get_bot()
+    temporary_bot = False
     if bot is None:
-        return
+        # Admin/worker processes do not share the polling process's bot singleton.
+        # Use a short-lived Telegram client rather than silently skipping delivery.
+        from aiogram import Bot
+        from app.config import settings
+        bot = Bot(token=settings.BOT_TOKEN)
+        temporary_bot = True
 
     # Accept both a single VpnKey and a list[VpnKey]
     if not isinstance(vpn_keys, list):
@@ -58,7 +64,11 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
         except Exception as onboard_exc:
             logger.error("send_onboarding_message failed for user %d: %s", user_id, onboard_exc)
     except Exception as exc:
-        logger.error("send_key_to_user failed for user %d: %s", user_id, exc)
+        logger.error("send_key_to_user failed for Telegram chat %d: %s", user_id, exc)
+        raise
+    finally:
+        if temporary_bot:
+            await bot.session.close()
 
 
 async def notify_payment_confirmed(
