@@ -3,13 +3,21 @@
 # Usage: bash scripts/restore_postgres_backup.sh backups/backup_manual_....dump
 set -Eeuo pipefail
 umask 077
-cd "$(dirname "$0")/.."
+ROOT="${PRIVATE_LINE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$ROOT"
 
 BACKUP="${1:-}"
 [[ -n "$BACKUP" ]] || { echo "Usage: $0 <postgres-custom-dump>" >&2; exit 2; }
 [[ -f "$BACKUP" && -s "$BACKUP" ]] || { echo "FAIL: backup missing/empty: $BACKUP" >&2; exit 2; }
 
-bash scripts/validate_install_layout.sh
+if [[ "${PRIVATE_LINE_SKIP_LAYOUT_VALIDATION:-0}" == 1 ]]; then
+  [[ -f docker-compose.yml && -f .env ]] || {
+    echo "FAIL: minimal restore layout missing under $ROOT" >&2
+    exit 2
+  }
+else
+  bash scripts/validate_install_layout.sh
+fi
 
 DB_CID="$(docker compose ps -q db)"
 [[ -n "$DB_CID" ]] || { echo "FAIL: PostgreSQL container not found" >&2; exit 2; }
