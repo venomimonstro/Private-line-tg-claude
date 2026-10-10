@@ -144,8 +144,10 @@ async def main(sub_id: int, repair: bool) -> int:
                 hosts_ok = any(
                     isinstance(h, dict)
                     and h.get("address") == public_host
-                    and h.get("port") == port
-                    and not h.get("is_disabled", False)
+                    # Marzban accepts nullable/0 host ports: use the inbound port.
+                    and h.get("port") in (None, "", 0, "0", port, str(port))
+                    and h.get("is_disabled") not in (True, "true", "True")
+                    and h.get("security") in (None, "", "inbound_default", "reality")
                     for h in matching
                 )
             print(f"Marzban hosts match node address/port: {'OK' if hosts_ok else 'MISMATCH'}")
@@ -175,7 +177,7 @@ async def main(sub_id: int, repair: bool) -> int:
                 print("Key parameters match Marzban Reality: OK")
 
             if not hosts_ok:
-                print("ACTION: repair Marzban hosts before using a generated client link")
+                print("ACTION: run python -m app.repair_vless_hosts --server 1 --apply on the main server")
                 return 1
             if not tcp_ok:
                 print("ACTION: check Xray listening on 443 and provider firewall; do not rotate keys")
