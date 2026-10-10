@@ -17,7 +17,7 @@ print("PASS: host Python syntax")
 PY
 
 echo "[2/6] Checking production shell scripts..."
-for name in     install_node.sh     scripts/update_node_xray.sh     scripts/probe_vless_e2e.sh     scripts/inspect_node_vless.sh     scripts/smoke_vpn_node.sh     scripts/production_vpn_gate.sh     scripts/preflight_release.sh; do
+for name in     install_node.sh     scripts/update_node_xray.sh     scripts/probe_vless_e2e.sh     scripts/inspect_node_vless.sh     scripts/smoke_vpn_node.sh     scripts/production_vpn_gate.sh     scripts/preflight_release.sh     scripts/update_vpn_stability.sh     scripts/repair_registered_node_ipv4.sh; do
     bash -n "$name"
 done
 echo "PASS: shell syntax"
