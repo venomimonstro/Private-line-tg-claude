@@ -77,3 +77,7 @@ echo "[5/5] Deleting disposable Marzban user and verifying 404..."
 docker compose exec -T admin python -m app.node_smoke_user delete     --server "$SERVER_ID" --name "$NAME"
 CREATED=0
 echo "PASS: dedicated VPN node lifecycle works end-to-end"
+if [[ "$MODE" == "--publish" ]]; then
+    echo "[publish] Final read-only integrity check and customer publication..."
+    docker compose exec -T admin python -m app.promote_vpn_node --server "$SERVER_ID"
+fi
