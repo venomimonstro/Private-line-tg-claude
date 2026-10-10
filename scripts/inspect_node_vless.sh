@@ -21,7 +21,7 @@ ss -ltnp '( sport = :443 )' 2>/dev/null || true
 ufw status 2>/dev/null | head -n 14 || true
 echo "=== MARZBAN CONTAINER / XRAY CORE VERSION ==="
 docker ps --filter name=marzban --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || true
-docker exec marzban-marzban-1 xray version 2>/dev/null | head -n 1 || true
+docker exec marzban-marzban-1 python -c 'import os, subprocess; subprocess.run([os.environ.get("XRAY_EXECUTABLE_PATH", "/usr/local/bin/xray"), "version"], check=True)' 2>/dev/null | head -n 1 || true
 echo "Running Xray process:"
 ps -eo comm,etime,args | grep -E '[x]ray (run|-[c])' | sed -E 's@/[[:alnum:]_/-]*secret[[:alnum:]_/-]*@[REDACTED_PATH]@g' | head -n 4 || true
 
@@ -81,3 +81,4 @@ docker logs --tail 120 marzban-marzban-1 2>&1 \
        -e 's/(token|password|secret|privateKey)[=:][^[:space:]]+/\1=[REDACTED]/Ig' \
        -e 's/[A-Za-z0-9_-]{43,100}/[REDACTED_LONG_STRING]/g' \
     | tail -n 25 || true
+
