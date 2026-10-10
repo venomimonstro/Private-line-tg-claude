@@ -32,8 +32,7 @@ class MarzbanClient:
         self._username = username
         self._password = password
         self._token: str | None = None
-        self._client = httpx.AsyncClient(verify=False, timeout=15.0)
-        # Caches — populated lazily, shared by all methods that need config data
+        # HTTP is used for the firewall-restricted node API in the default\n        # topology. If an operator supplies HTTPS, certificate verification must\n        # remain enabled; never silently downgrade TLS authenticity.\n        self._client = httpx.AsyncClient(timeout=15.0, trust_env=False)\n        # Caches — populated lazily, shared by all methods that need config data
         self._core_config_cache: dict | None = None
         self._inbounds_cache: dict[str, list[str]] | None = None
         self._reality_cache: tuple[str, str, str] | None = None  # (pubkey, short_id, sni)
