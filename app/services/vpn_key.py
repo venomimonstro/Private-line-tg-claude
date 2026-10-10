@@ -380,6 +380,8 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
     servers = result.scalars().all()
 
     for server in servers:
+        if _server_protocol(server) != "marzban":
+            continue
         cb = get_circuit_breaker(server.id)
         if not cb.is_available():
             logger.warning("Skipping traffic sync for server %d (circuit open)", server.id)
