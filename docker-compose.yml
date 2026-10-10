@@ -82,6 +82,7 @@ services:
       - privateline
 
   prometheus:
+    profiles: ["monitoring"]
     image: prom/prometheus:v2.51.0
     volumes:
       - ./monitoring/prometheus:/etc/prometheus
@@ -100,6 +101,7 @@ services:
       - privateline
 
   alertmanager:
+    profiles: ["monitoring"]
     image: prom/alertmanager:v0.27.0
     volumes:
       - ./monitoring/alertmanager:/etc/alertmanager
@@ -112,6 +114,7 @@ services:
       - privateline
 
   grafana:
+    profiles: ["monitoring"]
     image: grafana/grafana:10.4.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
@@ -135,6 +138,7 @@ services:
       - prometheus
 
   node-exporter:
+    profiles: ["monitoring"]
     image: prom/node-exporter:v1.7.0
     command:
       - '--path.rootfs=/host'
