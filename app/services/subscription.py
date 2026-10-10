@@ -37,7 +37,8 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
     servers = result.scalars().all()
     available = [
         s for s in servers
-        if get_circuit_breaker(s.id).is_available()
+        if vpn_key_service._server_protocol(s) == "marzban"
+        and get_circuit_breaker(s.id).is_available()
         and (not s.max_users or s.current_users < s.max_users)
     ]
     return sorted(available, key=lambda s: s.current_users)
