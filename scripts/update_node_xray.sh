@@ -30,6 +30,7 @@ cleanup() {
     if [ "$CHANGED" = true ] && [ "$SUCCESS" != true ]; then
         echo 'Startup verification failed; restoring previous Xray configuration'
         cp -p "$BACKUP_DIR/marzban.env" /opt/marzban/.env
+        cp -p "$BACKUP_DIR/xray_config.json" /var/lib/marzban/xray_config.json
         docker compose up -d --no-deps --force-recreate marzban </dev/null || true
     fi
     rm -rf -- "$WORKDIR"
@@ -53,20 +54,64 @@ mkdir -p "$CORE_DIR"
 install -m 755 "$WORKDIR/xray" "$CORE_DIR/xray.next"
 mv -f "$CORE_DIR/xray.next" "$CORE"
 
-echo '[2/4] Validating existing configuration inside the Marzban container'
-# This also verifies the existing /var/lib/marzban bind mount exposes the binary.
-# -T disables TTY, NOT stdin: close stdin so docker cannot consume a bash -s script.
-if ! docker compose exec -T marzban "$CORE" run -test \
-    -config /var/lib/marzban/xray_config.json </dev/null > "$WORKDIR/validation.log" 2>&1; then
-    echo 'FAIL: new core rejected the existing configuration; active service unchanged'
-    exit 1
-fi
+echo '[2/4] Preparing Marzban-compatible Reality metadata'
 mkdir -p "$BACKUP_DIR"
 cp -p .env "$BACKUP_DIR/marzban.env"
 cp -p /var/lib/marzban/xray_config.json "$BACKUP_DIR/xray_config.json"
 chmod 600 "$BACKUP_DIR/marzban.env" "$BACKUP_DIR/xray_config.json"
-# Config and database are not rewritten. Marzban retains the mounted database.
+CANDIDATE="$BACKUP_DIR/xray_config.candidate.json"
+# Old Marzban parses "Public key:" from x25519 output. New Xray emits
+# "Password:". Supplying the derived publicKey avoids that obsolete parser.
+# No new private keys, short IDs or client UUIDs are generated.
+docker compose exec -T marzban python - "$CORE" "$CANDIDATE" <<'PY'
+import base64, json, os, pathlib, re, subprocess, sys
+source = pathlib.Path('/var/lib/marzban/xray_config.json')
+config = json.loads(source.read_text())
+count = 0
+for inbound in config.get('inbounds', []):
+    stream = inbound.get('streamSettings', {})
+    if stream.get('security') != 'reality':
+        continue
+    reality = stream.get('realitySettings', {})
+    private_key = reality.get('privateKey')
+    if not isinstance(private_key, str) or not private_key:
+        raise SystemExit('FAIL: Reality private key missing; no changes applied')
+    result = subprocess.run(
+        [sys.argv[1], 'x25519', '-i', private_key],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode:
+        raise SystemExit('FAIL: existing Reality key cannot be decoded')
+    public_key = None
+    for line in result.stdout.splitlines():
+        label, sep, value = line.partition(':')
+        label = re.sub(r'\s+', '', label).lower()
+        if sep and label in ('publickey', 'password', 'password(publickey)'):
+            public_key = value.strip()
+            break
+    if (not public_key or not re.fullmatch(r'[A-Za-z0-9_-]{43,44}', public_key)
+        or len(base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))) != 32):
+        raise SystemExit('FAIL: unable to derive Reality public key; no changes applied')
+    reality['publicKey'] = public_key
+    count += 1
+if not count:
+    raise SystemExit('FAIL: no Reality inbound found')
+candidate = pathlib.Path(sys.argv[2])
+with open(candidate, 'x') as stream:
+    json.dump(config, stream, indent=2)
+    stream.write('\n')
+os.chmod(candidate, 0o600)
+print('Derived publicKey for %d Reality inbound(s); original private keys preserved' % count)
+PY
+# -T disables TTY, NOT stdin. Never let Docker consume an SSH bash -s script.
+if ! docker compose exec -T marzban "$CORE" run -test \
+    -config "$CANDIDATE" </dev/null > "$WORKDIR/validation.log" 2>&1; then
+    echo 'FAIL: new core rejected the candidate; active configuration unchanged'
+    exit 1
+fi
+# Backups exist before either live file changes; rollback restores both files.
 CHANGED=true
+install -m 600 "$CANDIDATE" /var/lib/marzban/xray_config.json
 python3 - "$CORE" <<'PY'
 import os, pathlib, re, sys
 path = pathlib.Path('/opt/marzban/.env')
@@ -113,7 +158,13 @@ PY
     fi
     sleep 2
 done
-[ "$SUCCESS" = true ] || { echo 'FAIL: new core did not become ready'; exit 1; }
+if [ "$SUCCESS" != true ]; then
+    echo 'FAIL: new core did not become ready. Marzban startup errors (redacted):'
+    docker compose logs --no-color --tail 80 marzban </dev/null 2>&1 | \
+        sed -E -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g' \
+               -e 's/[A-Za-z0-9_=-]{32,}/[REDACTED]/g' | tail -n 35 || true
+    exit 1
+fi
 echo "[4/4] Core $VERSION is running; VPN port and Marzban API available"
 echo "Rollback env backup: $BACKUP_DIR/marzban.env"
 echo 'UUIDs, Reality private key, short IDs, SNI and database preserved.'
