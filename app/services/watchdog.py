@@ -199,7 +199,7 @@ async def _find_best_server(session: AsyncSession) -> VpnServer | None:
         .where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider != "private-line-primary",
+            VpnServer.provider == "marzban",
         )
         .order_by(VpnServer.failure_count.asc(), VpnServer.current_users.asc())
     )
