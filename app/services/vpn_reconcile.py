@@ -12,6 +12,7 @@ static Reality configuration.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 from dataclasses import dataclass
@@ -350,6 +351,23 @@ async def reconcile_marzban_server(
                 raise MarzbanConfigError(
                     f"Xray core resync failed HTTP {restarted.status_code}"
                 )
+            # Do not report repaired until the restarted core is actually ready.
+            ready = False
+            for _ in range(30):
+                await asyncio.sleep(1)
+                try:
+                    status = await client._client.get(
+                        f"{client._base}/api/core",
+                        headers=headers,
+                        timeout=4.0,
+                    )
+                    if status.status_code == 200 and status.json().get("started") is True:
+                        ready = True
+                        break
+                except Exception:
+                    continue
+            if not ready:
+                raise MarzbanConfigError("Xray core did not return to started state after resync")
             result.core_restarted = True
 
         if apply and result.errors == 0:
