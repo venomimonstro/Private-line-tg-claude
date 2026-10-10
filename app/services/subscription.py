@@ -30,7 +30,7 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
         .where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider != "private-line-primary",
+            VpnServer.provider == "marzban",
         )
         .order_by(VpnServer.current_users)
     )
