@@ -527,6 +527,19 @@ class MarzbanClient:
         )
         if resp.status_code == 404:
             return
+        # Some Marzban builds delete the user but return HTTP 500 while
+        # serializing an env-created sudo admin (Admin.model_validate(None)).
+        # Only treat it as success after a separate GET confirms deletion.
+        if resp.status_code >= 500:
+            verify = await self._client.get(
+                f"{self._base}/api/user/{username}", headers=headers
+            )
+            if verify.status_code == 404:
+                logger.warning(
+                    "Marzban DELETE /api/user/%s returned HTTP %s, but GET confirmed deletion",
+                    username, resp.status_code,
+                )
+                return
         resp.raise_for_status()
 
     async def get_transfer_stats(self) -> dict[str, int]:
