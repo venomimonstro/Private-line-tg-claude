@@ -101,43 +101,61 @@ async def create_trial_subscription(
     promo: PromoCode,
     session: AsyncSession,
 ) -> Subscription | None:
-    """Creates a free trial subscription. Returns None if user already had trial."""
-    from datetime import timedelta
-    from app.models.subscription import Subscription
+    """Activate a promo trial only after a real VPN key is issued."""
     from app.models.tariff import Tariff
+    from app.models.user import User
+    from app.services import subscription as subscription_service
+    from app.services.user_notifications import send_key_to_user
 
-    if await has_used_service(user_id, session):
+    # Serialize double taps / concurrent requests for the same account.
+    locked_user = (await session.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
+    if locked_user is None or await has_used_service(user_id, session):
         return None
 
-    tariff_result = await session.execute(
-        select(Tariff).where(Tariff.slug == tariff_slug)
-    )
-    tariff = tariff_result.scalar_one_or_none()
+    tariff = (await session.execute(
+        select(Tariff).where(
+            Tariff.slug == tariff_slug,
+            Tariff.is_active == True,  # noqa: E712
+        )
+    )).scalar_one_or_none()
     if tariff is None:
         logger.error("Tariff slug %s not found for trial subscription", tariff_slug)
         return None
 
     trial_days = promo.trial_days or 7
     now = datetime.utcnow()
-
     subscription = Subscription(
         user_id=user_id,
         tariff_id=tariff.id,
-        status=SubscriptionStatus.active,
-        started_at=now,
-        expires_at=now + timedelta(days=trial_days),
+        status=SubscriptionStatus.pending_payment,
         auto_renew=False,
         created_at=now,
         updated_at=now,
     )
     session.add(subscription)
+    await session.flush()
 
-    # Increment promo uses_count
+    key = await subscription_service.activate_subscription(
+        subscription,
+        tariff,
+        session,
+        send_key_callback=send_key_to_user,
+    )
+    if key is None:
+        logger.error(
+            "Promo trial VPN activation failed for user %d tariff %s",
+            user_id, tariff_slug,
+        )
+        return None
+
+    subscription.expires_at = now + timedelta(days=trial_days)
     promo.uses_count = (promo.uses_count or 0) + 1
     await session.flush()
 
     logger.info(
-        "Created trial subscription for user %d, tariff %s, %d days",
+        "Activated promo trial for user %d, tariff %s, %d days",
         user_id, tariff_slug, trial_days,
     )
     return subscription
@@ -148,18 +166,24 @@ async def activate_tariff_trial(
     tariff_slug: str,
     session: AsyncSession,
 ) -> Subscription | None:
-    """Activate built-in tariff trial (no promo code). Returns subscription or None if ineligible."""
+    """Activate built-in trial only after a production VPN key is issued."""
     from app.models.tariff import Tariff
+    from app.models.user import User
     from app.services import subscription as subscription_service
     from app.services.user_notifications import send_key_to_user
 
-    if await has_used_service(user_id, session):
+    locked_user = (await session.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
+    if locked_user is None or await has_used_service(user_id, session):
         return None
 
-    tariff_result = await session.execute(
-        select(Tariff).where(Tariff.slug == tariff_slug, Tariff.is_active == True)  # noqa: E712
-    )
-    tariff = tariff_result.scalar_one_or_none()
+    tariff = (await session.execute(
+        select(Tariff).where(
+            Tariff.slug == tariff_slug,
+            Tariff.is_active == True,  # noqa: E712
+        )
+    )).scalar_one_or_none()
     if tariff is None or not tariff.trial_days:
         return None
 
@@ -175,14 +199,21 @@ async def activate_tariff_trial(
     session.add(sub)
     await session.flush()
 
-    await subscription_service.activate_subscription(
+    key = await subscription_service.activate_subscription(
         sub, tariff, session, send_key_callback=send_key_to_user,
     )
+    if key is None:
+        logger.error(
+            "Built-in trial VPN activation failed for user %d tariff %s",
+            user_id, tariff_slug,
+        )
+        return None
 
-    # Override expiry to trial_days (activate_subscription uses tariff.duration_days)
-    if sub.status == SubscriptionStatus.active:
-        sub.expires_at = now + timedelta(days=tariff.trial_days)
-        await session.flush()
-
-    logger.info("Activated built-in trial for user %d, tariff %s, %d days", user_id, tariff_slug, tariff.trial_days)
+    sub.expires_at = now + timedelta(days=tariff.trial_days)
+    await session.flush()
+    logger.info(
+        "Activated built-in trial for user %d, tariff %s, %d days",
+        user_id, tariff_slug, tariff.trial_days,
+    )
     return sub
+
