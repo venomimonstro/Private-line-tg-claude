@@ -93,10 +93,13 @@ async def create_vpn_key(
     label: str | None = None,
     ip_limit: int = 0,
 ) -> VpnKey:
-    # Purge ALL old keys for this subscription (any server, any status).
-    # One subscription = one key always. Old keys take up space and confuse users.
+    # Replacing a key on one node MUST NOT delete keys for other nodes.
+    # A subscription can have one active key per server (temporary fallback).
     old_keys_result = await session.execute(
-        select(VpnKey).where(VpnKey.subscription_id == subscription_id)
+        select(VpnKey).where(
+            VpnKey.subscription_id == subscription_id,
+            VpnKey.server_id == server.id,
+        )
     )
     # Transfer counters from the active key so they survive purge
     _today = date.today()
