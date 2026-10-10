@@ -200,7 +200,11 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         if server is None:
             raise ValueError(f"Server {vpn_key.server_id} not found")
 
-        await vpn_key_service.disable_vpn_key(vpn_key, server, session)
+        await vpn_key_service.disable_vpn_key(
+            vpn_key, server, session,
+            enqueue_on_failure=False,
+            raise_on_failure=True,
+        )
         logger.info("Disabled VPN key %d via pending operation %d", vpn_key.id, op.id)
 
     elif op_type == PendingOperationType.delete_key.value:
@@ -215,8 +219,12 @@ async def _execute_operation(op: PendingOperation, session: AsyncSession) -> Non
         if server is None:
             raise ValueError(f"Server {vpn_key.server_id} not found")
 
-        await vpn_key_service.disable_vpn_key(vpn_key, server, session)
-        logger.info("Deleted VPN key %d via pending operation %d", vpn_key.id, op.id)
+        await vpn_key_service.disable_vpn_key(
+            vpn_key, server, session,
+            enqueue_on_failure=False,
+            raise_on_failure=True,
+        )
+        logger.info("Disabled/deleted VPN key %d via pending operation %d", vpn_key.id, op.id)
 
     else:
         raise ValueError(f"Unknown operation type: {op_type}")
