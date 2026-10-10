@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import random
 import secrets
@@ -76,6 +77,16 @@ def _bot_url() -> str:
 
 def _portal_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def _payment_access_token(payment_id: int, user_id: int) -> str:
+    """Unpredictable capability scoped to one payment, not the whole portal."""
+    payload = f"{payment_id}:{user_id}".encode("utf-8")
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()[:32]
 
 
 async def _attach_referral(user: User, ref: str, session: AsyncSession) -> None:
@@ -230,12 +241,14 @@ async def portal_start_payment(
         logger.error("Portal payment creation failed: %s", exc, exc_info=True)
         return checkout_error("Ошибка создания платежа. Попробуйте позже.")
 
-    return RedirectResponse(f"/portal/waiting/{payment.id}", status_code=303)
+    pay_token = _payment_access_token(payment.id, user.id)
+    return RedirectResponse(f"/portal/waiting/{payment.id}/{pay_token}", status_code=303)
 
 
-@router.get("/waiting/{payment_id}", response_class=HTMLResponse)
+@router.get("/waiting/{payment_id}/{access_token}", response_class=HTMLResponse)
 async def portal_waiting(
     payment_id: int,
+    access_token: str,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> HTMLResponse:
@@ -247,11 +260,16 @@ async def portal_waiting(
     payment = result.scalar_one_or_none()
     if payment is None:
         return RedirectResponse("/portal/", status_code=303)
+    expected_token = _payment_access_token(payment.id, payment.user_id)
+    if not secrets.compare_digest(access_token, expected_token):
+        # Do not reveal whether a sequential payment ID exists.
+        return RedirectResponse("/portal/", status_code=303)
 
     is_manual = (not payment.payment_url)
     return templates.TemplateResponse("portal/waiting.html", {
         "request": request,
         "payment_id": payment_id,
+        "payment_access_token": access_token,
         "payment_url": payment.payment_url,
         "tariff_name": payment.tariff.name if payment.tariff else "—",
         "amount": payment.amount,
@@ -262,9 +280,10 @@ async def portal_waiting(
     })
 
 
-@router.get("/api/status/{payment_id}")
+@router.get("/api/status/{payment_id}/{access_token}")
 async def portal_payment_status(
     payment_id: int,
+    access_token: str,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> JSONResponse:
@@ -275,6 +294,9 @@ async def portal_payment_status(
     )
     payment = result.scalar_one_or_none()
     if payment is None:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    expected_token = _payment_access_token(payment.id, payment.user_id)
+    if not secrets.compare_digest(access_token, expected_token):
         return JSONResponse({"status": "not_found"}, status_code=404)
 
     # For gift payments, check recipient's subscription
@@ -296,16 +318,20 @@ async def portal_payment_status(
         "status_label": _STATUS_LABELS.get(status_val, status_val),
     }
 
-    # VPN key + portal URL when paid
-    active_sub = gift_sub or payment.subscription
+    # VPN key + portal URL when paid. A gift payer must never receive the
+    # recipient's VPN credential through the payment status endpoint.
+    active_sub = payment.subscription
     if status_val == "paid" and active_sub is not None:
-        for key in active_sub.vpn_keys:
-            if key.access_url_encrypted:
-                try:
-                    response["vpn_key"] = get_access_url(key)
-                except Exception:
-                    pass
-                break
+        if payment.gift_recipient_id is not None:
+            response["gift"] = True
+        else:
+            for key in active_sub.vpn_keys:
+                if key.access_url_encrypted:
+                    try:
+                        response["vpn_key"] = get_access_url(key)
+                    except Exception:
+                        pass
+                    break
         # Include portal URL so user can save it
         user = await session.get(User, payment.user_id)
         if user is not None:
