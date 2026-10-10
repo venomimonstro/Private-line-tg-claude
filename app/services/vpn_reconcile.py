@@ -376,9 +376,16 @@ async def reconcile_marzban_server(
                 )
                 result.errors += 1
 
-        if apply and remote_changed:
+        if apply:
+            # Explicit reconciliation is an operator request to converge the
+            # authoritative Marzban DB and the live Xray runtime. REST/DB state
+            # may already look correct even when Marzban's background Xray API
+            # update failed, so always rebuild the live core on --apply.
             await client.restart_core_with_db_users(
-                reason=f"reconcile server {server.id}"
+                reason=(
+                    f"reconcile server {server.id}; "
+                    f"remote_changed={str(remote_changed).lower()}"
+                )
             )
             result.core_restarted = True
 
