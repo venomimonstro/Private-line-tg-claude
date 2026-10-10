@@ -19,8 +19,11 @@ echo
 echo "=== VPN LISTENER / FIREWALL ==="
 ss -ltnp '( sport = :443 )' 2>/dev/null || true
 ufw status 2>/dev/null | head -n 14 || true
-echo "=== MARZBAN CONTAINER ==="
+echo "=== MARZBAN CONTAINER / XRAY CORE VERSION ==="
 docker ps --filter name=marzban --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || true
+docker exec marzban-marzban-1 xray version 2>/dev/null | head -n 1 || true
+echo "Running Xray process:"
+ps -eo comm,etime,args | grep -E '[x]ray (run|-[c])' | sed -E 's@/[[:alnum:]_/-]*secret[[:alnum:]_/-]*@[REDACTED_PATH]@g' | head -n 4 || true
 
 echo "=== XRAY STATIC CONFIG (NO SECRETS) ==="
 python3 - <<'PY'
