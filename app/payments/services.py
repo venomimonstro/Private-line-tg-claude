@@ -53,7 +53,7 @@ async def get_enabled_providers(session: AsyncSession) -> list[str]:
     from app.config import settings
     from app.models.app_setting import AppSetting
 
-    all_keys = list(_PROVIDER_ENABLED_MAP.keys()) + [
+    all_keys = list(_PROVIDER_ENABLED_MAP.keys()) + ["WEBHOOK_BASE_URL"] + [
         k for keys in _PROVIDER_CRED_KEYS.values() for k in keys
     ]
     result = await session.execute(
@@ -65,7 +65,21 @@ async def get_enabled_providers(session: AsyncSession) -> list[str]:
         return db_vals.get(key) or getattr(settings, key, "")
 
     def has_credentials(provider: str) -> bool:
-        return all(get_val(k).strip() for k in _PROVIDER_CRED_KEYS.get(provider, []))
+        if not all(get_val(k).strip() for k in _PROVIDER_CRED_KEYS.get(provider, [])):
+            return False
+        if provider == "yookassa":
+            from urllib.parse import urlsplit
+            try:
+                parsed = urlsplit(get_val("WEBHOOK_BASE_URL").strip())
+                port = parsed.port or (443 if parsed.scheme == "https" else None)
+                return (
+                    parsed.scheme == "https"
+                    and bool(parsed.hostname)
+                    and port in (443, 8443)
+                )
+            except ValueError:
+                return False
+        return True
 
     enabled = [
         code
