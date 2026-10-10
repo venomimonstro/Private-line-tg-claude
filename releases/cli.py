@@ -131,7 +131,7 @@ async def _cmd_rollback_plan(args: argparse.Namespace) -> None:
             print("ERROR: release backup metadata is incomplete", file=sys.stderr)
             sys.exit(2)
         print(
-            f"{release.previous_commit}|{backup.id}|{Path(backup.file_path).name}",
+            f"{release.previous_commit}|{backup.id}|{Path(backup.file_path).name}|{backup.checksum}",
             flush=True,
         )
 
