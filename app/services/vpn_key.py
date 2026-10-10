@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import Union
 from urllib.parse import urlparse, parse_qs as _parse_qs
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.encryption import decrypt, encrypt
@@ -105,6 +105,49 @@ async def create_vpn_key(
     label: str | None = None,
     ip_limit: int = 0,
 ) -> VpnKey:
+    # Serialize provisioning for the same subscription and node. This closes
+    # duplicate webhook/retry races before any remote Marzban call.
+    from app.enums import SubscriptionStatus
+    from app.models.subscription import Subscription
+
+    locked_sub = (await session.execute(
+        select(Subscription).where(
+            Subscription.id == subscription_id
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if locked_sub is None or locked_sub.user_id != user_id:
+        raise ValueError("Subscription/user mismatch during VPN provisioning")
+    if locked_sub.status not in (
+        SubscriptionStatus.pending_payment,
+        SubscriptionStatus.activation_error,
+        SubscriptionStatus.active,
+        SubscriptionStatus.expires_soon,
+    ):
+        raise ValueError("Subscription is not eligible for VPN provisioning")
+
+    locked_server = (await session.execute(
+        select(VpnServer).where(VpnServer.id == server.id).with_for_update()
+    )).scalar_one_or_none()
+    if locked_server is None:
+        raise ValueError("VPN server disappeared during provisioning")
+    server = locked_server
+    if (
+        server.status != VpnServerStatus.active
+        or not server.is_selectable
+        or server.provider == "private-line-primary"
+        or _server_protocol(server) != "marzban"
+    ):
+        raise ValueError("VPN server is not production-selectable")
+
+    actual_users = await session.scalar(
+        select(func.count(VpnKey.id)).where(
+            VpnKey.server_id == server.id,
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    actual_users = int(actual_users or 0)
+    server.current_users = actual_users
+
     # Idempotent creation: never delete a working key before a replacement exists.
     # Activation retries and queue retries simply reuse the active key on this node.
     existing_active = (await session.execute(
@@ -123,6 +166,9 @@ async def create_vpn_key(
             existing_active[0].id, subscription_id, server.id,
         )
         return existing_active[0]
+
+    if server.max_users and actual_users >= server.max_users:
+        raise ValueError("VPN server capacity exhausted")
 
     _inherited_reissue_count = 0
     _inherited_reissue_date = None
@@ -264,6 +310,9 @@ async def create_vpn_key(
         reissue_date=_inherited_reissue_date,
     )
     session.add(vpn_key)
+    await session.flush()
+    # Capacity is owned by this single transactional creation path.
+    server.current_users = actual_users + 1
     await session.flush()
     return vpn_key
 
