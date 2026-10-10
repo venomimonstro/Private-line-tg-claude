@@ -18,7 +18,7 @@ from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import create_vpn_key, get_client_access_url
+from app.services.vpn_key import get_client_access_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
 
@@ -360,8 +360,8 @@ async def on_reissue_key(callback: CallbackQuery, db_user: User) -> None:
 
 @router.callback_query(F.data == "reissue_confirm")
 async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
-    """Actually reissue the key (race-condition safe)."""
-    await callback.answer("⏳ Создаём новый ключ…")
+    """Safely refresh the current key profile without destructive rotation."""
+    await callback.answer("⏳ Проверяем и обновляем профиль…")
 
     async with async_session_maker() as session:
         # Re-read everything inside the session for consistency
@@ -415,27 +415,29 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
             )
             return
 
-        tariff = await session.get(Tariff, sub.tariff_id)
-
         try:
-            # create_vpn_key purges the old key, creates a new one,
-            # and carries the reissue_count_today forward automatically.
-            new_key = await create_vpn_key(
-                user_id=db_user.id,
-                subscription_id=sub.id,
-                server=server,
-                traffic_limit_gb=tariff.traffic_limit_gb if tariff else None,
-                session=session,
+            # User-facing "refresh" is preserve-first: reconcile Marzban and
+            # regenerate the client profile without rotating UUID/Reality keys.
+            from app.services.vpn_reconcile import reconcile_marzban_server
+            result = await reconcile_marzban_server(
+                session,
+                server.id,
+                apply=True,
+                only_subscription_id=sub.id,
             )
-            # Increment the daily counter on the new key
-            new_key.reissue_count_today = used + 1
-            new_key.reissue_date = today
-            new_key.last_reissued_at = _dt.utcnow()
+            if result.errors:
+                raise RuntimeError(f"reconcile errors={result.errors}")
+            await session.refresh(active_key)
+            active_key.reissue_count_today = used + 1
+            active_key.reissue_date = today
+            active_key.last_reissued_at = _dt.utcnow()
             await session.commit()
+            new_key = active_key
         except Exception as exc:
-            logger.error("Bot reissue failed for user %d: %s", db_user.id, exc, exc_info=True)
-            await callback.message.answer(  # type: ignore[union-attr]
-                "❌ Не удалось обновить ключ. Попробуйте позже или обратитесь в поддержку.",
+            logger.error("Bot key refresh failed for user %d: %s", db_user.id, type(exc).__name__, exc_info=True)
+            await callback.message.answer(
+                "❌ Не удалось безопасно обновить профиль. Рабочий ключ не удалён. "
+                "Попробуйте позже или обратитесь в поддержку.",
                 parse_mode="HTML",
             )
             return
@@ -454,7 +456,7 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
 
     await callback.message.answer(  # type: ignore[union-attr]
         f"✅ <b>Ключ успешно обновлён!</b>\n\n"
-        f"🔑 <b>Ваш новый ключ доступа:</b>\n\n"
+        f"🔑 <b>Ваш актуальный ключ доступа:</b>\n\n"
         f"<code>{escape(access_url)}</code>\n\n"
         f"📱 Удалите старый ключ и добавьте новый:\n"
         f"• <b>Android:</b> Hiddify, V2RayNG\n"
