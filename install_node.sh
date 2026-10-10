@@ -126,6 +126,12 @@ success "Имя ноды: $SERVER_NAME"
 # ─── Install Marzban (XRay + VLESS Reality) ───────────────────────────────────
 section "Установка Marzban (XRay VLESS Reality)"
 
+# Never reinstall over an existing node. Reinstalling would rotate Marzban
+# credentials and Reality keys and invalidate every issued client profile.
+if [[ -f /opt/marzban/.env || -f /var/lib/marzban/xray_config.json ]]; then
+    die "Существующая VPN-нода обнаружена. Повторная установка запрещена; используйте безопасное обновление Xray и control-plane reconcile."
+fi
+
 MARZBAN_DIR="/opt/marzban"
 MARZBAN_DATA="/var/lib/marzban"
 MARZBAN_PORT=8000
@@ -227,24 +233,15 @@ for i in $(seq 1 24); do
     fi
     sleep 5
     if [[ $i -eq 24 ]]; then
-        warn "API не ответил за 120с — проверьте: docker compose -f /opt/marzban/docker-compose.yml logs"
+        die "Marzban API не ответил за 120с. Установка остановлена."
     fi
 done
 
 # ─── Generate VLESS Reality keys ──────────────────────────────────────────────
 section "Генерация VLESS Reality ключей"
 
-CONTAINER_ID=$(docker compose -f "$MARZBAN_DIR/docker-compose.yml" ps -q marzban 2>/dev/null | head -1 || echo "")
-XRAY_KEYS=""
-if [[ -n "$CONTAINER_ID" ]]; then
-    XRAY_KEYS=$(docker exec "$CONTAINER_ID" xray x25519 2>/dev/null || echo "")
-fi
-if [[ -z "$XRAY_KEYS" ]]; then
-    XRAY_KEYS=$(docker run --rm --entrypoint xray gozargah/marzban:latest x25519 2>/dev/null || echo "")
-fi
-if [[ -z "$XRAY_KEYS" ]]; then
-    die "Не удалось сгенерировать Reality ключи. Убедитесь что контейнер marzban запущен."
-fi
+XRAY_KEYS="$("$XRAY_BIN" x25519 2>/dev/null || true)"
+[[ -n "$XRAY_KEYS" ]] || die "Xray 26.9.9 не смог сгенерировать Reality keypair."
 
 # Xray outputs vary by release:
 # legacy: "Private key:" / "Public key:"
@@ -311,20 +308,25 @@ cd "$MARZBAN_DIR" && docker compose restart
 sleep 10
 
 # Wait for API again
+API_READY=false
 for i in $(seq 1 12); do
     if curl -sf -X POST "${API_URL}/api/admin/token" \
         -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
         >/dev/null 2>&1; then
         success "Marzban API готов после перезапуска"
+        API_READY=true
         break
     fi
     sleep 5
 done
+[[ "$API_READY" == true ]] || die "Marzban API не восстановился после применения Reality-конфигурации."
 
 # Get token
 TOKEN=$(curl -sf -X POST "${API_URL}/api/admin/token" \
     -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}" \
     2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
+
+[[ -n "$TOKEN" ]] || die "Не удалось получить Marzban admin token."
 
 # Configure Marzban hosts so links include Reality params
 if [[ -n "$TOKEN" ]]; then
@@ -357,7 +359,7 @@ PYEOF
         -H "Content-Type: application/json" \
         -d "$HOSTS_PAYLOAD" >/dev/null 2>&1 \
         && success "Marzban hosts настроены" \
-        || warn "Не удалось настроить Marzban hosts — ссылки будут сгенерированы автоматически"
+        || die "Marzban /api/hosts не сохранил публичный VPN endpoint."
 fi
 
 # ─── Firewall ─────────────────────────────────────────────────────────────────
@@ -366,13 +368,10 @@ section "Настройка файерволла"
 # Preserve all existing firewall rules and defaults; never reset UFW over SSH.
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
 ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1
-if [[ -n "${MAIN_SERVER_IP:-}" ]]; then
-    ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp comment "Marzban API (main server only)" >/dev/null 2>&1
-    success "API порт $PROXY_PORT доступен только с основного сервера $MAIN_SERVER_IP"
-else
-    ufw allow "${PROXY_PORT}/tcp" comment "Marzban API proxy" >/dev/null 2>&1
-    warn "API порт $PROXY_PORT открыт всем. Задайте MAIN_SERVER_IP для ограничения доступа."
-fi
+# Remove any legacy broad API allow rule, then permit only the control plane.
+ufw delete allow "${PROXY_PORT}/tcp" >/dev/null 2>&1 || true
+ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp comment "Marzban API (control plane only)" >/dev/null 2>&1
+success "API порт $PROXY_PORT доступен только с control-plane $MAIN_SERVER_IP"
 ufw --force enable >/dev/null 2>&1
 success "Открыты SSH 22 и VLESS Reality $VPN_PORT"
 
@@ -438,9 +437,7 @@ if [[ "$HTTP_CODE" == "200" ]]; then
     echo -e "  ${GREEN}${REG_MSG}${RESET}"
     REGISTERED=true
 else
-    warn "Авторегистрация не удалась (HTTP ${HTTP_CODE}): $HTTP_BODY"
-    warn "Добавьте вручную через Admin Panel → VPN Серверы"
-    REGISTERED=false
+    die "Control-plane не подтвердил VPN-ноду (HTTP ${HTTP_CODE}). Нода не опубликована. Ответ: ${HTTP_BODY:0:300}"
 fi
 
 # ─── Save info ────────────────────────────────────────────────────────────────
