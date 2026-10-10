@@ -67,7 +67,7 @@ async def vpn_subscription(
             Subscription.expires_at > datetime.utcnow(),
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider == "marzban",
+            VpnServer.provider != "private-line-primary",
         )
         .order_by(VpnServer.id.asc(), VpnKey.id.asc())
     )
