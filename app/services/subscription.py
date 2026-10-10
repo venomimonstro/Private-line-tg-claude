@@ -30,6 +30,7 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
         .where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
+            VpnServer.provider != "private-line-primary",
         )
         .order_by(VpnServer.current_users)
     )
@@ -39,8 +40,7 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
         if get_circuit_breaker(s.id).is_available()
         and (not s.max_users or s.current_users < s.max_users)
     ]
-    # Primary host is a temporary fallback, not the default for new accounts.
-    return sorted(available, key=lambda s: (s.provider == "private-line-primary", s.current_users))
+    return sorted(available, key=lambda s: s.current_users)
 
 
 async def activate_subscription(
