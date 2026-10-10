@@ -364,10 +364,9 @@ async def on_reissue_key(callback: CallbackQuery, db_user: User) -> None:
         return
 
     await callback.message.answer(  # type: ignore[union-attr]
-        f"🔄 <b>Обновить ключ доступа?</b>\n\n"
-        f"Текущий ключ будет аннулирован и заменён новым.\n"
-        f"После обновления старый ключ перестанет работать — "
-        f"импортируйте новый в приложение.\n\n"
+        f"🔄 <b>Проверить и восстановить VPN-профиль?</b>\n\n"
+        f"Система проверит Marzban, Reality-параметры и ссылку профиля.\n"
+        f"UUID и действующий ключ не будут заменены без необходимости.\n\n"
         f"📊 Использовано обновлений сегодня: <b>{used}/{_MAX_DAILY_REISSUES}</b>",
         parse_mode="HTML",
         reply_markup=reissue_confirm_keyboard(used, _MAX_DAILY_REISSUES),
@@ -389,7 +388,6 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
                 Subscription.status.in_([
                     SubscriptionStatus.active,
                     SubscriptionStatus.expires_soon,
-                    SubscriptionStatus.activation_error,
                 ]),
             )
             .order_by(Subscription.expires_at.desc())
