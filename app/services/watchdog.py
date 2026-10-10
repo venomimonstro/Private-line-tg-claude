@@ -209,10 +209,29 @@ async def _find_best_server(session: AsyncSession) -> VpnServer | None:
         if server.max_users and server.current_users >= server.max_users:
             continue
         cb = get_circuit_breaker(server.id)
-        if cb.state != CircuitState.OPEN:
-            return server
+        if cb.state == CircuitState.OPEN:
+            continue
+        # API health alone is not enough. Reuse the production integrity rules:
+        # Xray started, Reality present, exactly one public host, and existing
+        # paid keys consistent with the node. Watchdog never repairs here.
+        try:
+            from app.services.vpn_reconcile import reconcile_marzban_server
+            check = await reconcile_marzban_server(session, server.id, apply=False)
+            if check.errors:
+                logger.warning(
+                    "watchdog: server %d rejected by integrity preflight (%d errors)",
+                    server.id, check.errors,
+                )
+                continue
+        except Exception as exc:
+            logger.warning(
+                "watchdog: server %d preflight failed: %s",
+                server.id, type(exc).__name__,
+            )
+            continue
+        return server
 
-    # Fail closed. Never create a paid user's key on a circuit-open node.
+    # Fail closed. Never create a paid user's key on an unverified node.
     return None
 
 
