@@ -452,7 +452,15 @@ async def _activate_from_payment(payment: Payment, session: AsyncSession) -> Non
         if activated_key is None:
             raise RuntimeError(f"Payment {payment.id} VPN activation failed")
 
-    await _process_referral_reward(payment.user_id, session, payment=payment)
+    # Referral accounting is secondary. A referral failure must never replay
+    # an already-applied VPN activation/renewal and grant service twice.
+    try:
+        await _process_referral_reward(payment.user_id, session, payment=payment)
+    except Exception as exc:
+        logger.error(
+            "Referral side effect failed for paid payment %d: %s",
+            payment.id, type(exc).__name__, exc_info=True,
+        )
 
 
 _REVSHARE_PERCENT = Decimal("0.20")
