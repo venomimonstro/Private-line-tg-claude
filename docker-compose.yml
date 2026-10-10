@@ -11,6 +11,7 @@ services:
       - ./backup_manager:/app/backup_manager
       - ./health_monitor:/app/health_monitor
       - ./update_manager:/app/update_manager
+      - ./scheduler:/app/scheduler
       - ./alembic:/app/alembic
       - ./migrations:/app/migrations
       - ./data:/app/data
@@ -36,6 +37,7 @@ services:
       - ./backup_manager:/app/backup_manager
       - ./health_monitor:/app/health_monitor
       - ./update_manager:/app/update_manager
+      - ./scheduler:/app/scheduler
       - ./alembic:/app/alembic
       - ./migrations:/app/migrations
       - ./data:/app/data
