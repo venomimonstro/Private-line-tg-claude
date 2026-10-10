@@ -196,18 +196,24 @@ async def _find_best_server(session: AsyncSession) -> VpnServer | None:
 
     result = await session.execute(
         select(VpnServer)
-        .where(VpnServer.status == VpnServerStatus.active)
-        .order_by(VpnServer.failure_count.asc())
+        .where(
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+            VpnServer.provider != "private-line-primary",
+        )
+        .order_by(VpnServer.failure_count.asc(), VpnServer.current_users.asc())
     )
     servers = result.scalars().all()
 
     for server in servers:
+        if server.max_users and server.current_users >= server.max_users:
+            continue
         cb = get_circuit_breaker(server.id)
         if cb.state != CircuitState.OPEN:
             return server
 
-    # All circuits open — return the one with fewest failures anyway
-    return servers[0] if servers else None
+    # Fail closed. Never create a paid user's key on a circuit-open node.
+    return None
 
 
 async def check_key_health(vpn_key: VpnKey, session: AsyncSession) -> dict:
@@ -237,7 +243,7 @@ async def check_key_health(vpn_key: VpnKey, session: AsyncSession) -> dict:
         result["issues"].append(f"Cannot decrypt URL: {exc}")
         return result
 
-    result["url_preview"] = url[:60]
+    result["url_preview"] = "(redacted)"
 
     if not url.startswith("vless://"):
         result["issues"].append("URL is not vless://")
