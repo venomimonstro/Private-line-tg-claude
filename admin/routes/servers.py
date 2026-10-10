@@ -580,7 +580,10 @@ async def migrate_outline_to_vless(
                 raise RuntimeError("old Outline credential could not be confirmed disabled")
             old_server.current_users = max(0, old_server.current_users - 1)
 
-            await send_key_to_user(old_key.user_id, new_key)
+            db_user = await session.get(User, old_key.user_id)
+            if db_user is None or not db_user.telegram_id:
+                raise RuntimeError("Telegram recipient missing for migrated VPN key")
+            await send_key_to_user(db_user.telegram_id, new_key)
             migrated += 1
         except Exception as exc:
             logger.error("Migration failed for key %d: %s", old_key.id, exc)
