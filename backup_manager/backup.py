@@ -61,7 +61,9 @@ async def create_backup(
 ) -> Backup:
     backup_dir = _ensure_backup_dir()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"backup_{backup_type.value}_{timestamp}.db"
+    db_url = settings.DATABASE_URL
+    suffix = ".db" if "sqlite" in db_url else ".dump"
+    filename = f"backup_{backup_type.value}_{timestamp}{suffix}"
     file_path = backup_dir / filename
 
     record = Backup(
@@ -73,7 +75,6 @@ async def create_backup(
     await session.flush()
 
     try:
-        db_url = settings.DATABASE_URL
         if "sqlite" in db_url:
             db_file = db_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
             db_file_path = Path(db_file)
@@ -147,25 +148,14 @@ async def restore_backup(backup_id: int, session: AsyncSession) -> None:
         shutil.copy2(file_path, Path(db_file))
         logger.info("Database restored from backup #%d", backup_id)
     else:
-        conn = _parse_pg_url(db_url)
-        env = {**os.environ, "PGPASSWORD": conn["password"]}
-        pg_args = ["-h", conn["host"], "-p", conn["port"], "-U", conn["user"]]
-        subprocess.run(
-            ["dropdb", "--if-exists", *pg_args, conn["dbname"]],
-            capture_output=True, text=True, timeout=60, env=env,
+        # Restoring PostgreSQL from inside the web process is unsafe: the
+        # process itself owns live database connections and a failed drop/
+        # recreate can leave a partial schema. Host orchestration stops all
+        # application writers, validates the archive and keeps an emergency dump.
+        raise RuntimeError(
+            "In-process PostgreSQL restore is disabled. Run "
+            "'bash scripts/restore_postgres_backup.sh <backup.dump>' on the control-plane host."
         )
-        subprocess.run(
-            ["createdb", *pg_args, conn["dbname"]],
-            capture_output=True, text=True, timeout=60, env=env,
-        )
-        result_restore = subprocess.run(
-            ["pg_restore", "--no-owner", "--no-privileges",
-             "-d", conn["dbname"], *pg_args, str(file_path)],
-            capture_output=True, text=True, timeout=300, env=env,
-        )
-        if result_restore.returncode not in (0, 1):
-            raise RuntimeError(f"pg_restore failed: {result_restore.stderr}")
-        logger.info("PostgreSQL database restored from backup #%d", backup_id)
 
 
 async def _apply_retention_policy(backup_type: BackupType, session: AsyncSession) -> None:
