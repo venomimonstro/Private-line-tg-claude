@@ -56,8 +56,7 @@ async def audit() -> int:
             if server is None:
                 failures.append(f"key#{key.id}: missing VPN server")
             elif (
-                server.status != VpnServerStatus.active
-                or not server.is_selectable
+                server.status == VpnServerStatus.disabled
                 or server.provider == "private-line-primary"
                 or _server_protocol(server) != "marzban"
             ):
