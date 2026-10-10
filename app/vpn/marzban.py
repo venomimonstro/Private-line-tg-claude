@@ -277,6 +277,7 @@ class MarzbanClient:
         parsed = urlparse(url)
         qs = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
         qs["security"] = "reality"
+        qs["encryption"] = "none"
         qs["pbk"] = public_key
         qs["sni"] = self._clean_sni(sni)  # always sanitize — defence against Markdown in config
         qs["fp"] = "chrome"
