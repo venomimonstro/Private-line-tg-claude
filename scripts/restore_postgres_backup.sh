@@ -25,6 +25,7 @@ DB_USER="$(docker inspect "$DB_CID" --format '{{range .Config.Env}}{{println .}}
 DB_NAME="$(docker inspect "$DB_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^POSTGRES_DB=//p' | head -1)"
 [[ -n "$DB_USER" && -n "$DB_NAME" ]] || { echo "FAIL: cannot determine PostgreSQL database/user" >&2; exit 2; }
 [[ "$DB_NAME" =~ ^[A-Za-z0-9_]+$ ]] || { echo "FAIL: unsafe PostgreSQL database name" >&2; exit 2; }
+[[ "$DB_USER" =~ ^[A-Za-z0-9_]+$ ]] || { echo "FAIL: unsafe PostgreSQL user name" >&2; exit 2; }
 
 docker compose exec -T db pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null
 
@@ -49,15 +50,21 @@ docker compose exec -T db pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc > "$EMERGENCY"
 echo "[3/6] Stopping application writers..."
 docker stop private-line-bot-1 private-line-admin-1 >/dev/null 2>&1 || true
 
-terminate_connections() {
-  docker compose exec -T db psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB_NAME' AND pid <> pg_backend_pid();"     >/dev/null
+recreate_database() {
+  # PostgreSQL 16 Docker POSTGRES_USER is the cluster bootstrap superuser.
+  # Recreate the target DB so objects introduced after the backup cannot survive.
+  docker compose exec -T db dropdb --if-exists --force -U "$DB_USER" "$DB_NAME"
+  docker compose exec -T db createdb -U "$DB_USER" -O "$DB_USER" "$DB_NAME"
 }
 
 restore_file() {
   local host_file="$1"
   docker cp "$host_file" "$DB_CID:$REMOTE"
-  terminate_connections
-  docker compose exec -T db pg_restore     -U "$DB_USER" -d "$DB_NAME"     --clean --if-exists --no-owner --no-privileges --exit-on-error     "$REMOTE"
+  recreate_database
+  docker compose exec -T db pg_restore \
+    -U "$DB_USER" -d "$DB_NAME" \
+    --no-owner --no-privileges --exit-on-error \
+    "$REMOTE"
 }
 
 echo "[4/6] Restoring requested backup..."
