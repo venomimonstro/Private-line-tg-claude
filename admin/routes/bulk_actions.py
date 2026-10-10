@@ -126,24 +126,36 @@ async def bulk_disable(
     subscriptions = result.scalars().all()
 
     count = 0
+    pending_remote = 0
     for sub in subscriptions:
         for key in sub.vpn_keys:
-            if key.status == VpnKeyStatus.active and key.server:
-                await vpn_key_service.disable_vpn_key(key, key.server, session)
-                key.server.current_users = max(0, key.server.current_users - 1)
+            if key.status == VpnKeyStatus.active:
+                if key.server is None:
+                    key.status = VpnKeyStatus.error
+                    pending_remote += 1
+                    continue
+                disabled = await vpn_key_service.disable_vpn_key(
+                    key, key.server, session
+                )
+                if disabled:
+                    key.server.current_users = max(0, key.server.current_users - 1)
+                else:
+                    pending_remote += 1
+        # Control-plane access is hidden immediately; ERROR keys remain visible
+        # to integrity audit until remote disable succeeds.
         sub.status = SubscriptionStatus.disabled
         count += 1
 
     log = AdminLog(
         admin_user_id=admin.id,
         action=AdminAction.bulk_disable_subscriptions,
-        details={"user_ids": parsed_ids, "count": count},
+        details={"user_ids": parsed_ids, "count": count, "pending_remote_disables": pending_remote},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)
     await session.commit()
 
-    flash = f"Отключено {count} подписок"
+    flash = f"Отключено {count} подписок; удалённое отключение ожидается для {pending_remote} ключей"
     return RedirectResponse(f"/admin/bulk?flash={flash}", status_code=303)
 
 
