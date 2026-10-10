@@ -81,7 +81,7 @@ fi
 
 READY=false
 for _ in $(seq 1 20); do
-    if (echo >/dev/tcp/127.0.0.1/"$SOCKS_PORT") >/dev/null 2>&1; then
+    if python3 -c 'import socket,sys; s=socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1); s.sendall(b"\x05\x01\x00"); assert s.recv(2)==b"\x05\x00"; s.close()' "$SOCKS_PORT" >/dev/null 2>&1; then
         READY=true
         break
     fi
