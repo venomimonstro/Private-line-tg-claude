@@ -147,7 +147,7 @@ mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 # Reproducible runtime: pin the Marzban image pulled during installation and
 # always run the tested Xray build instead of whichever core the panel bundles.
 MARZBAN_IMAGE="gozargah/marzban:latest"
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27"
+XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
 XRAY_DIR="$MARZBAN_DATA/xray-core/26.6.27"
 XRAY_BIN="$XRAY_DIR/xray"
 
