@@ -198,7 +198,7 @@ async def disable_vpn_key(vpn_key: VpnKey, server: VpnServer, session: AsyncSess
     client = _make_client(server)
     try:
         if isinstance(client, MarzbanClient):
-            await client.delete_key(vpn_key.outline_key_id)
+            await client.disable_key(vpn_key.outline_key_id)
         else:
             await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
