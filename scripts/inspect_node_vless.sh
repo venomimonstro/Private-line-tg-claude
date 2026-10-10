@@ -50,17 +50,48 @@ try:
                     bool(r.get("privateKey")),
                 )
             )
-    print("outbound_protocols:", [x.get("protocol") for x in config.get("outbounds", [])])
+    print("outbounds:", [(x.get("tag"), x.get("protocol")) for x in config.get("outbounds", [])])
+    print("routing_rules:", [
+        {
+            "outboundTag": x.get("outboundTag"),
+            "network": x.get("network"),
+            "ip": x.get("ip"),
+            "domain": x.get("domain"),
+        }
+        for x in config.get("routing", {}).get("rules", [])
+    ])
+    print("DNS servers configured:", bool(config.get("dns", {}).get("servers")))
 except (OSError, ValueError, TypeError) as exc:
     print("FAIL: config parse", type(exc).__name__)
 PY
 
-echo "=== HTTPS EGRESS TEST ==="
-for host in api.ipify.org www.microsoft.com; do
-    http=$(curl -4 -L -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 12 "https://$host/" 2>/dev/null)
-    result=$?
-    echo "$host: curl_exit=$result http_code=$http"
+echo "=== NODE OUTBOUND ROUTES AND DNS ==="
+ip -4 route get 1.1.1.1 2>/dev/null | head -1 || true
+ip -6 route get 2606:4700:4700::1111 2>&1 | head -1 || true
+for host in api.ipify.org www.cloudflare.com www.google.com; do
+    echo "$host resolves IPv4:"
+    getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1 {print $1}' || true
 done
+
+echo "=== NODE DIRECT EGRESS (NOT THROUGH VPN) ==="
+for entry in \
+    "ipify https://api.ipify.org/" \
+    "cloudflare https://www.cloudflare.com/cdn-cgi/trace" \
+    "google https://www.google.com/generate_204" \
+    "cloudflare-ip-http http://1.1.1.1/cdn-cgi/trace" \
+    "google-http http://connectivitycheck.gstatic.com/generate_204"; do
+    set -- $entry
+    code="$(curl -q -4 -L -sS -o /dev/null -w '%{http_code}' \
+        --noproxy '*' --connect-timeout 6 --max-time 14 "$2" 2>/dev/null)"
+    rc=$?
+    echo "$1: exit=$rc http=$code"
+done
+
+echo "=== NODE IPv6 EGRESS ==="
+code="$(curl -q -6 -sS -o /dev/null -w '%{http_code}' \
+    --noproxy '*' --connect-timeout 4 --max-time 8 \
+    https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)"
+echo "cloudflare IPv6: exit=$? http=$code"
 
 echo "=== TLS TARGET HANDSHAKE ==="
 if command -v openssl >/dev/null 2>&1; then
