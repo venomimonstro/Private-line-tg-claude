@@ -377,32 +377,9 @@ async def reconcile_marzban_server(
                 result.errors += 1
 
         if apply and remote_changed:
-            restarted = await client._client.post(
-                f"{client._base}/api/core/restart",
-                headers=headers,
-                timeout=60.0,
+            await client.restart_core_with_db_users(
+                reason=f"reconcile server {server.id}"
             )
-            if restarted.status_code not in (200, 204):
-                raise MarzbanConfigError(
-                    f"Xray core resync failed HTTP {restarted.status_code}"
-                )
-            # Do not report repaired until the restarted core is actually ready.
-            ready = False
-            for _ in range(30):
-                await asyncio.sleep(1)
-                try:
-                    status = await client._client.get(
-                        f"{client._base}/api/core",
-                        headers=headers,
-                        timeout=4.0,
-                    )
-                    if status.status_code == 200 and status.json().get("started") is True:
-                        ready = True
-                        break
-                except Exception:
-                    continue
-            if not ready:
-                raise MarzbanConfigError("Xray core did not return to started state after resync")
             result.core_restarted = True
 
         if apply and result.errors == 0:
