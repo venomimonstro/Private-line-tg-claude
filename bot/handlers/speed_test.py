@@ -70,14 +70,25 @@ async def speed_test(message: Message, db_user: User) -> None:
         key_result = await session.execute(
             select(VpnKey)
             .options(selectinload(VpnKey.server))
-            .where(VpnKey.user_id == db_user.id, VpnKey.status == VpnKeyStatus.active)
+            .join(VpnServer, VpnServer.id == VpnKey.server_id)
+            .where(
+                VpnKey.user_id == db_user.id,
+                VpnKey.status == VpnKeyStatus.active,
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+                VpnServer.provider == "marzban",
+            )
             .limit(1)
         )
         user_key = key_result.scalars().first()
 
         # Get all active servers
         servers_result = await session.execute(
-            select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+            select(VpnServer).where(
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+                VpnServer.provider == "marzban",
+            )
             .order_by(VpnServer.sort_order if hasattr(VpnServer, "sort_order") else VpnServer.id)
         )
         servers = servers_result.scalars().all()
@@ -99,7 +110,7 @@ async def speed_test(message: Message, db_user: User) -> None:
 
     user_server_id = user_key.server_id if user_key else None
 
-    lines = ["<b>🌐 Статус серверов</b>\n"]
+    lines = ["<b>🌐 Доступность VPN-нод с сервера Private Line</b>\n"]
     for server, ms in results:
         emoji = _latency_emoji(ms)
         ms_str = f"{ms:.0f} мс" if ms is not None else "недоступен"
@@ -111,7 +122,7 @@ async def speed_test(message: Message, db_user: User) -> None:
         )
 
     lines.append(
-        "\n<i>🟢 &lt;50мс — отлично  🟡 50–150мс — норма  🔴 &gt;150мс / недоступен</i>"
+        "\n<i>Это техническая задержка control-plane → API ноды, а не скорость вашего телефона.</i>"
     )
 
     await msg.edit_text("\n".join(lines), parse_mode="HTML")
