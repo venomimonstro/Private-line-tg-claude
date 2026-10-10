@@ -17,13 +17,30 @@ die()     { echo -e "${RED}[ERR]${RESET}  $*" >&2; exit 1; }
 section "Проверка параметров"
 
 [[ $EUID -eq 0 ]] || die "Запустите от root."
-[[ ! -f /opt/private-line/docker-compose.yml ]] || die "Это основной сервер. Для временной ноды используйте scripts/enable_primary_vpn.sh без сброса firewall."
+[[ ! -f /opt/private-line/docker-compose.yml ]] || die "Это основной control-plane сервер. VPN-ноды устанавливаются только на отдельные VPS."
 [[ -n "${ADMIN_URL:-}" ]] || die "ADMIN_URL не задан. Скопируйте команду из Admin Panel → VPN Серверы."
 [[ -n "${NODE_TOKEN:-}" ]] || die "NODE_TOKEN не задан. Скопируйте команду из Admin Panel → VPN Серверы."
 
 ADMIN_URL="${ADMIN_URL%/}"
 success "Admin URL: $ADMIN_URL"
 success "Токен задан"
+
+# Marzban API on a VPN node is reachable only from the control-plane server.
+# Derive it from ADMIN_URL unless explicitly supplied.
+if [[ -z "${MAIN_SERVER_IP:-}" ]]; then
+    MAIN_SERVER_IP="$(ADMIN_URL="$ADMIN_URL" python3 - <<'PY'
+import ipaddress, os
+from urllib.parse import urlsplit
+host = urlsplit(os.environ["ADMIN_URL"]).hostname or ""
+try:
+    ip = ipaddress.IPv4Address(host)
+    print(ip if ip.is_global else "")
+except ValueError:
+    print("")
+PY
+)"
+fi
+[[ -n "$MAIN_SERVER_IP" ]] || die "Не удалось определить MAIN_SERVER_IP из ADMIN_URL. Укажите MAIN_SERVER_IP вручную."
 
 # ─── OS check ─────────────────────────────────────────────────────────────────
 OS_ID=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"' || true)
