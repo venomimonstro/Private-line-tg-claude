@@ -393,6 +393,18 @@ async def disable_vpn_key(
     vpn_key.status = VpnKeyStatus.disabled
     vpn_key.disabled_at = datetime.utcnow()
     await session.flush()
+
+    # Capacity is derived from local active-key rows only after the remote
+    # disable was confirmed. This also fixes counters when a queued retry
+    # succeeds after an earlier failure left the key in ERROR state.
+    active_count = await session.scalar(
+        select(func.count(VpnKey.id)).where(
+            VpnKey.server_id == server.id,
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    server.current_users = int(active_count or 0)
+    await session.flush()
     return True
 
 
