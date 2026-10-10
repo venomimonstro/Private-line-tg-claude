@@ -95,7 +95,11 @@ async def _job_check_server_health() -> None:
     notifications: list[str] = []
     async with async_session_maker() as session:
         result = await session.execute(
-            select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
+            select(VpnServer).where(
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+                VpnServer.provider == "marzban",
+            )
         )
         servers = result.scalars().all()
         for server in servers:
