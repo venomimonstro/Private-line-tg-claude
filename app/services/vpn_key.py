@@ -374,7 +374,7 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
         select(VpnServer).where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider == "marzban",
+            VpnServer.provider != "private-line-primary",
         )
     )
     servers = result.scalars().all()
