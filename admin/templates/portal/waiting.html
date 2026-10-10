@@ -93,7 +93,7 @@
         VPN-ключ готов. Скопируйте и добавьте в приложение.
       </p>
 
-      <div class="card p-3 mb-4 text-start">
+      <div class="card p-3 mb-4 text-start" id="vpn-key-card">
         <div class="d-flex align-items-center gap-2 mb-2">
           <i class="bi bi-key-fill" style="color:#ffc107"></i>
           <span class="fw-semibold" style="font-size:.9rem">Ваш VPN-ключ</span>
@@ -149,7 +149,8 @@
 {% block scripts %}
 <script>
 const PAYMENT_ID = {{ payment_id }};
-const STATUS_URL = '/portal/api/status/' + PAYMENT_ID;
+const PAYMENT_ACCESS_TOKEN = {{ payment_access_token | tojson }};
+const STATUS_URL = '/portal/api/status/' + PAYMENT_ID + '/' + encodeURIComponent(PAYMENT_ACCESS_TOKEN);
 let attempts = 0;
 
 function setState(name) {
@@ -181,8 +182,13 @@ function poll() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.status === 'paid') {
-        if (data.vpn_key) {
-          document.getElementById('vpn-key-display').value = data.vpn_key;
+        if (data.vpn_key || data.gift) {
+          if (data.vpn_key) {
+            document.getElementById('vpn-key-display').value = data.vpn_key;
+          } else {
+            var keyCard = document.getElementById('vpn-key-card');
+            if (keyCard) keyCard.style.display = 'none';
+          }
           if (data.portal_url) {
             var wrap = document.getElementById('portal-link-wrap');
             var link = document.getElementById('portal-link');
