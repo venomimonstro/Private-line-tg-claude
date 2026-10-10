@@ -708,14 +708,10 @@ async def test_key_connection(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> JSONResponse:
-    """Full connectivity test for a single VPN key.
+    """Static/profile readiness test for a single VPN key.
 
-    Checks:
-      1. URL decryption
-      2. VLESS protocol prefix
-      3. Required Reality parameters (pbk, sid, sni, flow, security)
-      4. SNI cleanliness (no Markdown corruption)
-      5. TCP port connectivity to the VPN server
+    This intentionally does NOT claim a working VPN tunnel. A real VLESS
+    Reality handshake + HTTPS egress is exercised only by production_vpn_gate.
     """
     result = await session.execute(select(VpnKey).where(VpnKey.id == key_id))
     key = result.scalar_one_or_none()
@@ -744,5 +740,12 @@ async def test_key_connection(
         "sni_clean": health["sni_clean"],
         "issues": health["issues"],
         "url_preview": health["url_preview"],
-        "status": "OK" if all_ok else ("WARNING" if not health["issues"] else "FAIL"),
+        "e2e_verified": False,
+        "status": "CONFIG_OK_NOT_E2E" if all_ok else "FAIL",
+        "note": (
+            "URL/TCP checks passed; run scripts/production_vpn_gate.sh for "
+            "a real VLESS Reality + HTTPS acceptance test"
+            if all_ok else
+            "Static/profile readiness failed"
+        ),
     })
