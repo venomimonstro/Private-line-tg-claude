@@ -519,15 +519,11 @@ async def diagnose_keys(
             if "error" in tu:
                 test_user_html = f'<span style="color:red">{_esc(tu["error"])}</span>'
             else:
-                links_html = "<br>".join(
-                    f'<code style="font-size:0.75em;word-break:break-all">{_esc(lnk)}</code>'
-                    for lnk in tu.get("links", [])
-                )
                 test_user_html = (
                     f'<strong>{_esc(tu.get("username",""))}</strong> '
                     f'({_esc(tu.get("status",""))})<br>'
                     f'inbounds: {_esc(_json.dumps(tu.get("inbounds",{})))}<br>'
-                    f'links:<br>{links_html or "<em>none</em>"}'
+                    f'links: {_esc(tu.get("links_count", 0))} (credentials redacted)'
                 )
 
         rows_server += f"""
