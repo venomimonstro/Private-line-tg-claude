@@ -182,8 +182,10 @@ async def portal_start_payment(
 
     # Validate and resolve selected provider
     valid_codes = [p["code"] for p in providers]
+    if not valid_codes:
+        return checkout_error("Оплата временно недоступна. Попробуйте позже.")
     if provider not in valid_codes:
-        provider = valid_codes[0] if valid_codes else "manual"
+        provider = valid_codes[0]
 
     if not email or "@" not in email:
         return checkout_error("Введите корректный email.")
