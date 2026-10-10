@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from admin.auth import authenticate_admin, create_session_token
 from admin.dependencies import get_current_admin
@@ -41,7 +41,7 @@ from admin.routes import (
     web_portal,
     withdrawals,
 )
-from app.database import get_async_session
+from app.database import get_async_session, async_session_maker
 from app.models.user import User
 from app.payments.webhook import router as webhook_router
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -179,8 +179,16 @@ async def logout() -> RedirectResponse:
 
 
 @app.get("/_health")
-async def health_check() -> dict:
-    return {"status": "ok"}
+async def health_check() -> JSONResponse:
+    try:
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(
+            {"status": "unhealthy", "database": "unavailable"},
+            status_code=503,
+        )
+    return JSONResponse({"status": "ok", "database": "ok"})
 
 
 @app.get("/export/users")
