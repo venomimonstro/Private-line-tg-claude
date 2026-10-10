@@ -318,7 +318,8 @@ def get_client_access_url(vpn_key: VpnKey) -> str:
 
     return canonical_client_link(
         get_access_url(vpn_key),
-        label=vpn_key.label or "Private Line VPN",
+        # One consistent profile name in every app. Show node/country in bot UI instead.
+        label="Private Line VPN",
     )
 
 
