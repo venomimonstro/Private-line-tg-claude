@@ -577,7 +577,6 @@ async def migrate_outline_to_vless(
             disabled = await disable_vpn_key(old_key, old_server, session)
             if not disabled:
                 raise RuntimeError("old Outline credential could not be confirmed disabled")
-            old_server.current_users = max(0, old_server.current_users - 1)
 
             db_user = await session.get(User, old_key.user_id)
             if db_user is None or not db_user.telegram_id:
