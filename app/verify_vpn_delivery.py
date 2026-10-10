@@ -19,10 +19,11 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session_maker
-from app.enums import SubscriptionStatus, VpnKeyStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.vpn_key import VpnKey
+from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token
 from app.services.vpn_key import get_client_access_url
 
@@ -42,11 +43,25 @@ async def verify(subscription_id: int) -> int:
         if user is None or not user.telegram_id:
             print("FAIL: Telegram recipient is missing")
             return 2
-        active = (await db.execute(select(VpnKey).where(
-            VpnKey.subscription_id == sub.id,
-            VpnKey.user_id == sub.user_id,
-            VpnKey.status == VpnKeyStatus.active,
-        ))).scalars().all()
+        # Mirror the public /sub endpoint exactly for this Telegram user.
+        active = (await db.execute(
+            select(VpnKey)
+            .join(Subscription, Subscription.id == VpnKey.subscription_id)
+            .join(VpnServer, VpnServer.id == VpnKey.server_id)
+            .where(
+                VpnKey.user_id == sub.user_id,
+                VpnKey.status == VpnKeyStatus.active,
+                Subscription.status.in_([
+                    SubscriptionStatus.active,
+                    SubscriptionStatus.expires_soon,
+                ]),
+                Subscription.expires_at > datetime.utcnow(),
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+                VpnServer.provider == "marzban",
+            )
+            .order_by(VpnServer.id.asc(), VpnKey.id.asc())
+        )).scalars().all()
         if not active:
             print("FAIL: no active VPN keys")
             return 2
@@ -63,6 +78,7 @@ async def verify(subscription_id: int) -> int:
                     or "security=reality" not in parsed.query
                     or "fp=chrome" not in parsed.query
                     or "flow=xtls-rprx-vision" not in parsed.query
+                    or parsed.fragment != "Private%20Line%20VPN"
                 ):
                     raise ValueError("Invalid VLESS profile")
                 expected_links.add(expected)
@@ -90,8 +106,9 @@ async def verify(subscription_id: int) -> int:
         if set(lines) != expected_links:
             print("FAIL: downloaded subscription does not match all active client-ready keys")
             return 2
-        print(f"PASS: subscription {subscription_id} active, {len(active)} client-ready keys validated")
-        print("PASS: Nginx -> FastAPI subscription endpoint returned the exact same VLESS Reality link")
+        print(f"PASS: user for subscription {subscription_id} has {len(active)} verified client-ready key(s)")
+        print("PASS: every profile name is Private Line VPN")
+        print("PASS: Nginx -> FastAPI subscription endpoint exactly matches verified active keys")
         print("NOTE: this does NOT prove connectivity from a remote user's ISP or client app")
         return 0
 
