@@ -10,6 +10,7 @@ from app.enums import PaymentStatus, SubscriptionStatus
 from app.models.payment import Payment
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ async def auto_renew_subscriptions(session: AsyncSession) -> None:
         if tariff is None:
             logger.warning("Tariff %d not found for subscription %d", sub.tariff_id, sub.id)
             continue
+        user = await session.get(User, sub.user_id)
+        if user is None or not user.telegram_id:
+            logger.error("Telegram recipient missing for subscription %d", sub.id)
+            continue
+        telegram_id = user.telegram_id
 
         try:
             from app.payments.services import create_payment
@@ -66,7 +72,7 @@ async def auto_renew_subscriptions(session: AsyncSession) -> None:
                     text += "Оплатите для продления доступа:"
                     try:
                         await bot.send_message(
-                            chat_id=sub.user_id, text=text,
+                            chat_id=telegram_id, text=text,
                             parse_mode="HTML", reply_markup=markup,
                         )
                     except Exception as exc:
@@ -75,7 +81,7 @@ async def auto_renew_subscriptions(session: AsyncSession) -> None:
                     from bot.handlers.stars_payment import send_stars_invoice
                     try:
                         await send_stars_invoice(
-                            bot, sub.user_id, payment.id, float(payment.amount),
+                            bot, telegram_id, payment.id, float(payment.amount),
                             f"Private Line — {tariff.name} (автопродление)",
                         )
                     except Exception as exc:
