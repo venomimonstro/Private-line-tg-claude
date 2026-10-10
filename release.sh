@@ -284,6 +284,8 @@ ok "New code valid: $CHECKED files, 0 errors"
 
 # ── Step 6: Run DB migrations ─────────────────────────────────────────────────
 log "🗄  [6/8] Running database migrations..."
+# A failing Alembic invocation may already have committed an earlier revision.
+MIGRATION_TOUCHED=1
 if ! docker compose exec -T admin alembic upgrade head 2>&1 | tee /tmp/alembic_log | sed 's/^/    /'; then
     ALEMBIC_ERR=$(cat /tmp/alembic_log | tail -10)
     auto_rollback "Database migration failed: $ALEMBIC_ERR"
@@ -317,6 +319,7 @@ if [[ "$HEALTHY" -eq 0 ]]; then
 fi
 
 # ── Mark release as successful ────────────────────────────────────────────────
+rm -f "$ROLLBACK_RESTORE_HELPER"
 if [[ -n "$RELEASE_ID" ]]; then
     DEPLOY_LOG="Git pull OK. Migrations OK. Services restarted. Health check passed."
     py_cli complete "$RELEASE_ID" --log "$DEPLOY_LOG" 2>/dev/null || true
