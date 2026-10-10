@@ -18,7 +18,7 @@ from app.models.tariff import Tariff
 from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import get_client_access_url
+from app.services.vpn_key import get_client_access_url, _server_protocol
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
 
@@ -67,13 +67,17 @@ async def _get_active_subscription(
                 VpnKey.subscription_id == sub.id,
                 VpnKey.user_id == user_id,
                 VpnKey.status == VpnKeyStatus.active,
-                VpnServer.status == VpnServerStatus.active,
-                VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.status != VpnServerStatus.disabled,
+                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc(), VpnKey.id.asc())
         )
-        active_keys = list(keys_result.scalars().all())
+        candidate_keys = list(keys_result.scalars().all())
+        active_keys = []
+        for key in candidate_keys:
+            server = await session.get(VpnServer, key.server_id)
+            if server is not None and _server_protocol(server) == "marzban":
+                active_keys.append(key)
 
         tariff = await session.get(Tariff, sub.tariff_id)
         return sub, active_keys, tariff
