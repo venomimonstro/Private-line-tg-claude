@@ -96,5 +96,7 @@ async def vpn_subscription(
             "profile-title": "Private Line VPN",
             "profile-update-interval": "6",
             "content-disposition": "attachment; filename=subscription.txt",
+            "cache-control": "no-store, private",
+            "referrer-policy": "no-referrer",
         },
     )
