@@ -27,11 +27,20 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
     from app.services.circuit_breaker import get_circuit_breaker
     result = await session.execute(
         select(VpnServer)
-        .where(VpnServer.status == VpnServerStatus.active)
+        .where(
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+        )
         .order_by(VpnServer.current_users)
     )
     servers = result.scalars().all()
-    return [s for s in servers if get_circuit_breaker(s.id).is_available()]
+    available = [
+        s for s in servers
+        if get_circuit_breaker(s.id).is_available()
+        and (not s.max_users or s.current_users < s.max_users)
+    ]
+    # Primary host is a temporary fallback, not the default for new accounts.
+    return sorted(available, key=lambda s: (s.provider == "private-line-primary", s.current_users))
 
 
 async def activate_subscription(
@@ -54,10 +63,9 @@ async def activate_subscription(
     created_keys: list[VpnKey] = []
     last_exc: Exception | None = None
 
-    # Create one key on the least-loaded available server.
-    # We cap at 1 regardless of tariff.max_keys — one active subscription,
-    # one active key keeps things clean and debuggable.
-    for server in servers[:1]:
+    # Try other healthy nodes if the first fails. Do not mark a paid
+    # subscription broken while an alternative provider is available.
+    for server in servers:
         label = f"{server.flag_emoji or '🌍'} {server.country}"
         try:
             key = await vpn_key_service.create_vpn_key(
@@ -71,6 +79,7 @@ async def activate_subscription(
             )
             server.current_users += 1
             created_keys.append(key)
+            break
         except Exception as exc:
             last_exc = exc
             logger.warning("Server %d failed for subscription %d: %s", server.id, subscription.id, exc)
