@@ -35,7 +35,7 @@ fail() {
     exit 2
 }
 
-CURRENT_STEP="1/10 control-plane resources"; echo "=== 1/10 Resource-safe control plane ==="
+CURRENT_STEP="1/11 control-plane resources"; echo "=== 1/11 Resource-safe control plane ==="
 # Monitoring is optional on the 1GB VPS and must never compete with the VPN
 # control plane. Stop it even if it was started before profiles were introduced.
 docker compose --profile monitoring stop     grafana prometheus alertmanager node-exporter >/dev/null 2>&1 || true
@@ -48,7 +48,11 @@ for _ in $(seq 1 30); do
 done
 curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "FastAPI admin did not become healthy"
 
-CURRENT_STEP="2/10 preflight"; echo "=== 2/10 Static/release preflight ==="
+CURRENT_STEP="2/11 database migrations"; echo "=== 2/11 Database migrations ==="
+docker compose exec -T admin python -m alembic upgrade head
+docker compose exec -T admin python -m alembic current
+
+CURRENT_STEP="3/11 preflight"; echo "=== 3/11 Static/release preflight ==="
 bash scripts/preflight_release.sh
 
 echo "Applying tested Python code to long-running processes..."
@@ -62,19 +66,19 @@ done
 curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "Admin did not recover after tested-code restart"
 docker compose ps admin bot db nginx
 
-CURRENT_STEP="3/10 control-plane integration"; echo "=== 3/10 Control-plane integration ==="
+CURRENT_STEP="4/11 control-plane integration"; echo "=== 4/11 Control-plane integration ==="
 docker compose exec -T admin python -m app.verify_control_plane
 
-CURRENT_STEP="4/10 preserve-first reconciliation"; echo "=== 4/10 Preserve-first VPN fleet reconciliation ==="
+CURRENT_STEP="5/11 preserve-first reconciliation"; echo "=== 5/11 Preserve-first VPN fleet reconciliation ==="
 docker compose exec -T admin python -m app.stabilize_vpn_fleet --apply
 
-CURRENT_STEP="5/10 data integrity"; echo "=== 5/10 Central data invariants ==="
+CURRENT_STEP="6/11 data integrity"; echo "=== 6/11 Central data invariants ==="
 docker compose exec -T admin python -m app.audit_data_integrity
 
-CURRENT_STEP="6/10 node integrity"; echo "=== 6/10 Deep read-only node audit ==="
+CURRENT_STEP="7/11 node integrity"; echo "=== 7/11 Deep read-only node audit ==="
 docker compose exec -T admin python -m app.audit_vpn_nodes
 
-CURRENT_STEP="7/10 disposable-user end-to-end"; echo "=== 7/10 Disposable-user lifecycle on every dedicated VPN node ==="
+CURRENT_STEP="8/11 disposable-user end-to-end"; echo "=== 8/11 Disposable-user lifecycle on every dedicated VPN node ==="
 NODE_RAW="$(docker compose exec -T admin python -m app.production_probe_targets)"     || fail "No verified dedicated VPN nodes"
 mapfile -t NODE_IDS <<<"$NODE_RAW"
 [[ "${#NODE_IDS[@]}" -gt 0 ]] || fail "No VPN node IDs returned"
@@ -84,10 +88,10 @@ for server_id in "${NODE_IDS[@]}"; do
     bash scripts/smoke_vpn_node.sh "$server_id"
 done
 
-CURRENT_STEP="8/10 published subscription"; echo "=== 8/10 Published Telegram/subscription profile ==="
+CURRENT_STEP="9/11 published subscription"; echo "=== 9/11 Published Telegram/subscription profile ==="
 docker compose exec -T admin python -m app.verify_vpn_delivery     --subscription "$SUB_ID"
 
-CURRENT_STEP="9/10 paid-key VLESS egress"; echo "=== 9/10 Existing paid key through every node it uses ==="
+CURRENT_STEP="10/11 paid-key VLESS egress"; echo "=== 10/11 Existing paid key through every node it uses ==="
 SUB_NODE_RAW="$(docker compose exec -T admin python -m app.subscription_probe_targets     --subscription "$SUB_ID")" || fail "Subscription $SUB_ID has no verified active key"
 mapfile -t SUB_NODE_IDS <<<"$SUB_NODE_RAW"
 for server_id in "${SUB_NODE_IDS[@]}"; do
@@ -96,7 +100,7 @@ for server_id in "${SUB_NODE_IDS[@]}"; do
     bash scripts/probe_vless_e2e.sh "$SUB_ID" "$server_id"
 done
 
-CURRENT_STEP="10/10 post-test invariants"; echo "=== 10/10 Post-test invariants and fatal-log scan ==="
+CURRENT_STEP="11/11 post-test invariants"; echo "=== 11/11 Post-test invariants and fatal-log scan ==="
 docker compose exec -T admin python -m app.audit_data_integrity
 docker compose exec -T admin python -m app.audit_vpn_nodes
 docker compose exec -T admin python -m app.verify_control_plane
