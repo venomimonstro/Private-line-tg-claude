@@ -45,7 +45,7 @@ async def run(apply: bool) -> int:
 
         marzban = [
             s for s in servers
-            if s.provider == "marzban" and _server_protocol(s) == "marzban"
+            if _server_protocol(s) == "marzban"
         ]
         if not marzban:
             print("FAIL: no dedicated Marzban VPN node registered")
