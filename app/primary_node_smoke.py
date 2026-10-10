@@ -52,23 +52,22 @@ async def main(action: str, name: str) -> int:
                     return 2
                 vpn = await client.create_key(name=name)
                 uri = canonical_client_link(vpn.access_url, "Private Line VPN")
-                if urlsplit(uri).hostname != "194.146.223.104":
-                    # Verify against the configured public address, rather
-                    # than assuming a particular IP if the VPS is moved.
-                    hosts = await client._client.get(
-                        f"{client._base}/api/hosts",
-                        headers=await client._headers()
-                    )
-                    host = urlsplit(uri).hostname
-                    if hosts.status_code != 200 or not any(
-                        item.get("address") == host
-                        for values in hosts.json().values()
-                        if isinstance(values, list)
-                        for item in values
-                        if isinstance(item, dict)
-                    ):
-                        print("STOP: test key host differs from published Marzban hosts")
-                        return 2
+                # Never rely on a hard-coded VPS IP. Compare the actual
+                # generated client endpoint with the configured public host.
+                hosts = await client._client.get(
+                    f"{client._base}/api/hosts",
+                    headers=await client._headers()
+                )
+                host = urlsplit(uri).hostname
+                if hosts.status_code != 200 or not any(
+                    item.get("address") == host
+                    for values in hosts.json().values()
+                    if isinstance(values, list)
+                    for item in values
+                    if isinstance(item, dict)
+                ):
+                    print("STOP: test key host differs from published Marzban hosts")
+                    return 2
                 print(uri)
                 return 0
 
