@@ -27,7 +27,7 @@ from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
-from app.services.vpn_key import get_client_access_url
+from app.services.vpn_key import get_client_access_url, _server_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def vpn_subscription(
         return Response(status_code=404)
 
     keys_result = await session.execute(
-        select(VpnKey)
+        select(VpnKey, VpnServer)
         .join(Subscription, Subscription.id == VpnKey.subscription_id)
         .join(VpnServer, VpnServer.id == VpnKey.server_id)
         .where(
@@ -71,7 +71,8 @@ async def vpn_subscription(
         )
         .order_by(VpnServer.id.asc(), VpnKey.id.asc())
     )
-    keys = keys_result.scalars().all()
+    rows = keys_result.all()
+    keys = [key for key, server in rows if _server_protocol(server) == "marzban"]
 
     links: list[str] = []
     for key in keys:
