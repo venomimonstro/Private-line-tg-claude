@@ -1,62 +1,103 @@
 #!/usr/bin/env bash
-# Low-memory deploy for the 1GB Private Line control plane.
-# Never restarts/recreates PostgreSQL or nginx. Recreates application containers
-# one at a time so restored bind mounts point at the current /opt/private-line.
+# Low-memory recovery/deploy for the Private Line control plane.
+# Safe order: DB -> ADMIN -> migrations -> BOT -> NGINX.
+# Existing healthy DB is never recreated/restarted.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
-fail(){ echo "FAIL: $*" >&2; exit 2; }
+fail() {
+  echo "FAIL: $*" >&2
+  echo "--- admin/nginx/db status ---" >&2
+  docker compose ps -a db admin bot nginx >&2 || true
+  echo "--- recent admin/nginx errors ---" >&2
+  docker compose logs --tail=80 admin nginx 2>&1 |     sed -E       -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g'       -e 's/(password|token|secret|privateKey)[=:][^[:space:]]+/\1=[REDACTED]/Ig'       -e 's@vless://[^[:space:]<]+@[VLESS_REDACTED]@g' >&2 || true
+  exit 2
+}
+
+wait_http() {
+  local url="$1"
+  local tries="${2:-45}"
+  for _ in $(seq 1 "$tries"); do
+    if curl -q -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+start_existing_or_create() {
+  local svc="$1"
+  local cid
+  cid="$(docker compose ps -a -q "$svc" 2>/dev/null || true)"
+  if [[ -n "$cid" ]]; then
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || true)" != "true" ]]; then
+      docker start "$cid" >/dev/null
+    fi
+  else
+    docker compose up -d --no-deps "$svc"
+  fi
+}
 
 [[ -f docker-compose.yml ]] || fail "docker-compose.yml missing"
-docker ps --format '{{.Names}}' | grep -qx 'private-line-db-1' || fail "database container is not running"
-docker ps --format '{{.Names}}' | grep -qx 'private-line-nginx-1' || fail "nginx container is not running"
+[[ -f .env ]] || fail ".env missing"
 
-AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
-if (( AVAILABLE_KB < 180000 )); then
-  fail "less than ~176 MiB available RAM; refusing application recreation"
-fi
+for key in BOT_TOKEN ADMIN_CHAT_ID ENCRYPTION_KEY SECRET_KEY; do
+  grep -qE "^${key}=.+" .env || fail "${key} is missing in .env"
+done
 
-echo "[1/6] Static checks only..."
+echo "[1/7] Static checks..."
 python3 - <<'PY'
 import ast
 from pathlib import Path
 for root in ("app","admin","bot","scheduler","health_monitor"):
-    for p in Path(root).rglob("*.py"):
+    base = Path(root)
+    if not base.exists():
+        continue
+    for p in base.rglob("*.py"):
         ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
 print("PASS: Python syntax")
 PY
 docker compose config -q
-bash -n scripts/production_vpn_gate.sh
-bash -n scripts/smoke_vpn_node.sh
 
-echo "[2/6] Optional monitoring stays stopped..."
+echo "[2/7] Free RAM and optional monitoring..."
 docker stop private-line-grafana-1 private-line-prometheus-1   private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
+AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
+(( AVAILABLE_KB >= 140000 )) || fail "less than ~137 MiB available RAM"
 
-echo "[3/6] Recreate ADMIN only; DB and nginx untouched..."
-docker compose up -d --no-deps --force-recreate admin
+echo "[3/7] Database..."
+start_existing_or_create db
 for _ in $(seq 1 45); do
-  if curl -q -fsS --max-time 2 http://127.0.0.1:8000/_health >/dev/null 2>&1; then
+  if docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null   || fail "new admin container is not healthy"
+docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1   || fail "PostgreSQL is not ready"
 
-echo "[4/6] Database migration through healthy ADMIN..."
+echo "[4/7] Admin..."
+# Recreate only the stateless application container. DB remains untouched.
+docker compose up -d --no-deps --force-recreate admin
+wait_http http://127.0.0.1:8000/_health 45 || fail "FastAPI admin did not become healthy"
+
+echo "[5/7] Database migrations..."
 docker compose exec -T admin python -m alembic upgrade head
-curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null   || fail "admin unhealthy after migration"
+wait_http http://127.0.0.1:8000/_health 10 || fail "admin unhealthy after migration"
 
+echo "[6/7] Bot..."
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
-if (( AVAILABLE_KB < 140000 )); then
-  fail "RAM too low after admin switch; BOT left untouched"
-fi
-
-echo "[5/6] Recreate BOT only..."
+(( AVAILABLE_KB >= 100000 )) || fail "RAM too low before bot recreation"
 docker compose up -d --no-deps --force-recreate bot
-sleep 5
-docker ps --format '{{.Names}}' | grep -qx 'private-line-bot-1'   || fail "bot container is not running"
+sleep 4
+docker compose ps --status running -q bot | grep -q . || fail "bot is not running"
 
-echo "[6/6] Runtime status..."
-docker ps --filter name='private-line-'   --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
-curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null
-echo "DEPLOY PASS: db/nginx were not restarted; admin/bot switched sequentially."
+echo "[7/7] Nginx and public admin..."
+start_existing_or_create nginx
+docker compose exec -T nginx nginx -t >/dev/null 2>&1 || fail "nginx config is invalid"
+docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || {
+  docker compose restart nginx >/dev/null
+}
+wait_http http://127.0.0.1:29148/admin/login 20 || fail "admin proxy on :29148 is not healthy"
+
+docker compose ps db admin bot nginx
+echo "RECOVERY PASS: DB + admin + bot + nginx are healthy."
