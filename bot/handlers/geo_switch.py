@@ -1,4 +1,4 @@
-"""VPN node selection. A user can keep Spain while adding the temporary main node."""
+"""Customer selection among verified dedicated Marzban VPN nodes."""
 from __future__ import annotations
 
 import logging
