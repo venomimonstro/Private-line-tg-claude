@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import random
 import secrets
 from datetime import datetime
 from decimal import Decimal
@@ -67,7 +66,8 @@ async def _web_providers(session) -> list[dict]:
 
 
 def _make_fake_tg_id() -> int:
-    return -abs(int(hashlib.sha256(str(random.getrandbits(64)).encode()).hexdigest(), 16) % (10 ** 12))
+    # Internal placeholder only, but use a CSPRNG so IDs cannot be predicted.
+    return -abs(secrets.randbelow(10 ** 12 - 1) + 1)
 
 
 def _bot_url() -> str:
@@ -359,29 +359,20 @@ async def portal_login_submit(
     request: Request,
     email: str = Form(...),
     session: AsyncSession = Depends(get_async_session),
-) -> HTMLResponse | RedirectResponse:
+) -> HTMLResponse:
+    # Never issue a bearer-style portal_token based only on knowledge of an
+    # email address. A secure recovery flow requires a verified magic link/OTP;
+    # until that exists, recovery must go through Telegram/support.
     email = email.strip().lower()
-    if not email or "@" not in email:
-        return templates.TemplateResponse("portal/login.html", {
-            "request": request, "bot_url": _bot_url(),
-            "error": "Введите корректный email.", "email": email,
-        })
-
-    user_result = await session.execute(
-        select(User).where(User.email == email)
-    )
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        return templates.TemplateResponse("portal/login.html", {
-            "request": request, "bot_url": _bot_url(),
-            "error": "Аккаунт с таким email не найден.", "email": email,
-        })
-
-    if not user.portal_token:
-        user.portal_token = _portal_token()
-        await session.commit()
-
-    return RedirectResponse(f"/portal/me/{user.portal_token}", status_code=303)
+    return templates.TemplateResponse("portal/login.html", {
+        "request": request,
+        "bot_url": _bot_url(),
+        "error": (
+            "Вход по одному email отключён для безопасности. "
+            "Используйте сохранённую ссылку личного кабинета или Telegram-бот."
+        ),
+        "email": email,
+    }, status_code=403)
 
 
 @router.get("/me/{token}", response_class=HTMLResponse)
