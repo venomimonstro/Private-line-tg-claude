@@ -156,6 +156,19 @@ async def _job_verify_pending_payments() -> None:
         await verify_pending_payments(session)
 
 
+async def _job_recover_paid_fulfillment() -> None:
+    """Recover the durable PAID-but-not-fulfilled payment state."""
+    logger.info("Running: recover_paid_unfulfilled_payments")
+    from app.payments.services import recover_paid_unfulfilled_payments
+    async with async_session_maker() as session:
+        result = await recover_paid_unfulfilled_payments(session)
+    if result["fulfilled"] or result["failed"]:
+        logger.warning(
+            "payment fulfillment recovery: checked=%d fulfilled=%d failed=%d",
+            result["checked"], result["fulfilled"], result["failed"],
+        )
+
+
 async def _job_subscription_watchdog() -> None:
     """Ensure every active subscription has a working VPN key. Auto-recover if not."""
     logger.info("Running: subscription_watchdog")
@@ -273,6 +286,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(_job_update_metrics, "interval", minutes=5)
     scheduler.add_job(_job_check_traffic_limits, "interval", hours=4)
     scheduler.add_job(_job_verify_pending_payments, "interval", minutes=15)
+    scheduler.add_job(_job_recover_paid_fulfillment, "interval", minutes=5)
     scheduler.add_job(_job_process_pending_operations, "interval", minutes=5)
     scheduler.add_job(_job_subscription_watchdog, "interval", minutes=30, jitter=60)
     # Production safety: scheduled jobs are read-only with respect to VPN
