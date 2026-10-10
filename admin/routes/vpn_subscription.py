@@ -21,10 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.enums import SubscriptionStatus, VpnKeyStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.user import User
 from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
+from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
 from app.services.vpn_key import get_client_access_url
 
@@ -58,12 +59,17 @@ async def vpn_subscription(
     keys_result = await session.execute(
         select(VpnKey)
         .join(Subscription, Subscription.id == VpnKey.subscription_id)
+        .join(VpnServer, VpnServer.id == VpnKey.server_id)
         .where(
             VpnKey.user_id == user.id,
             VpnKey.status == VpnKeyStatus.active,
             Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
             Subscription.expires_at > datetime.utcnow(),
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+            VpnServer.provider == "marzban",
         )
+        .order_by(VpnServer.id.asc(), VpnKey.id.asc())
     )
     keys = keys_result.scalars().all()
 
@@ -74,7 +80,8 @@ async def vpn_subscription(
             if url:
                 # The canonical share URI already has exactly one #fragment.
                 # Never append another one: a duplicate breaks some importers.
-                links.append(url)
+                if url not in links:
+                    links.append(url)
         except Exception as exc:
             logger.warning("sub: cannot decrypt key %d: %s", key.id, exc)
 
