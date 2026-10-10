@@ -36,17 +36,13 @@ fail() {
 }
 
 CURRENT_STEP="1/11 control-plane resources"; echo "=== 1/11 Resource-safe control plane ==="
-# Monitoring is optional on the 1GB VPS and must never compete with the VPN
-# control plane. Stop it even if it was started before profiles were introduced.
-docker compose --profile monitoring stop     grafana prometheus alertmanager node-exporter >/dev/null 2>&1 || true
-docker compose up -d db admin bot nginx
-for _ in $(seq 1 30); do
-    if curl -q -fsS --max-time 3 http://127.0.0.1:8000/_health >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "FastAPI admin did not become healthy"
+# Acceptance must never restart or recreate production services.
+# Deployment is a separate, sequential low-memory operation.
+docker ps --format '{{.Names}}' | grep -qx 'private-line-db-1' || fail "database container is not running"
+docker ps --format '{{.Names}}' | grep -qx 'private-line-admin-1' || fail "admin container is not running"
+docker ps --format '{{.Names}}' | grep -qx 'private-line-bot-1' || fail "bot container is not running"
+docker ps --format '{{.Names}}' | grep -qx 'private-line-nginx-1' || fail "nginx container is not running"
+curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null || fail "FastAPI admin is unhealthy"
 
 CURRENT_STEP="2/11 database migrations"; echo "=== 2/11 Database migrations ==="
 docker compose exec -T admin python -m alembic upgrade head
@@ -55,15 +51,7 @@ docker compose exec -T admin python -m alembic current
 CURRENT_STEP="3/11 preflight"; echo "=== 3/11 Static/release preflight ==="
 bash scripts/preflight_release.sh
 
-echo "Applying tested Python code to long-running processes..."
-docker compose restart admin bot >/dev/null
-for _ in $(seq 1 30); do
-    if curl -q -fsS --max-time 3 http://127.0.0.1:8000/_health >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null     || fail "Admin did not recover after tested-code restart"
+echo "Production gate is validation-only for long-running control-plane services."
 docker compose ps admin bot db nginx
 
 CURRENT_STEP="4/11 control-plane integration"; echo "=== 4/11 Control-plane integration ==="
