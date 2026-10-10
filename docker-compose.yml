@@ -41,6 +41,7 @@ services:
       - ./data:/app/data
       - ./backups:/app/backups
       - ./logs:/app/logs
+      - ./tests:/app/tests:ro
       - ./install_node.sh:/app/install_node.sh:ro
       - ./fix_reality.sh:/app/fix_reality.sh:ro
     ports:
