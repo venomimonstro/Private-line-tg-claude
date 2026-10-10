@@ -41,12 +41,16 @@ def _key_url_needs_repair(access_url: str) -> bool:
         parsed = urlparse(access_url)
         if parsed.scheme != "vless":
             return False  # Outline or unknown — don't touch
-        qs = _parse_qs(parsed.query)
+        qs = _parse_qs(parsed.query, keep_blank_values=True)
         sni = qs.get("sni", [""])[0]
         if "[" in sni or "]" in sni:
             return True  # Corrupted Markdown SNI
-        if not qs.get("pbk") or not qs.get("sid"):
-            return True  # Missing Reality params
+        if not qs.get("pbk", [""])[0] or "sid" not in qs:
+            return True  # Empty sid is valid when allowed by the node.
+        if (not parsed.username or not parsed.hostname or not parsed.port
+            or not sni or qs.get("security") != ["reality"]
+            or qs.get("flow") != ["xtls-rprx-vision"]):
+            return True
         return False
     except Exception:
         return True  # Can't parse → assume broken
@@ -311,180 +315,100 @@ def get_access_url(vpn_key: VpnKey) -> str:
 
 async def repair_marzban_keys(
     session: AsyncSession,
+    server_id: int | None = None,
 ) -> tuple[int, int, list[tuple[int, str]]]:
-    """Re-issue correct access URLs for every active Marzban VPN key in the DB.
+    """Reconcile active subscriptions with node users, preserving issued UUIDs.
 
-    For each active key on a Marzban server this function calls ``create_key()``
-    with the existing Marzban username.  Because the user already exists, Marzban
-    returns HTTP 409 → the code path in ``create_key()`` then:
-      1. PUTs the user with the correct inbounds from ``/api/inbounds``
-      2. GETs the updated user and extracts fresh links
-      3. Injects Reality params from ``/api/core/config``
-      4. Returns the corrected access URL
-
-    The new URL is stored back into ``vpn_keys.access_url_encrypted``.
-
-    Returns ``(fixed, errors, changed_notifications)`` where ``changed_notifications``
-    is a list of ``(telegram_id, new_url)`` for keys whose URL was actually updated —
-    callers should send these to the respective users.
+    A syntactically valid link is not proof that its UUID exists on the node.
+    Never reactivate expired/blocked subscriptions or exhausted traffic quotas.
     """
+    from uuid import UUID
+    from app.enums import SubscriptionStatus
+    from app.models.subscription import Subscription
     from app.models.user import User
 
-    # Load all active keys on Marzban servers
-    result = await session.execute(
-        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
-    )
-    servers = result.scalars().all()
-    marzban_server_ids: set[int] = {s.id for s in servers if _server_protocol(s) == "marzban"}
-
-    if not marzban_server_ids:
-        logger.info("repair_marzban_keys: no active Marzban servers found — nothing to do")
-        return 0, 0, []
-
-    keys_result = await session.execute(
-        select(VpnKey).where(
-            VpnKey.server_id.in_(marzban_server_ids),
-            VpnKey.status == VpnKeyStatus.active,
-        )
-    )
-    keys: list[VpnKey] = list(keys_result.scalars().all())
-
-    if not keys:
-        logger.info("repair_marzban_keys: no active Marzban keys found — nothing to do")
-        return 0, 0, []
-
-    logger.info("repair_marzban_keys: repairing %d active Marzban keys", len(keys))
-
-    # Build one client per server (reuse across keys on the same server)
-    server_map: dict[int, VpnServer] = {s.id: s for s in servers if s.id in marzban_server_ids}
-    clients: dict[int, MarzbanClient] = {}
-    for sid, srv in server_map.items():
+    servers = (await session.execute(select(VpnServer).where(
+        VpnServer.status == VpnServerStatus.active,
+    ))).scalars().all()
+    fixed, errors = 0, 0
+    notifications: list[tuple[int, str]] = []
+    for server in servers:
+        if server_id is not None and server.id != server_id:
+            continue
+        if _server_protocol(server) != "marzban":
+            continue
+        client = _make_client(server)
         try:
-            clients[sid] = _make_client(srv)  # type: ignore[assignment]
-        except Exception as exc:
-            logger.error("repair_marzban_keys: cannot build client for server %d: %s", sid, exc)
-
-    # Fetch all registered Marzban usernames per server.
-    # If a key's username is missing from Marzban (e.g. DB was wiped), force-recreate it.
-    server_usernames: dict[int, set[str] | None] = {}
-    for sid, client in clients.items():
-        try:
-            stats = await client.get_transfer_stats()
-            server_usernames[sid] = set(stats.keys())
-            logger.info("repair_marzban_keys: server %d has %d registered users in Marzban", sid, len(stats))
-        except Exception as exc:
-            logger.warning("repair_marzban_keys: cannot fetch user list from server %d: %s", sid, exc)
-            server_usernames[sid] = None  # unknown — fall back to URL-only check
-
-    fixed = 0
-    skipped = 0
-    errors = 0
-    # Collect (telegram_id, new_url) for keys whose stored URL actually changed.
-    # We fetch telegram_id BEFORE commit while the session is still active.
-    changed_notifications: list[tuple[int, str]] = []
-
-    try:
-        for key in keys:
-            try:
-                old_url = decrypt(key.access_url_encrypted) if key.access_url_encrypted else ""
-            except Exception:
-                old_url = ""
-
-            url_broken = _key_url_needs_repair(old_url)
-
-            # Also check if the Marzban user actually exists (guards against DB wipe).
-            known_users = server_usernames.get(key.server_id)
-            user_missing = known_users is not None and key.outline_key_id not in known_users
-
-            if not url_broken and not user_missing:
-                logger.debug(
-                    "repair_marzban_keys: key %d (user=%s) is healthy — skipping",
-                    key.id, key.outline_key_id,
-                )
-                skipped += 1
-                continue
-
-            if user_missing:
-                logger.warning(
-                    "repair_marzban_keys: key %d user '%s' NOT FOUND in Marzban — recreating (DB may have been wiped)",
-                    key.id, key.outline_key_id,
-                )
-            else:
-                logger.info(
-                    "repair_marzban_keys: key %d (user=%s) needs repair — SNI or params broken",
-                    key.id, key.outline_key_id,
-                )
-
-            client = clients.get(key.server_id)
-            if client is None:
-                errors += 1
-                continue
-
-            # When user is missing (DB wipe scenario) extract the UUID from our stored
-            # URL and pass it to Marzban so the recreated user gets the SAME UUID.
-            # Same UUID + same Reality config = identical vless:// link → client key
-            # keeps working without any user action.
-            preserved_uuid: str | None = None
-            if user_missing and old_url:
+            users = await client.get_users()
+            desired = set((await client.get_inbounds()).get("vless", []))
+            if not desired:
+                raise MarzbanConfigError("No VLESS inbounds")
+            keys = (await session.execute(select(VpnKey).where(
+                VpnKey.server_id == server.id,
+                VpnKey.status == VpnKeyStatus.active,
+            ))).scalars().all()
+            for key in keys:
                 try:
-                    _parsed = urlparse(old_url)
-                    if _parsed.scheme == "vless" and _parsed.username:
-                        preserved_uuid = _parsed.username
-                        logger.info(
-                            "repair_marzban_keys: preserving UUID %s for key %d",
-                            preserved_uuid, key.id,
-                        )
-                except Exception:
-                    pass
-
-            try:
-                raw = await client.create_key(name=key.outline_key_id, uuid=preserved_uuid)
-                if raw.access_url:
-                    new_url = raw.access_url
-                    if old_url != new_url:
-                        key.access_url_encrypted = encrypt(new_url)
-                        logger.info(
-                            "repair_marzban_keys: updated URL for key %d (user=%s)",
-                            key.id, key.outline_key_id,
-                        )
-                        # Collect for post-commit user notification
-                        try:
-                            user = await session.get(User, key.user_id)
-                            if user is not None:
-                                changed_notifications.append((user.telegram_id, new_url))
-                        except Exception as exc:
-                            logger.warning(
-                                "repair_marzban_keys: could not load user for key %d: %s",
-                                key.id, exc,
-                            )
-                    else:
-                        logger.debug(
-                            "repair_marzban_keys: key %d (user=%s) URL unchanged after repair attempt",
-                            key.id, key.outline_key_id,
-                        )
-                    fixed += 1
-                else:
-                    logger.warning(
-                        "repair_marzban_keys: key %d (user=%s) got empty access_url — skipping",
-                        key.id, key.outline_key_id,
+                    # Lock the subscription so concurrent expiry/reissue cannot
+                    # race a network repair. Recheck eligibility after the lock.
+                    subscription = (await session.execute(
+                        select(Subscription).where(Subscription.id == key.subscription_id)
+                        .with_for_update().execution_options(populate_existing=True)
+                    )).scalar_one_or_none()
+                    if (subscription is None
+                        or subscription.user_id != key.user_id
+                        or subscription.status not in (
+                            SubscriptionStatus.active, SubscriptionStatus.expires_soon)
+                        or subscription.expires_at is None
+                        or subscription.expires_at <= datetime.utcnow()):
+                        continue
+                    await session.refresh(key)
+                    if key.status != VpnKeyStatus.active:
+                        continue
+                    old_url = get_access_url(key)
+                    parsed = urlparse(old_url)
+                    if parsed.scheme != "vless":
+                        raise MarzbanConfigError("Stored key is not VLESS")
+                    original_uuid = str(UUID(parsed.username or ""))
+                    current = users.get(key.outline_key_id)
+                    used = max(key.traffic_used_gb or 0,
+                               (current or {}).get("used_traffic", 0) / 1024**3)
+                    limit = key.traffic_limit_gb or 0
+                    if limit > 0 and used >= limit:
+                        continue
+                    # Preserve provider-side quota/expiry decisions as well.
+                    if current and current.get("status") in ("limited", "expired", "disabled"):
+                        logger.warning("Skipping inactive node user for key %d", key.id)
+                        continue
+                    proxy = (current or {}).get("proxies", {}).get("vless", {})
+                    mismatch = (current is None
+                        or proxy.get("id") != original_uuid
+                        or proxy.get("flow") != "xtls-rprx-vision"
+                        or not desired.issubset(set(current.get("inbounds", {}).get("vless", []))))
+                    if not mismatch and not _key_url_needs_repair(old_url):
+                        continue
+                    # Recreated users start at zero node traffic: grant only
+                    # their remaining quota, never the original full allowance.
+                    remaining = max(0, limit - used) if limit else None
+                    raw = await client.create_key(
+                        name=key.outline_key_id, uuid=original_uuid,
+                        traffic_limit_gb=remaining,
                     )
+                    if str(UUID(urlparse(raw.access_url).username or "")) != original_uuid:
+                        raise MarzbanConfigError("Repair returned a different VLESS UUID")
+                    if old_url != raw.access_url:
+                        key.access_url_encrypted = encrypt(raw.access_url)
+                        user = await session.get(User, key.user_id)
+                        if user and user.telegram_id:
+                            notifications.append((user.telegram_id, raw.access_url))
+                    fixed += 1
+                except Exception as exc:
+                    logger.error("Repair failed for key %d: %s", key.id, type(exc).__name__)
                     errors += 1
-            except Exception as exc:
-                logger.error(
-                    "repair_marzban_keys: failed for key %d (user=%s): %s",
-                    key.id, key.outline_key_id, exc,
-                )
-                errors += 1
-    finally:
-        for client in clients.values():
-            try:
-                await client.aclose()
-            except Exception:
-                pass
-
+        except Exception as exc:
+            logger.error("Repair failed for server %d: %s", server.id, type(exc).__name__)
+            errors += 1
+        finally:
+            await client.aclose()
     await session.commit()
-    logger.info(
-        "repair_marzban_keys complete: %d fixed, %d skipped (healthy), %d errors, %d URLs changed (of %d total)",
-        fixed, skipped, errors, len(changed_notifications), len(keys),
-    )
-    return fixed, errors, changed_notifications
+    return fixed, errors, notifications

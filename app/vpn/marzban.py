@@ -4,6 +4,7 @@ import base64
 import logging
 import re
 from dataclasses import dataclass
+from uuid import UUID
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 _MARKDOWN_LINK_RE = re.compile(r'\[([^\]]+)\]\([^)]*\)')
@@ -283,8 +284,7 @@ class MarzbanClient:
         qs["fp"] = "chrome"
         qs["type"] = "tcp"
         qs["flow"] = "xtls-rprx-vision"
-        if short_id:
-            qs["sid"] = short_id
+        qs["sid"] = short_id
         return urlunparse(parsed._replace(query=urlencode(qs)))
 
     def _fix_bind_address(self, url: str) -> str:
@@ -340,26 +340,32 @@ class MarzbanClient:
 
         resp = await self._client.post(f"{self._base}/api/user", headers=headers, json=body)
         if resp.status_code == 409:
-            # User already exists — update config so inbounds are correct, then fetch
-            put_resp = await self._client.put(
-                f"{self._base}/api/user/{safe_name}",
-                headers=headers,
-                json={
-                    "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
-                    "inbounds": {"vless": vless_inbounds},
-                    "status": "active",
-                },
-            )
-            if not put_resp.is_success:
-                logger.warning(
-                    "PUT /api/user/%s returned %s: %s",
-                    safe_name, put_resp.status_code, put_resp.text[:200],
-                )
-            get_resp = await self._client.get(
-                f"{self._base}/api/user/{safe_name}", headers=headers
-            )
+            # Explicitly retain the server UUID. Omitting id can make Marzban's
+            # proxy model generate a new UUID while processing an update.
+            user_url = f"{self._base}/api/user/{safe_name}"
+            existing = await self._client.get(user_url, headers=headers)
+            existing.raise_for_status()
+            current = existing.json()
+            current_id = current.get("proxies", {}).get("vless", {}).get("id")
+            expected_id = uuid or current_id
+            try:
+                expected_id = str(UUID(expected_id))
+            except (ValueError, TypeError, AttributeError):
+                raise MarzbanConfigError("Existing Marzban user has no valid VLESS UUID")
+            update = {
+                "proxies": {**current.get("proxies", {}), "vless": {
+                    "id": expected_id, "flow": "xtls-rprx-vision",
+                }},
+                "inbounds": {**current.get("inbounds", {}), "vless": vless_inbounds},
+                "status": "active",
+            }
+            put_resp = await self._client.put(user_url, headers=headers, json=update)
+            put_resp.raise_for_status()
+            get_resp = await self._client.get(user_url, headers=headers)
             get_resp.raise_for_status()
             data = get_resp.json()
+            if data.get("proxies", {}).get("vless", {}).get("id") != expected_id:
+                raise MarzbanConfigError("Marzban did not preserve the requested VLESS UUID")
         else:
             resp.raise_for_status()
             data = resp.json()
@@ -417,8 +423,16 @@ class MarzbanClient:
                     "configured."
                 )
 
-        access_url = vless_links[0]
-        access_url = self._fix_bind_address(access_url)
+        expected_uuid = data.get("proxies", {}).get("vless", {}).get("id")
+        try:
+            expected_uuid = str(UUID(expected_uuid))
+        except (ValueError, TypeError, AttributeError):
+            raise MarzbanConfigError("Marzban returned no valid VLESS UUID")
+        matching_links = [link for link in vless_links
+                          if urlparse(link).username == expected_uuid]
+        if not matching_links:
+            raise MarzbanConfigError("Marzban links do not match the user UUID")
+        access_url = self._fix_bind_address(matching_links[0])
 
         # ── 4. Always inject Reality params (single source of truth) ────────
         reality = await self.get_reality_params()
@@ -450,12 +464,7 @@ class MarzbanClient:
                 f"{access_url[:80]}"
             )
 
-        logger.info(
-            "Key ready for %s: %s...%s",
-            safe_name,
-            access_url[:40],
-            access_url[-20:] if len(access_url) > 60 else "",
-        )
+        logger.info("Key ready for %s (credentials omitted)", safe_name)
         return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
 
     # ─── Repair ────────────────────────────────────────────────────────────────
@@ -469,13 +478,9 @@ class MarzbanClient:
         inbounds_map = await self.get_inbounds()
         desired_vless = set(inbounds_map.get("vless") or [])
 
-        resp = await self._client.get(
-            f"{self._base}/api/users",
-            headers=headers,
-            params={"limit": 10000},
-        )
-        resp.raise_for_status()
-        users: list[dict] = resp.json().get("users", [])
+        if not desired_vless:
+            raise MarzbanConfigError("No VLESS inbounds available for repair")
+        users = list((await self.get_users()).values())
 
         repaired = 0
         errors = 0
@@ -487,11 +492,16 @@ class MarzbanClient:
             if current_vless == desired_vless:
                 continue
             try:
+                proxy = user.get("proxies", {}).get("vless", {})
+                if not proxy.get("id"):
+                    raise MarzbanConfigError("Cannot repair inbounds without preserving UUID")
                 put_resp = await self._client.put(
                     f"{self._base}/api/user/{username}",
                     headers=headers,
                     json={
-                        "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
+                        "proxies": {**user.get("proxies", {}), "vless": {
+                            **proxy, "flow": "xtls-rprx-vision",
+                        }},
                         "inbounds": {"vless": list(desired_vless)},
                         "status": user.get("status", "active"),
                     },
@@ -542,17 +552,31 @@ class MarzbanClient:
                 return
         resp.raise_for_status()
 
-    async def get_transfer_stats(self) -> dict[str, int]:
-        """Return {username: bytes_used} for all users."""
+    async def get_users(self) -> dict[str, dict]:
+        """Read every page; never mistake a truncated list for deleted users."""
         headers = await self._headers()
-        resp = await self._client.get(
-            f"{self._base}/api/users",
-            headers=headers,
-            params={"limit": 1000},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return {u["username"]: u.get("used_traffic", 0) for u in data.get("users", [])}
+        users: dict[str, dict] = {}
+        offset = 0
+        while True:
+            resp = await self._client.get(
+                f"{self._base}/api/users", headers=headers,
+                params={"limit": 1000, "offset": offset},
+            )
+            resp.raise_for_status()
+            page = resp.json().get("users")
+            if not isinstance(page, list):
+                raise MarzbanConfigError("Invalid Marzban users response")
+            if not page:
+                return users
+            before = len(users)
+            users.update({u["username"]: u for u in page})
+            if len(users) == before:
+                raise MarzbanConfigError("Marzban pagination did not advance")
+            offset += len(page)
+
+    async def get_transfer_stats(self) -> dict[str, int]:
+        return {name: user.get("used_traffic", 0)
+                for name, user in (await self.get_users()).items()}
 
     async def check_connection(self) -> bool:
         try:
@@ -572,3 +596,4 @@ class MarzbanConfigError(RuntimeError):
     This is a retryable error — the circuit breaker counts it as a failure
     and the pending-operation queue will retry the key creation.
     """
+

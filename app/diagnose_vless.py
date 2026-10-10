@@ -78,8 +78,6 @@ async def main(sub_id: int, repair: bool) -> int:
 
         print(f"Node: {server.name}; API host: {public_host}")
         print(f"Key destination: {client_host}:{client_port}; subscription={sub_id}")
-        tcp_ok = await port_open(public_host, 443)
-        print(f"Main server -> node TCP/443: {'OPEN' if tcp_ok else 'CLOSED/TIMEOUT'}")
 
         client = _make_client(server)
         try:
@@ -109,6 +107,8 @@ async def main(sub_id: int, repair: bool) -> int:
                 print("FAIL: missing VLESS inbound tag")
                 return 2
             print(f"Xray: VLESS Reality inbound={inbound_tag} port={port}")
+            tcp_ok = await port_open(public_host, port)
+            print(f"Main server -> node TCP/{port}: {'OPEN' if tcp_ok else 'CLOSED/TIMEOUT'}")
 
             response = await client._client.get(
                 f"{client._base}/api/user/{key.outline_key_id}",
@@ -177,10 +177,10 @@ async def main(sub_id: int, repair: bool) -> int:
                 print("Key parameters match Marzban Reality: OK")
 
             if not hosts_ok:
-                print("ACTION: run python -m app.repair_vless_hosts --server 1 --apply on the main server")
+                print(f"ACTION: run python -m app.repair_vless_hosts --server {server.id} --apply on the main server")
                 return 1
             if not tcp_ok:
-                print("ACTION: check Xray listening on 443 and provider firewall; do not rotate keys")
+                print("ACTION: check Xray listening on the configured VPN port and provider firewall; do not rotate keys")
                 return 1
 
             if problems and repair:
@@ -229,3 +229,4 @@ if __name__ == "__main__":
     if args.subscription <= 0:
         parser.error("Invalid subscription number")
     sys.exit(asyncio.run(main(args.subscription, args.repair_url)))
+
