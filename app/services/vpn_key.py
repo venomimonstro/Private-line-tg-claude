@@ -312,6 +312,15 @@ async def sync_traffic_stats(session: AsyncSession) -> None:
 def get_access_url(vpn_key: VpnKey) -> str:
     return decrypt(vpn_key.access_url_encrypted)
 
+def get_client_access_url(vpn_key: VpnKey) -> str:
+    """Return an import-ready link, without modifying the stored credentials."""
+    from app.services.vpn_link import canonical_client_link
+
+    return canonical_client_link(
+        get_access_url(vpn_key),
+        label=vpn_key.label or "Private Line VPN",
+    )
+
 
 async def repair_marzban_keys(
     session: AsyncSession,
