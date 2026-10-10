@@ -85,7 +85,7 @@ mapfile -t NODE_IDS <<<"$NODE_RAW"
 for server_id in "${NODE_IDS[@]}"; do
     [[ "$server_id" =~ ^[1-9][0-9]*$ ]] || fail "Invalid node ID from database"
     echo "--- disposable smoke: server $server_id ---"
-    bash scripts/smoke_vpn_node.sh "$server_id"
+    bash scripts/smoke_vpn_node.sh "$server_id" --publish
 done
 
 CURRENT_STEP="9/11 published subscription"; echo "=== 9/11 Published Telegram/subscription profile ==="
