@@ -82,9 +82,25 @@ async def get_enabled_providers(session: AsyncSession) -> list[str]:
 
 async def _is_first_payment(user_id: int, session: AsyncSession) -> bool:
     result = await session.execute(
-        select(Payment).where(Payment.user_id == user_id, Payment.status == PaymentStatus.paid).limit(1)
+        select(Payment).where(
+            Payment.user_id == user_id,
+            Payment.status == PaymentStatus.paid,
+        ).limit(1)
     )
     return result.scalar_one_or_none() is None
+
+
+async def calculate_payment_amount(
+    user_id: int,
+    tariff: Tariff,
+    session: AsyncSession,
+) -> Decimal:
+    """Single source of truth for the base amount before an optional promo."""
+    if tariff.price_first_month is not None and await _is_first_payment(user_id, session):
+        value = Decimal(str(tariff.price_first_month))
+    else:
+        value = Decimal(str(tariff.price_monthly))
+    return value.quantize(Decimal("0.01"))
 
 
 async def create_payment(
@@ -92,6 +108,7 @@ async def create_payment(
     tariff_slug: str,
     session: AsyncSession,
     provider_name: str | None = None,
+    amount_override: float | Decimal | None = None,
 ) -> tuple[Payment, PaymentResult]:
     from app.payments.registry import get_provider_db
 
@@ -102,11 +119,14 @@ async def create_payment(
     tariff_result = await session.execute(select(Tariff).where(Tariff.slug == tariff_slug))
     tariff = tariff_result.scalar_one()
 
-    if tariff.price_first_month is not None:
-        is_first = await _is_first_payment(user_id, session)
-        amount = float(tariff.price_first_month if is_first else tariff.price_monthly)
+    base_amount = await calculate_payment_amount(user_id, tariff, session)
+    if amount_override is None:
+        amount_dec = base_amount
     else:
-        amount = float(tariff.price_monthly)
+        amount_dec = Decimal(str(amount_override)).quantize(Decimal("0.01"))
+        if amount_dec < Decimal("1.00") or amount_dec > base_amount:
+            raise ValueError("Invalid payment amount override")
+    amount = float(amount_dec)
 
     # One subscription per user: reuse existing instead of creating a new one.
     # Order by id desc so we always pick the most recent (and most likely active) one.
@@ -140,7 +160,7 @@ async def create_payment(
         user_id=user_id,
         subscription_id=subscription.id,
         tariff_id=tariff.id,
-        amount=Decimal(str(amount)),
+        amount=amount_dec,
         currency="RUB",
         status=PaymentStatus.pending,
         provider=provider_name,
