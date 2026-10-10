@@ -47,31 +47,28 @@ async def verify(subscription_id: int) -> int:
             VpnKey.user_id == sub.user_id,
             VpnKey.status == VpnKeyStatus.active,
         ))).scalars().all()
-        if len(active) != 1:
-            print(f"FAIL: expected exactly one active key, found {len(active)}")
+        if not active:
+            print("FAIL: no active VPN keys")
             return 2
-        try:
-            expected = get_client_access_url(active[0])
-        except Exception as exc:
-            print(f"FAIL: client-ready link is invalid ({type(exc).__name__})")
-            return 2
-
-        if expected.startswith("vless://"):
-            parsed = urlsplit(expected)
-            if (
-                expected.count("#") != 1
-                or not parsed.username or not parsed.hostname
-                or not parsed.port
-                or "security=reality" not in parsed.query
-                or "fp=chrome" not in parsed.query
-                or "flow=xtls-rprx-vision" not in parsed.query
-            ):
-                print("FAIL: client-ready Reality profile contains missing fields")
+        expected_links = set()
+        for key in active:
+            try:
+                expected = get_client_access_url(key)
+                parsed = urlsplit(expected)
+                if (
+                    expected.count("#") != 1
+                    or parsed.scheme != "vless"
+                    or not parsed.username or not parsed.hostname
+                    or not parsed.port
+                    or "security=reality" not in parsed.query
+                    or "fp=chrome" not in parsed.query
+                    or "flow=xtls-rprx-vision" not in parsed.query
+                ):
+                    raise ValueError("Invalid VLESS profile")
+                expected_links.add(expected)
+            except Exception as exc:
+                print(f"FAIL: client-ready link invalid ({type(exc).__name__})")
                 return 2
-        else:
-            print("FAIL: subscription is not VLESS Reality")
-            return 2
-
         token = make_sub_token(user.telegram_id, settings.SECRET_KEY)
         async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
             try:
@@ -90,10 +87,10 @@ async def verify(subscription_id: int) -> int:
         except Exception:
             print("FAIL: subscription endpoint did not return base64 VLESS links")
             return 2
-        if expected not in lines:
-            print("FAIL: downloaded profile does not match client-ready active key")
+        if set(lines) != expected_links:
+            print("FAIL: downloaded subscription does not match all active client-ready keys")
             return 2
-        print(f"PASS: subscription {subscription_id} active and Telegram key valid")
+        print(f"PASS: subscription {subscription_id} active, {len(active)} client-ready keys validated")
         print("PASS: Nginx -> FastAPI subscription endpoint returned the exact same VLESS Reality link")
         print("NOTE: this does NOT prove connectivity from a remote user's ISP or client app")
         return 0
