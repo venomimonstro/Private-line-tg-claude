@@ -89,7 +89,15 @@ async def get_enabled_providers(session: AsyncSession) -> list[str]:
 
     if not enabled:
         fallback = settings.PAYMENT_PROVIDER
-        enabled = [fallback]
+        if fallback == "manual":
+            return ["manual"]
+        if fallback in _PROVIDER_CRED_KEYS and has_credentials(fallback):
+            return [fallback]
+        logger.error(
+            "Configured payment provider %r is not production-ready; no automatic fallback",
+            fallback,
+        )
+        return []
 
     return enabled
 
