@@ -62,7 +62,7 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
         select(VpnServer).where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider != "private-line-primary",
+            VpnServer.provider == "marzban",
         )
     )
     vpn_servers = [
