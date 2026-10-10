@@ -371,8 +371,9 @@ async def reconcile_marzban_server(
             result.core_restarted = True
 
         if apply and result.errors == 0:
+            # Reconciliation repairs state but never publishes a staging node.
+            # Publication requires disposable-user VLESS/HTTPS smoke success.
             server.status = VpnServerStatus.active
-            server.is_selectable = True
             server.failure_count = 0
             server.last_error = None
             server.last_error_at = None
