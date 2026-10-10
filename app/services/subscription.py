@@ -69,14 +69,6 @@ async def activate_subscription(
     for server in servers:
         label = f"{server.flag_emoji or '🌍'} {server.country}"
         try:
-            already_exists = (await session.execute(
-                select(VpnKey.id).where(
-                    VpnKey.subscription_id == subscription.id,
-                    VpnKey.user_id == subscription.user_id,
-                    VpnKey.server_id == server.id,
-                    VpnKey.status == VpnKeyStatus.active,
-                ).limit(1)
-            )).scalar_one_or_none() is not None
             key = await vpn_key_service.create_vpn_key(
                 user_id=subscription.user_id,
                 subscription_id=subscription.id,
@@ -86,8 +78,6 @@ async def activate_subscription(
                 session=session,
                 ip_limit=getattr(tariff, "max_devices", 0) or 0,
             )
-            if not already_exists:
-                server.current_users += 1
             created_keys.append(key)
             break
         except Exception as exc:
