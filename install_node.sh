@@ -433,7 +433,7 @@ HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
 
 if [[ "$HTTP_CODE" == "200" ]]; then
     REG_MSG=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('message',''))" 2>/dev/null || echo "$HTTP_BODY")
-    success "Нода зарегистрирована!"
+    success "Нода зарегистрирована как STAGING (ещё не выдаётся клиентам)."
     echo -e "  ${GREEN}${REG_MSG}${RESET}"
     REGISTERED=true
 else
@@ -476,7 +476,8 @@ echo -e "  Протокол:  ${GREEN}VLESS Reality${RESET} (маскировк�
 echo -e "  VPN Порт:  ${CYAN}$VPN_PORT${RESET}"
 echo -e "  Public Key: ${CYAN}$PUBLIC_KEY${RESET}"
 if [[ "${REGISTERED:-false}" == "true" ]]; then
-    echo -e "  Статус:    ${GREEN}✅ Зарегистрирована в Admin Panel${RESET}"
+    echo -e "  Статус:    ${YELLOW}STAGING — нужна E2E проверка с control-plane${RESET}"
+    echo -e "  Следом на основном сервере: ${CYAN}bash scripts/production_vpn_gate.sh SUBSCRIPTION_ID${RESET}"
 else
     echo -e "  Статус:    ${YELLOW}⚠️  Требуется ручная регистрация${RESET}"
     echo -e "  API URL:   ${YELLOW}$PUBLIC_API_URL${RESET}"
