@@ -93,39 +93,28 @@ async def create_vpn_key(
     label: str | None = None,
     ip_limit: int = 0,
 ) -> VpnKey:
-    # Replacing a key on one node MUST NOT delete keys for other nodes.
-    # A subscription can have one active key per server (temporary fallback).
-    old_keys_result = await session.execute(
+    # Idempotent creation: never delete a working key before a replacement exists.
+    # Activation retries and queue retries simply reuse the active key on this node.
+    existing_active = (await session.execute(
         select(VpnKey).where(
             VpnKey.subscription_id == subscription_id,
+            VpnKey.user_id == user_id,
             VpnKey.server_id == server.id,
+            VpnKey.status == VpnKeyStatus.active,
+        ).order_by(VpnKey.id.desc())
+    )).scalars().all()
+    if len(existing_active) > 1:
+        raise ValueError("Multiple active keys on the same VPN node require reconciliation")
+    if existing_active:
+        logger.info(
+            "Reusing active VPN key %d for subscription %d on server %d",
+            existing_active[0].id, subscription_id, server.id,
         )
-    )
-    # Transfer counters from the active key so they survive purge
-    _today = date.today()
-    _inherited_reissue_count: int = 0
-    _inherited_reissue_date: date | None = None
-    _inherited_traffic_gb: float = 0.0
-    for old_key in old_keys_result.scalars().all():
-        if old_key.status == VpnKeyStatus.active:
-            # Capture reissue tracking before deletion
-            if old_key.reissue_date == _today:
-                _inherited_reissue_count = old_key.reissue_count_today or 0
-                _inherited_reissue_date = _today
-            # Preserve accumulated traffic so the subscription limit stays accurate
-            _inherited_traffic_gb = old_key.traffic_used_gb or 0.0
-            # Best-effort: remove from VPN server
-            try:
-                old_server_result = await session.get(VpnServer, old_key.server_id)
-                if old_server_result is not None:
-                    await disable_vpn_key(old_key, old_server_result, session)
-            except Exception as exc:
-                logger.warning("Could not disable old key %d: %s", old_key.id, exc)
-                old_key.status = VpnKeyStatus.disabled
-                old_key.disabled_at = datetime.utcnow()
-        await session.delete(old_key)
-    await session.flush()
+        return existing_active[0]
 
+    _inherited_reissue_count = 0
+    _inherited_reissue_date = None
+    _inherited_traffic_gb = 0.0
     client = _make_client(server)
     cb = get_circuit_breaker(server.id)
     protocol = _server_protocol(server)
