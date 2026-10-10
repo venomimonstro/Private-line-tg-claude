@@ -216,7 +216,10 @@ async def add_server(
         api_url=api_url,
         api_secret_encrypted=encrypt(creds),
         max_users=max_users,
-        status=VpnServerStatus.active,
+        # Manual entries are staging only. A node becomes customer-selectable
+        # only after the safe Reality reconciliation endpoint verifies it.
+        status=VpnServerStatus.disabled,
+        is_selectable=False,
     )
     session.add(server)
     log = AdminLog(
