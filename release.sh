@@ -86,58 +86,45 @@ if [[ "$ROLLBACK_MODE" -eq 1 ]]; then
     fi
 
     bold "════════════════════════════════════════════"
-    bold "  ROLLBACK to release #$RELEASE_ID"
+    bold "  SAFE ROLLBACK release #$RELEASE_ID"
     bold "════════════════════════════════════════════"
 
-    # Get the previous commit from the releases CLI
-    PREV_COMMIT=$(py_cli rollback "$RELEASE_ID" 2>/dev/null || echo "")
-    if [[ -z "$PREV_COMMIT" ]]; then
-        err "Cannot determine rollback commit for release $RELEASE_ID"
-        exit 1
+    PLAN="$(py_cli rollback-plan "$RELEASE_ID" 2>/tmp/rollback_plan_err)" || {
+        err "$(cat /tmp/rollback_plan_err 2>/dev/null || echo 'Rollback plan unavailable')"
+        err "Historical rollback is refused without an associated verified DB backup."
+        exit 2
+    }
+    IFS='|' read -r PREV_COMMIT BACKUP_ID BACKUP_NAME BACKUP_SHA <<<"$PLAN"
+    [[ "$PREV_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || { err "Invalid rollback commit"; exit 2; }
+    [[ "$BACKUP_ID" =~ ^[1-9][0-9]*$ ]] || { err "Invalid rollback backup id"; exit 2; }
+    ROLLBACK_BACKUP="$DEPLOY_DIR/backups/$BACKUP_NAME"
+    [[ -s "$ROLLBACK_BACKUP" ]] || { err "Rollback backup missing/empty: $ROLLBACK_BACKUP"; exit 2; }
+    ACTUAL_SHA="$(sha256sum "$ROLLBACK_BACKUP" | awk '{print $1}')"
+    [[ -n "$BACKUP_SHA" && "$ACTUAL_SHA" == "$BACKUP_SHA" ]] || { err "Rollback backup checksum mismatch"; exit 2; }
+
+    HELPER="/tmp/private-line-manual-rollback-$$.sh"
+    cp -p scripts/restore_postgres_backup.sh "$HELPER"
+    chmod 700 "$HELPER"
+
+    log "Rolling code back to ${PREV_COMMIT:0:7} and restoring its matching DB snapshot..."
+    git reset --hard "$PREV_COMMIT" >/dev/null || { rm -f "$HELPER"; err "Git rollback failed"; exit 2; }
+
+    if ! PRIVATE_LINE_ROOT="$DEPLOY_DIR" PRIVATE_LINE_SKIP_LAYOUT_VALIDATION=1 \
+        bash "$HELPER" "$ROLLBACK_BACKUP"; then
+        rm -f "$HELPER"
+        err "Database rollback failed; current emergency dump path is printed above."
+        exit 2
     fi
+    rm -f "$HELPER"
 
-    log "Rolling back to commit ${PREV_COMMIT:0:7}..."
-
-    # Create emergency backup before rollback
-    log "Creating emergency backup..."
-    docker compose exec -T admin python3 -c "
-import asyncio
-from app.database import async_session_maker
-from app.enums import BackupType
-from backup_manager.backup import create_backup
-async def _():
-    async with async_session_maker() as s:
-        await create_backup(BackupType.manual, s, created_by='rollback')
-asyncio.run(_())
-" 2>/dev/null || warn "Backup failed — continuing with rollback anyway"
-
-    git checkout "$PREV_COMMIT" -- .
-    log "Running migrations (downgrade may be needed manually if schema changed)..."
-    docker compose exec -T admin alembic upgrade head 2>/dev/null || warn "Migration check failed — verify manually"
-
-    log "Restarting services..."
-    docker compose restart admin bot
-
-    log "Waiting for admin..."
-    sleep 5
-    HEALTHY=0
-    for i in $(seq 1 8); do
-        if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; then
-            HEALTHY=1; break
-        fi
-        sleep 4
-    done
-
-    if [[ "$HEALTHY" -eq 1 ]]; then
-        ok "Rollback complete — system healthy at commit ${PREV_COMMIT:0:7}"
+    if curl -sf --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+        ok "Rollback complete — code and PostgreSQL restored together"
     else
-        err "Rollback complete but health check failed — check logs!"
-        docker compose logs admin --tail=20
-        exit 1
+        err "Rollback completed but admin is unhealthy"
+        exit 2
     fi
     exit 0
 fi
-
 # ═════════════════════════════════════════════════════════════════════════════
 # NORMAL DEPLOY
 # ═════════════════════════════════════════════════════════════════════════════
