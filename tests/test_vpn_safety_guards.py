@@ -144,6 +144,14 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("create_host_path: false", compose)
         self.assertNotIn("POSTGRES_PASSWORD:-changeme", compose)
 
+    def test_release_has_atomic_backup_rollback_guards(self):
+        source = (ROOT / "release.sh").read_text(encoding="utf-8")
+        self.assertIn("fail() {", source)
+        self.assertIn("mandatory pre-release database backup", source)
+        self.assertIn("rollback-plan", source)
+        self.assertIn("MIGRATION_TOUCHED=1", source)
+        self.assertIn("restore_postgres_backup.sh", source)
+
     def test_deploys_validate_checkout_layout_before_docker(self):
         for name in ("deploy.sh", "release.sh", "scripts/deploy_low_memory.sh"):
             text = (ROOT / name).read_text(encoding="utf-8")
