@@ -22,7 +22,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
 
     def test_key_creation_is_idempotent_not_delete_first(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
-        self.assertIn("Reusing active VPN key", source)
+        self.assertIn("Reusing verified VPN key", source)
         self.assertNotIn("session.delete(old_key)", source)
         self.assertNotIn("delete_key(", source)
 
@@ -138,6 +138,21 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         text = (ROOT / "scripts" / "update_vpn_stability.sh").read_text(encoding="utf-8")
         self.assertIn("production_vpn_gate.sh", text)
         self.assertNotIn("app.stabilize_vless", text)
+
+    def test_compose_never_creates_missing_bind_sources(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("create_host_path: false", compose)
+        self.assertNotIn("POSTGRES_PASSWORD:-changeme", compose)
+
+    def test_deploys_validate_checkout_layout_before_docker(self):
+        for name in ("deploy.sh", "release.sh", "scripts/deploy_low_memory.sh"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            self.assertIn("validate_install_layout.sh", text)
+
+    def test_marzban_node_installer_migrates_env_admin_to_db(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        self.assertIn("marzban-cli admin import-from-env -y", installer)
+        self.assertIn("SUDO_USERNAME/SUDO_PASSWORD", installer)
 
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
