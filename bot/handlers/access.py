@@ -442,8 +442,13 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
 
         try:
             access_url = get_client_access_url(new_key)
-        except Exception:
-            access_url = ""
+        except Exception as exc:
+            logger.error("Cannot format reissued VLESS link: %s", type(exc).__name__)
+            await callback.message.answer(
+                "Ключ обновлён, но ссылка не прошла проверку формата. "
+                "Не импортируйте пустой профиль; обратитесь в поддержку."
+            )
+            return
 
     remaining_after = _MAX_DAILY_REISSUES - (used + 1)
 
