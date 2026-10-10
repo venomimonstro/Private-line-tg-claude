@@ -241,44 +241,43 @@ async def test_server(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> dict:
-    import json as _json
-    result = await session.execute(select(VpnServer).where(VpnServer.id == server_id))
-    server = result.scalar_one_or_none()
+    """Read-only production-grade node test; never promotes or repairs."""
+    server = await session.get(VpnServer, server_id)
     if server is None:
         raise HTTPException(status_code=404)
 
-    from app.encryption import decrypt
     from app.services.vpn_key import _make_client, _server_protocol
     protocol = _server_protocol(server)
+    if protocol != "marzban":
+        client = _make_client(server)
+        try:
+            ok = await client.check_connection()
+            return {"ok": ok, "protocol": protocol, "error": None if ok else "connection failed"}
+        except Exception as exc:
+            return {"ok": False, "protocol": protocol, "error": type(exc).__name__}
+        finally:
+            await client.aclose()
 
-    # Decode stored credentials for diagnostics
     try:
-        creds = _json.loads(decrypt(server.api_secret_encrypted))
-    except Exception:
-        creds = {}
-
-    client = _make_client(server)
-    try:
-        ok = await client.check_connection()
-        error = None
+        from app.services.vpn_reconcile import reconcile_marzban_server
+        result = await reconcile_marzban_server(session, server_id, apply=False)
+        ok = result.errors == 0
+        if ok:
+            from app.services.circuit_breaker import reset_circuit
+            reset_circuit(server_id)
+        return {
+            "ok": ok,
+            "protocol": "marzban",
+            "integrity_errors": result.errors,
+            "active_keys_checked": result.checked_keys,
+            "note": "read-only; use safe reconcile to repair/publish",
+        }
     except Exception as exc:
-        ok = False
-        error = str(exc)
-    finally:
-        await client.aclose()
-
-    if ok:
-        from app.services.circuit_breaker import reset_circuit
-        reset_circuit(server_id)
-
-    return {
-        "ok": ok,
-        "error": error,
-        "url": server.api_url,
-        "protocol": protocol,
-        "username": creds.get("username", ""),
-        "has_password": bool(creds.get("password")),
-    }
+        return {
+            "ok": False,
+            "protocol": "marzban",
+            "error": f"{type(exc).__name__}: {str(exc)[:180]}",
+        }
 
 
 @router.post("/{server_id}/fix-vless-keys")
@@ -351,6 +350,7 @@ async def edit_server(
     server.city = city or None
     server.flag_emoji = flag_emoji or None
     server.max_users = max_users
+    connection_changed = bool(api_url and api_url != server.api_url) or bool(marzban_password)
     if api_url:
         server.api_url = api_url
 
@@ -358,6 +358,11 @@ async def edit_server(
         username = marzban_username or "admin"
         creds = _json.dumps({"protocol": "marzban", "username": username, "password": marzban_password})
         server.api_secret_encrypted = encrypt(creds)
+
+    if connection_changed:
+        # Credentials/endpoints are untrusted until full Reality reconciliation.
+        server.status = VpnServerStatus.disabled
+        server.is_selectable = False
 
     log = AdminLog(
         admin_user_id=admin.id,
@@ -395,6 +400,8 @@ async def update_server_creds(
     server.api_secret_encrypted = encrypt(creds)
     if marzban_api_url:
         server.api_url = marzban_api_url
+    server.status = VpnServerStatus.disabled
+    server.is_selectable = False
     await session.commit()
     return RedirectResponse("/admin/servers", status_code=303)
 
@@ -417,6 +424,22 @@ async def delete_server(
         raise HTTPException(status_code=404)
 
     server_name = server.name
+
+    from app.enums import VpnKeyStatus
+    live_keys = (await session.execute(
+        select(VpnKey.id).where(
+            VpnKey.server_id == server_id,
+            VpnKey.status.in_([VpnKeyStatus.active, VpnKeyStatus.error]),
+        ).limit(5)
+    )).scalars().all()
+    if live_keys:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Сервер содержит активные/неподтверждённо отключённые ключи. "
+                "Сначала мигрируйте или подтвердите отключение пользователей."
+            ),
+        )
 
     # Collect key IDs for this server
     key_ids_result = await session.execute(
@@ -469,6 +492,7 @@ async def disable_server(
     if server is None:
         raise HTTPException(status_code=404)
     server.status = VpnServerStatus.disabled
+    server.is_selectable = False
     log = AdminLog(
         admin_user_id=admin.id,
         action="disable_server",
@@ -527,11 +551,16 @@ async def migrate_outline_to_vless(
     for old_key in old_keys:
         old_server = outline_servers[old_key.server_id]
         try:
-            # Disable Outline key first (clears idempotency check)
-            await disable_vpn_key(old_key, old_server, session)
-            old_server.current_users = max(0, old_server.current_users - 1)
-
-            # Create VLESS key on Marzban
+            # Create-before-cutover: never remove the customer's working
+            # credential until the replacement VLESS profile exists and passes
+            # the same client formatter used by Telegram.
+            already_target = (await session.execute(
+                select(VpnKey.id).where(
+                    VpnKey.subscription_id == old_key.subscription_id,
+                    VpnKey.server_id == target.id,
+                    VpnKey.status == VpnKeyStatus.active,
+                ).limit(1)
+            )).scalar_one_or_none() is not None
             new_key = await create_vpn_key(
                 user_id=old_key.user_id,
                 subscription_id=old_key.subscription_id,
@@ -540,10 +569,17 @@ async def migrate_outline_to_vless(
                 label=old_key.label,
                 session=session,
             )
-            target.current_users += 1
+            from app.services.vpn_key import get_client_access_url
+            get_client_access_url(new_key)  # strict VLESS Reality validation
+            if not already_target:
+                target.current_users += 1
             await session.flush()
 
-            # Send new key to user
+            disabled = await disable_vpn_key(old_key, old_server, session)
+            if not disabled:
+                raise RuntimeError("old Outline credential could not be confirmed disabled")
+            old_server.current_users = max(0, old_server.current_users - 1)
+
             await send_key_to_user(old_key.user_id, new_key)
             migrated += 1
         except Exception as exc:
