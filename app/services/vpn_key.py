@@ -60,23 +60,35 @@ AnyClient = Union[OutlineClient, MarzbanClient]
 
 
 def _server_protocol(server: VpnServer) -> str:
-    """Detect protocol from encrypted credentials. Returns 'marzban' or 'outline'."""
+    """Return the explicitly configured VPN protocol, or 'invalid'.
+
+    Corrupt/missing credentials must never silently fall back to Outline:
+    doing so can route a paid activation through the wrong backend.
+    """
     try:
         data = json.loads(decrypt(server.api_secret_encrypted))
-        return data.get("protocol", "outline")
+        protocol = data.get("protocol")
+        return protocol if protocol in ("marzban", "outline") else "invalid"
     except Exception:
-        return "outline"
+        return "invalid"
 
 
 def _make_client(server: VpnServer) -> AnyClient:
-    if _server_protocol(server) == "marzban":
+    protocol = _server_protocol(server)
+    if protocol == "marzban":
         creds = json.loads(decrypt(server.api_secret_encrypted))
+        username = creds.get("username")
+        password = creds.get("password")
+        if not username or not password:
+            raise ValueError("Invalid Marzban credentials")
         return MarzbanClient(
             api_url=server.api_url,
-            username=creds["username"],
-            password=creds["password"],
+            username=username,
+            password=password,
         )
-    return OutlineClient(api_url=server.api_url)
+    if protocol == "outline":
+        return OutlineClient(api_url=server.api_url)
+    raise ValueError(f"VPN server {server.id} has invalid encrypted credentials/protocol")
 
 
 def _marzban_username(user_id: int, subscription_id: int) -> str:
