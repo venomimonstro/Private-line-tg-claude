@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
 from app.database import async_session_maker
-from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
+from app.enums import PaymentStatus, SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.pending_operation import PendingOperation, PendingOperationType
+from app.models.payment import Payment
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.vpn_key import VpnKey
@@ -73,6 +74,22 @@ async def audit() -> int:
                 server.status == VpnServerStatus.active or server.is_selectable
             ):
                 failures.append(f"server#{server.id}: control-plane marked as VPN node")
+
+        # Paid status is not enough: fulfillment must become durable shortly
+        # after provider confirmation. Recovery runs every five minutes.
+        stale_cutoff = now - timedelta(minutes=15)
+        stale_paid = (await db.execute(
+            select(Payment).where(
+                Payment.status == PaymentStatus.paid,
+                Payment.fulfilled_at.is_(None),
+                Payment.confirmed_at.is_not(None),
+                Payment.confirmed_at < stale_cutoff,
+            )
+        )).scalars().all()
+        for payment in stale_paid:
+            failures.append(
+                f"payment#{payment.id}: paid but VPN/subscription fulfillment pending >15m"
+            )
 
         ops = (await db.execute(select(PendingOperation).where(
             PendingOperation.completed_at.is_(None)
