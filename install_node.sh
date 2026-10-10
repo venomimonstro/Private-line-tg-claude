@@ -138,6 +138,31 @@ REALITY_DEST="www.microsoft.com:443"
 
 mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
+# Reproducible runtime: pin the Marzban image pulled during installation and
+# always run the tested Xray build instead of whichever core the panel bundles.
+MARZBAN_IMAGE="gozargah/marzban:latest"
+XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.9"
+XRAY_DIR="$MARZBAN_DATA/xray-core/26.9.9"
+XRAY_BIN="$XRAY_DIR/xray"
+
+info "Загружаю зафиксированные runtime images..."
+docker pull "$MARZBAN_IMAGE" >/dev/null
+docker pull "$XRAY_IMAGE" >/dev/null
+MARZBAN_PIN="$(docker image inspect "$MARZBAN_IMAGE" --format '{{index .RepoDigests 0}}')"
+[[ "$MARZBAN_PIN" == *@sha256:* ]] || die "Не удалось зафиксировать digest Marzban."
+
+mkdir -p "$XRAY_DIR"
+TMP_XRAY_CONTAINER="$(docker create "$XRAY_IMAGE")"
+trap 'docker rm -f "${TMP_XRAY_CONTAINER:-}" >/dev/null 2>&1 || true' EXIT
+docker cp "$TMP_XRAY_CONTAINER:/usr/local/bin/xray" "$XRAY_BIN"
+docker rm "$TMP_XRAY_CONTAINER" >/dev/null
+TMP_XRAY_CONTAINER=""
+chmod 755 "$XRAY_BIN"
+"$XRAY_BIN" version | head -1 | grep -q 'Xray 26.9.9' || die "Установлена неожиданная версия Xray."
+
+# Reality target must be reachable with TLS 1.3 from the node.
+timeout 12 openssl s_client -connect "$REALITY_DEST" -servername "$REALITY_SNI"     -tls1_3 </dev/null >/dev/null 2>&1     || die "Reality target $REALITY_DEST недоступен по TLS 1.3 с этой ноды."
+
 # Temporary plain config — Reality keys generated after container starts
 cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
 {
@@ -163,13 +188,12 @@ cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
 }
 XRAYEOF
 
-# Marzban docker-compose
-cat > "$MARZBAN_DIR/docker-compose.yml" << 'DCEOF'
-version: "3"
+# Marzban docker-compose (digest-pinned; no implicit upgrades on restart)
+cat > "$MARZBAN_DIR/docker-compose.yml" << DCEOF
 services:
   marzban:
-    image: gozargah/marzban:latest
-    restart: always
+    image: $MARZBAN_PIN
+    restart: unless-stopped
     env_file: /opt/marzban/.env
     network_mode: host
     volumes:
@@ -183,11 +207,12 @@ UVICORN_PORT=${MARZBAN_PORT}
 SUDO_USERNAME=${MARZBAN_USER}
 SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
+XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.9.9/xray
 EOF
 
 chmod 600 "$MARZBAN_DIR/.env"
 
-info "Запускаю Marzban (первый запуск скачает XRay ~60МБ)..."
+info "Запускаю Marzban с Xray 26.9.9..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
 # Wait for Marzban API to become ready (up to 120s)
