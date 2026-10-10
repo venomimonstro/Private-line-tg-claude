@@ -25,7 +25,7 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token
-from app.services.vpn_key import get_client_access_url
+from app.services.vpn_key import get_client_access_url, _server_protocol
 
 
 async def verify(subscription_id: int) -> int:
@@ -45,7 +45,7 @@ async def verify(subscription_id: int) -> int:
             return 2
         # Mirror the public /sub endpoint exactly for this Telegram user.
         active = (await db.execute(
-            select(VpnKey)
+            select(VpnKey, VpnServer)
             .join(Subscription, Subscription.id == VpnKey.subscription_id)
             .join(VpnServer, VpnServer.id == VpnKey.server_id)
             .where(
@@ -58,10 +58,11 @@ async def verify(subscription_id: int) -> int:
                 Subscription.expires_at > datetime.utcnow(),
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc(), VpnKey.id.asc())
-        )).scalars().all()
+        )).all()
+        active = [key for key, server in active if _server_protocol(server) == "marzban"]
         if not active:
             print("FAIL: no active VPN keys")
             return 2
