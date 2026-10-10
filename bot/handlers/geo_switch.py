@@ -5,7 +5,8 @@ import logging
 from html import escape
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
 from app.database import async_session_maker
@@ -18,6 +19,36 @@ from bot.handlers.access import _get_active_subscription
 
 logger = logging.getLogger(__name__)
 router = Router(name="geo_switch")
+
+
+@router.message(Command("servers"))
+@router.message(F.text == "🌍 Серверы")
+async def cmd_servers(message: Message, db_user: User) -> None:
+    sub, active_keys, _ = await _get_active_subscription(db_user.id)
+    if sub is None:
+        await message.answer("Для выбора VPN-сервера нужна активная подписка.")
+        return
+    async with async_session_maker() as session:
+        servers = (await session.execute(
+            select(VpnServer).where(
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+            ).order_by(VpnServer.id.asc())
+        )).scalars().all()
+    if not servers:
+        await message.answer("Доступных VPN-нод пока нет.")
+        return
+    existing = {key.server_id for key in active_keys}
+    rows = [[InlineKeyboardButton(
+        text=f"{'✅' if srv.id in existing else '➕'} {srv.flag_emoji or '🌍'} {srv.name}",
+        callback_data=f"choose_server:{srv.id}"
+    )] for srv in servers]
+    await message.answer(
+        "🌍 <b>Серверы Private Line VPN</b>\n"
+        "Выберите ноду. Добавление второй не удалит первый ключ.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
 
 
 @router.callback_query(F.data == "geo_switch")
