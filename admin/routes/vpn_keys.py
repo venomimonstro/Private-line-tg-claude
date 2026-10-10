@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services import vpn_key as vpn_key_service
-from app.services.vpn_key import get_access_url, repair_marzban_keys
+from app.services.vpn_key import get_access_url
 from app.vpn.marzban import MarzbanClient
 
 router = APIRouter(prefix="/vpn-keys")
@@ -68,27 +68,40 @@ async def disable_key(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    result = await session.execute(select(VpnKey).where(VpnKey.id == key_id))
-    key = result.scalar_one_or_none()
+    key = (await session.execute(
+        select(VpnKey).where(VpnKey.id == key_id).with_for_update()
+    )).scalar_one_or_none()
     if key is None:
         raise HTTPException(status_code=404)
 
-    server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
-    server = server_result.scalar_one_or_none()
-    if server:
-        await vpn_key_service.disable_vpn_key(key, server, session)
+    server = await session.get(VpnServer, key.server_id)
+    if server is None:
+        key.status = VpnKeyStatus.error
+        await session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="VPN-нода отсутствует; удалённое отключение не подтверждено.",
+        )
 
-    log = AdminLog(
+    disabled = await vpn_key_service.disable_vpn_key(key, server, session)
+    if disabled:
+        server.current_users = max(0, server.current_users - 1)
+
+    session.add(AdminLog(
         admin_user_id=admin.id,
         action="disable_vpn_key",
         target_entity="vpn_key",
         target_entity_id=key_id,
+        details={"confirmed": bool(disabled)},
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
+    if not disabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Отключение на VPN-ноде не подтверждено; retry поставлен в очередь.",
+        )
     return RedirectResponse("/admin/vpn-keys", status_code=303)
-
 
 @router.post("/{key_id}/reissue")
 async def reissue_key(
@@ -133,33 +146,74 @@ async def reissue_key(
     return RedirectResponse("/admin/vpn-keys", status_code=303)
 
 
+async def _reconcile_all_marzban(
+    session: AsyncSession,
+    *,
+    apply: bool,
+) -> dict[str, int]:
+    """One explicit preserve-first repair path for all dedicated Marzban nodes."""
+    from app.services.vpn_key import _server_protocol
+    from app.services.vpn_reconcile import reconcile_marzban_server
+
+    servers = (await session.execute(
+        select(VpnServer).where(
+            VpnServer.provider != "private-line-primary",
+        ).order_by(VpnServer.id)
+    )).scalars().all()
+    servers = [s for s in servers if _server_protocol(s) == "marzban"]
+
+    summary = {
+        "servers": len(servers),
+        "checked": 0,
+        "users_fixed": 0,
+        "urls_fixed": 0,
+        "hosts_fixed": 0,
+        "errors": 0,
+    }
+    for server in servers:
+        try:
+            result = await reconcile_marzban_server(session, server.id, apply=apply)
+            summary["checked"] += result.checked_keys
+            summary["users_fixed"] += result.repaired_users
+            summary["urls_fixed"] += result.repaired_urls
+            summary["hosts_fixed"] += result.repaired_hosts
+            summary["errors"] += result.errors
+        except Exception:
+            summary["errors"] += 1
+    if apply:
+        await session.commit()
+    else:
+        await session.rollback()
+    return summary
+
+
 @router.post("/repair-marzban")
 async def repair_marzban_endpoint(
     request: Request,
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    """Fix all active Marzban keys: update inbounds and refresh stored access URLs."""
-    import logging as _logging
+    """Explicit preserve-first reconciliation. Never rotates customer UUIDs."""
     from urllib.parse import quote as _quote
-    _log = _logging.getLogger(__name__)
-    try:
-        fixed, errors, changed = await repair_marzban_keys(session)
-        flash = f"Исправлено ключей: {fixed} | Ошибок: {errors} | Изменилось URL: {len(changed)}"
-    except Exception as exc:
-        _log.error("Admin repair_marzban failed: %s", exc, exc_info=True)
-        flash = f"Ошибка: {exc}"
 
-    log = AdminLog(
+    summary = await _reconcile_all_marzban(session, apply=True)
+    session.add(AdminLog(
         admin_user_id=admin.id,
-        action="repair_marzban_keys",
+        action="reconcile_marzban_keys_safe",
         target_entity="vpn_key",
+        details=summary,
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
-    return RedirectResponse(f"/admin/vpn-keys?flash={_quote(flash)}", status_code=303)
-
+    flash = (
+        f"Проверено: {summary['checked']} | Users: {summary['users_fixed']} | "
+        f"URLs: {summary['urls_fixed']} | Hosts: {summary['hosts_fixed']} | "
+        f"Ошибок: {summary['errors']}"
+    )
+    return RedirectResponse(
+        f"/admin/vpn-keys?flash={_quote(flash)}",
+        status_code=303,
+    )
 
 @router.post("/repair-and-notify")
 async def repair_and_notify_endpoint(
@@ -167,83 +221,47 @@ async def repair_and_notify_endpoint(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> JSONResponse:
-    """Run full Marzban repair then push the updated key to every affected user via bot."""
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
+    """Reconcile preserve-first, then explicitly resend canonical current keys."""
+    summary = await _reconcile_all_marzban(session, apply=True)
+    if summary["errors"]:
+        return JSONResponse(
+            {"ok": False, **summary, "message": "Repair has errors; users were not messaged."},
+            status_code=409,
+        )
 
-    try:
-        fixed, errors, changed = await repair_marzban_keys(session)
-    except Exception as exc:
-        _log.error("repair-and-notify: repair failed: %s", exc, exc_info=True)
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
-
-    log = AdminLog(
-        admin_user_id=admin.id,
-        action="repair_and_notify_keys",
-        target_entity="vpn_key",
-        details={"fixed": fixed, "errors": errors, "changed": len(changed)},
-        ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
-    await session.commit()
-
-    # Send updated keys to users whose URL actually changed
-    from app.bot_instance import get_bot
-    bot = get_bot()
+    from app.models.user import User
+    from app.services.user_notifications import send_key_to_user
+    keys = (await session.execute(
+        select(VpnKey).where(VpnKey.status == VpnKeyStatus.active)
+    )).scalars().all()
     notified = 0
     notify_errors = 0
-    if bot is None:
-        # Admin container — create a temporary bot instance
-        from aiogram import Bot
-        from app.config import settings
-        tmp_bot = Bot(token=settings.BOT_TOKEN)
-        use_bot = tmp_bot
-        close_tmp = True
-    else:
-        use_bot = bot
-        close_tmp = False
+    for key in keys:
+        user = await session.get(User, key.user_id)
+        if user is None or not user.telegram_id:
+            notify_errors += 1
+            continue
+        try:
+            await send_key_to_user(user.telegram_id, key)
+            notified += 1
+        except Exception:
+            notify_errors += 1
 
-    try:
-        for telegram_id, new_url in changed:
-            try:
-                await use_bot.send_message(
-                    chat_id=telegram_id,
-                    text=(
-                        "🔄 <b>Ваш VPN-ключ был обновлён</b>\n\n"
-                        "🔑 <b>Ваш актуальный ключ доступа:</b>\n\n"
-                        f"<code>{new_url}</code>\n\n"
-                        "Удалите старый ключ из приложения и добавьте этот:\n"
-                        "• <b>Android:</b> Hiddify, V2RayNG\n"
-                        "• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
-                        "• <b>Windows/macOS:</b> Hiddify\n"
-                        "• <b>Linux:</b> Hiddify, v2rayA"
-                    ),
-                    parse_mode="HTML",
-                )
-                notified += 1
-            except Exception as exc:
-                _log.warning("repair-and-notify: failed to message tg=%d: %s", telegram_id, exc)
-                notify_errors += 1
-    finally:
-        if close_tmp:
-            try:
-                await tmp_bot.session.close()
-            except Exception:
-                pass
-
+    session.add(AdminLog(
+        admin_user_id=admin.id,
+        action="reconcile_and_resend_keys_safe",
+        target_entity="vpn_key",
+        details={**summary, "notified": notified, "notify_errors": notify_errors},
+        ip_address=request.client.host if request.client else None,
+    ))
+    await session.commit()
     return JSONResponse({
-        "ok": True,
-        "fixed": fixed,
-        "errors": errors,
-        "changed": len(changed),
+        "ok": notify_errors == 0,
+        **summary,
         "notified": notified,
         "notify_errors": notify_errors,
-        "message": (
-            f"Repair done: {fixed} keys fixed, {errors} errors. "
-            f"URLs changed: {len(changed)}. "
-            f"Users notified: {notified} ({notify_errors} failed)."
-        ),
     })
+
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +436,7 @@ async def diagnose_keys(
                             "username": u.get("username"),
                             "status": u.get("status"),
                             "inbounds": u.get("inbounds", {}),
-                            "links": u.get("links", []),
+                            "links_count": len(u.get("links", [])),
                         }
                 else:
                     diag["test_user"] = {"error": f"HTTP {users_resp.status_code}: {users_resp.text[:200]}"}
@@ -455,8 +473,8 @@ async def diagnose_keys(
 
         key_diags.append({
             "key": key,
-            "url_full": url,
-            "url_preview": url[:80],
+            "url_full": "[REDACTED]",
+            "url_preview": "[REDACTED]",
             "is_vless": url.startswith("vless://"),
             "has_reality": "security=reality" in url,
             "has_pbk": "pbk=" in url,
@@ -601,7 +619,7 @@ async def diagnose_keys(
       <th>shortIds count</th>
       <th>SNI</th>
       <th>/api/inbounds response</th>
-      <th>Test user (first active) — FULL LINK</th>
+      <th>Test user (first active) — secrets redacted</th>
     </tr>
   </thead>
   <tbody>{rows_server}</tbody>
@@ -614,7 +632,7 @@ async def diagnose_keys(
       <th>key.id</th>
       <th>marzban_username</th>
       <th>server_id</th>
-      <th style="background:#fff8dc">FULL URL IN DB</th>
+      <th style="background:#fff8dc">CLIENT URL</th>
       <th>vless://</th>
       <th>security=reality</th>
       <th>pbk=</th>
@@ -667,182 +685,22 @@ async def fix_keys_safe(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> JSONResponse:
-    """Refresh stored VLESS URLs from current Marzban state — no Marzban writes.
-
-    For each active Marzban VPN key:
-      1. GET /api/user/{username} to fetch current UUID from Marzban
-      2. GET /api/core/config to get current Reality params (pubkey, short_id, sni)
-      3. Build a fresh VLESS URL and update access_url_encrypted in DB
-
-    Does NOT call PUT/POST on Marzban — safe alternative to reissue_vpn_key().
-    """
-    import logging as _logging
-    import re as _re2
-    _log = _logging.getLogger(__name__)
-
-    from app.services.vpn_key import _server_protocol
-
-    # Load active Marzban servers
-    servers_result = await session.execute(
-        select(VpnServer).where(VpnServer.status == VpnServerStatus.active)
-    )
-    all_servers = list(servers_result.scalars().all())
-    marzban_servers = [s for s in all_servers if _server_protocol(s) == "marzban"]
-    marzban_server_ids = [s.id for s in marzban_servers]
-
-    if not marzban_server_ids:
-        return JSONResponse({"ok": False, "error": "No active Marzban servers found"})
-
-    # Load active keys on those servers
-    keys_result = await session.execute(
-        select(VpnKey).where(
-            VpnKey.server_id.in_(marzban_server_ids),
-            VpnKey.status == VpnKeyStatus.active,
-        )
-    )
-    keys: list[VpnKey] = list(keys_result.scalars().all())
-
-    if not keys:
-        return JSONResponse({"ok": True, "fixed": 0, "errors": 0, "message": "No active Marzban keys to fix"})
-
-    # Build one MarzbanClient per server, reuse across keys
-    server_map: dict[int, VpnServer] = {s.id: s for s in marzban_servers}
-    clients: dict[int, MarzbanClient] = {}
-    # Cache reality params and port per server
-    reality_cache: dict[int, tuple[str, str, str] | None] = {}
-    port_cache: dict[int, int] = {}
-
-    for sid, srv in server_map.items():
-        try:
-            clients[sid] = _make_marzban_client(srv)
-        except Exception as exc:
-            _log.error("fix-keys: cannot build client for server %d: %s", sid, exc)
-
-    fixed = 0
-    errors = 0
-    error_details: list[str] = []
-
-    try:
-        for key in keys:
-            client = clients.get(key.server_id)
-            if client is None:
-                errors += 1
-                error_details.append(f"key {key.id}: no client for server {key.server_id}")
-                continue
-
-            username = key.outline_key_id
-            try:
-                # ── 1. Fetch current user from Marzban (READ ONLY) ────────
-                headers = await client._headers()
-                user_resp = await client._client.get(
-                    f"{client._base}/api/user/{username}", headers=headers
-                )
-                if user_resp.status_code == 404:
-                    errors += 1
-                    error_details.append(f"key {key.id} ({username}): user not found in Marzban")
-                    continue
-                user_resp.raise_for_status()
-                user_data = user_resp.json()
-
-                # ── 2. Get UUID from user data ────────────────────────────
-                uuid = user_data.get("proxies", {}).get("vless", {}).get("id", "")
-                if not uuid:
-                    # Try from links
-                    for lnk in user_data.get("links", []):
-                        if lnk.startswith("vless://"):
-                            m = _re2.match(r"vless://([^@]+)@", lnk)
-                            if m:
-                                uuid = m.group(1)
-                                break
-                if not uuid:
-                    errors += 1
-                    error_details.append(f"key {key.id} ({username}): no UUID in Marzban response")
-                    continue
-
-                # ── 3. Get Reality params (cached per server) ─────────────
-                if key.server_id not in reality_cache:
-                    reality_cache[key.server_id] = await client.get_reality_params()
-
-                reality = reality_cache[key.server_id]
-                if not reality:
-                    errors += 1
-                    error_details.append(
-                        f"key {key.id} ({username}): no Reality params on server {key.server_id}"
-                    )
-                    continue
-                public_key, short_id, sni = reality
-
-                # ── 4. Get VLESS port (cached per server) ─────────────────
-                if key.server_id not in port_cache:
-                    port_cache[key.server_id] = await client._get_vless_port()
-                port = port_cache[key.server_id]
-
-                # ── 5. Derive host from server API URL ────────────────────
-                m = _re2.match(r'https?://([^:/]+)', client._base)
-                host = m.group(1) if m else client._base
-
-                # ── 6. Build fresh VLESS URL (use urlencode for correct escaping) ──
-                import re as _re3
-                _MD = _re3.compile(r'\[([^\]]+)\]\([^)]*\)')
-                clean_sni = _MD.sub(r"\1", sni).strip()
-                _params = {
-                    "type": "tcp", "security": "reality",
-                    "pbk": public_key, "sni": clean_sni,
-                    "fp": "chrome", "flow": "xtls-rprx-vision",
-                }
-                if short_id:
-                    _params["sid"] = short_id
-                from urllib.parse import urlencode as _ue
-                new_url = f"vless://{uuid}@{host}:{port}?{_ue(_params)}#{username}"
-
-                # ── 7. Update DB (only if changed) ────────────────────────
-                try:
-                    old_url = decrypt(key.access_url_encrypted)
-                except Exception:
-                    old_url = ""
-
-                key.access_url_encrypted = encrypt(new_url)
-                _log.info(
-                    "fix-keys: updated URL for key %d (%s): pbk=%.8s... (was: %.40s)",
-                    key.id, username, public_key, old_url,
-                )
-                fixed += 1
-
-            except Exception as exc:
-                _log.error("fix-keys: error for key %d (%s): %s", key.id, username, exc)
-                errors += 1
-                error_details.append(f"key {key.id} ({username}): {str(exc)[:120]}")
-
-    finally:
-        for client in clients.values():
-            try:
-                await client.aclose()
-            except Exception:
-                pass
-
-    if fixed > 0:
-        log = AdminLog(
-            admin_user_id=admin.id,
-            action="fix_keys_safe",
-            target_entity="vpn_key",
-            details={"fixed": fixed, "errors": errors, "error_details": error_details[:20]},
-            ip_address=request.client.host if request.client else None,
-        )
-        session.add(log)
-        await session.commit()
-
+    """Preserve-first reconciliation; central issued UUID remains authoritative."""
+    summary = await _reconcile_all_marzban(session, apply=True)
+    session.add(AdminLog(
+        admin_user_id=admin.id,
+        action="diagnose_reconcile_keys_safe",
+        target_entity="vpn_key",
+        details=summary,
+        ip_address=request.client.host if request.client else None,
+    ))
+    await session.commit()
     return JSONResponse({
-        "ok": True,
-        "fixed": fixed,
-        "errors": errors,
-        "total": len(keys),
-        "error_details": error_details,
-        "message": (
-            f"Fixed {fixed} keys, {errors} errors "
-            f"(out of {len(keys)} active Marzban keys). "
-            "DB updated — no Marzban users were modified."
-        ),
+        "ok": summary["errors"] == 0,
+        **summary,
+        "message": "Preserve-first reconciliation completed.",
     })
+
 
 
 # ---------------------------------------------------------------------------
