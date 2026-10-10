@@ -31,6 +31,7 @@ async def _cmd_create(args: argparse.Namespace) -> None:
             version=args.version or (args.commit[:7] if args.commit else "unknown"),
             commit_hash=args.commit,
             previous_commit=args.prev,
+            backup_id=int(args.backup_id) if args.backup_id else None,
             status="deploying",
             changelog=args.changelog or "",
             triggered_by=args.by or "release.sh",
@@ -139,6 +140,7 @@ def main() -> None:
     p_create.add_argument("--version", default="")
     p_create.add_argument("--changelog", default="")
     p_create.add_argument("--by", default="release.sh")
+    p_create.add_argument("--backup-id", default="")
 
     p_complete = sub.add_parser("complete")
     p_complete.add_argument("id")
