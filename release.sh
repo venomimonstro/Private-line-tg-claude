@@ -61,6 +61,7 @@ ok()   { echo -e "[$(date '+%H:%M:%S')] ${GREEN}✅ $*${NC}"; }
 err()  { echo -e "[$(date '+%H:%M:%S')] ${RED}❌ $*${NC}" >&2; }
 warn() { echo -e "[$(date '+%H:%M:%S')] ${YELLOW}⚠️  $*${NC}"; }
 bold() { echo -e "${BOLD}$*${NC}"; }
+fail() { err "$1"; exit 2; }
 
 py_cli() { python3 -m releases.cli "$@"; }
 
