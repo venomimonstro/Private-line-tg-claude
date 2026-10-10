@@ -28,7 +28,7 @@ from app.models.subscription import Subscription
 from app.models.tariff import Tariff
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import _make_client, _server_protocol, get_access_url
+from app.services.vpn_key import _make_client, _server_protocol, _marzban_username, get_access_url
 from app.services.vpn_link import canonical_client_link
 from app.vpn.marzban import MarzbanConfigError
 
@@ -209,36 +209,42 @@ async def reconcile_marzban_server(
                 current = None
                 if user_response.status_code == 200:
                     current = user_response.json()
+                    expected_username = _marzban_username(key.user_id, key.subscription_id)
+                    if key.outline_key_id != expected_username:
+                        raise MarzbanConfigError(
+                            "Stored Marzban username does not match subscription ownership"
+                        )
+
                     remote_uuid = current.get("proxies", {}).get("vless", {}).get("id")
                     try:
                         remote_uuid = str(UUID(remote_uuid or ""))
                     except ValueError as exc:
                         raise MarzbanConfigError("Marzban user has invalid UUID") from exc
-                    if remote_uuid != original_uuid:
-                        raise MarzbanConfigError(
-                            "Marzban UUID differs from issued UUID; automatic overwrite refused"
-                        )
+
                     remote_status = current.get("status")
-                    if remote_status == "limited":
-                        # A quota-exhausted user is not a node failure.
-                        remote_limit = current.get("data_limit") or 0
-                        remote_used = current.get("used_traffic") or 0
-                        if not remote_limit or remote_used < remote_limit:
-                            raise MarzbanConfigError(
-                                "Marzban user is limited without an exhausted data quota"
-                            )
-                    elif remote_status != "active":
-                        raise MarzbanConfigError(
-                            f"Marzban user status is {remote_status!r}; automatic reactivation refused"
+                    remote_limit = current.get("data_limit") or 0
+                    remote_used = current.get("used_traffic") or 0
+                    if remote_status == "limited" and remote_limit and remote_used >= remote_limit:
+                        # Quota exhaustion is intentional and must never be undone.
+                        needs_remote_repair = False
+                    else:
+                        assigned = current.get("inbounds", {}).get("vless", [])
+                        flow = current.get("proxies", {}).get("vless", {}).get("flow")
+                        needs_remote_repair = (
+                            remote_uuid != original_uuid
+                            or remote_status != "active"
+                            or tag not in assigned
+                            or flow != "xtls-rprx-vision"
                         )
-                    assigned = current.get("inbounds", {}).get("vless", [])
-                    flow = current.get("proxies", {}).get("vless", {}).get("flow")
-                    if remote_status == "active" and (
-                        tag not in assigned or flow != "xtls-rprx-vision"
-                    ):
+
+                    if needs_remote_repair:
                         if not apply:
                             result.errors += 1
                         else:
+                            # The control-plane DB stores the credential already
+                            # issued to the customer. Restore Marzban to that UUID;
+                            # never force the customer to rotate because panel
+                            # state drifted.
                             update = {
                                 "proxies": {
                                     **current.get("proxies", {}),
@@ -262,6 +268,22 @@ async def reconcile_marzban_server(
                             if repaired.status_code not in (200, 201):
                                 raise MarzbanConfigError(
                                     f"Marzban user repair HTTP {repaired.status_code}"
+                                )
+                            verify_user = await client._client.get(
+                                f"{client._base}/api/user/{key.outline_key_id}",
+                                headers=headers,
+                            )
+                            if verify_user.status_code != 200:
+                                raise MarzbanConfigError("Cannot verify repaired Marzban user")
+                            verified = verify_user.json()
+                            if (
+                                verified.get("proxies", {}).get("vless", {}).get("id") != original_uuid
+                                or verified.get("proxies", {}).get("vless", {}).get("flow") != "xtls-rprx-vision"
+                                or tag not in verified.get("inbounds", {}).get("vless", [])
+                                or verified.get("status") != "active"
+                            ):
+                                raise MarzbanConfigError(
+                                    "Marzban user repair did not persist exact issued credential"
                                 )
                             result.repaired_users += 1
                             remote_changed = True
