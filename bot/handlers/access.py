@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session_maker
 from app.encryption import decrypt
-from app.enums import SubscriptionStatus, VpnKeyStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
 from app.models.user import User
@@ -60,7 +60,20 @@ async def _get_active_subscription(
         if sub is None:
             return None, [], None
 
-        active_keys = [k for k in sub.vpn_keys if k.status == VpnKeyStatus.active]
+        keys_result = await session.execute(
+            select(VpnKey)
+            .join(VpnServer, VpnServer.id == VpnKey.server_id)
+            .where(
+                VpnKey.subscription_id == sub.id,
+                VpnKey.user_id == user_id,
+                VpnKey.status == VpnKeyStatus.active,
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+                VpnServer.provider == "marzban",
+            )
+            .order_by(VpnServer.id.asc(), VpnKey.id.asc())
+        )
+        active_keys = list(keys_result.scalars().all())
 
         tariff = await session.get(Tariff, sub.tariff_id)
         return sub, active_keys, tariff
