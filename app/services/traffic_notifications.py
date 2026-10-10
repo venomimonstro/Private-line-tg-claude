@@ -83,4 +83,4 @@ async def notify_traffic_threshold(telegram_id: int, percent: int, gb_remaining:
             parse_mode="HTML",
         )
     except Exception as exc:
-        logger.error("notify_traffic_threshold failed for user %d: %s", user_id, exc)
+        logger.error("notify_traffic_threshold failed for Telegram %d: %s", telegram_id, exc)
