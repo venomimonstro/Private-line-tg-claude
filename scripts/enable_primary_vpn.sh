@@ -17,6 +17,19 @@ MARZBAN_IMAGE="gozargah/marzban:latest"
 XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.9"
 XRAY_BIN="$DATA_DIR/xray-core/xray"
 ENV_FILE="$NODE_DIR/.env"
+PRIMARY_PORT="${PRIMARY_VPN_PORT:-443}"
+if [[ ! -f "$ENV_FILE" && -z "${PRIMARY_VPN_PORT:-}" ]] && \
+   ss -ltn '( sport = :443 )' | grep -q ':443'; then
+    PRIMARY_PORT=8443
+    echo "NOTE: main port 443 is in use; choosing temporary VPN port 8443"
+fi
+if [[ -f "$ENV_FILE" && -z "${PRIMARY_VPN_PORT:-}" ]]; then
+    PRIMARY_PORT="$(sed -n 's/^PRIMARY_VPN_PORT=//p' "$ENV_FILE" | head -n 1)"
+    PRIMARY_PORT="${PRIMARY_PORT:-443}"
+fi
+[[ "$PRIMARY_PORT" == "443" || "$PRIMARY_PORT" == "8443" ]] || {
+    echo "STOP: supported primary VPN ports are 443 or 8443"; exit 2;
+}
 
 [[ -f "$MAIN_DIR/docker-compose.yml" ]] || { echo "ERROR: missing control plane"; exit 1; }
 [[ ! -L "$NODE_DIR" ]] || { echo "ERROR: node directory may not be symlink"; exit 1; }
@@ -46,8 +59,8 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
     # Fresh deployment: check port and resources BEFORE pulling/installing.
-    if ss -ltn '( sport = :443 )' | grep -q ':443'; then
-        echo "STOP: main VPS port 443 is already occupied; no modifications"
+    if ss -ltn "( sport = :$PRIMARY_PORT )" | grep -q ":$PRIMARY_PORT"; then
+        echo "STOP: main VPS VPN port $PRIMARY_PORT is already occupied; no modifications"
         exit 2
     fi
     # Reality requires a reachable real TLS1.3 destination on this host.
@@ -90,13 +103,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
 
     # Generate secrets in private root-owned files and never show credentials.
     echo "[2/5] Creating independent Reality credentials and configuration..."
-    python3 - "$NODE_DIR" "$PRIMARY_IP" "$NETWORK" "$XRAY_BIN" "$MARZBAN_PIN" <<'PY'
+    python3 - "$NODE_DIR" "$PRIMARY_IP" "$NETWORK" "$XRAY_BIN" "$MARZBAN_PIN" "$PRIMARY_PORT" <<'PY'
 import json, os, pathlib, re, secrets, subprocess, sys
 node=pathlib.Path(sys.argv[1])
 ip=sys.argv[2]
 network=sys.argv[3]
 binary=sys.argv[4]
 marzban_pin=sys.argv[5]
+public_port=int(sys.argv[6])
 result=subprocess.run([binary,"x25519"],capture_output=True,text=True,check=True)
 keys={}
 for line in result.stdout.splitlines():
@@ -145,12 +159,13 @@ env.write_text(
     "XRAY_JSON=/var/lib/marzban/xray_config.json\n"
     "XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/xray\n"
     f"PRIMARY_VPN_NETWORK={network}\n"
+    f"PRIMARY_VPN_PORT={public_port}\n"
     f"PRIMARY_MARZBAN_IMAGE={marzban_pin}\n"
 )
 os.chmod(env,0o600)
 credentials=node/"credentials.json"
 credentials.write_text(json.dumps(
-    {"username":username,"password":password,"public_ip":ip},
+    {"username":username,"password":password,"public_ip":ip,"public_port":public_port},
 ))
 os.chmod(credentials,0o600)
 PY
@@ -177,7 +192,7 @@ services:
     volumes:
       - ./data:/var/lib/marzban
     ports:
-      - "443:443/tcp"
+      - "${PRIMARY_VPN_PORT}:443/tcp"
     networks:
       - main_private
 networks:
@@ -196,7 +211,7 @@ for i in $(seq 1 36); do
     if docker compose -f "$MAIN_DIR/docker-compose.yml" exec -T admin python -c \
         'import httpx; r=httpx.get("http://private-line-primary-node:8000/api/core",timeout=3); assert r.status_code in (200,401,403)' \
         >/dev/null 2>&1 \
-        && ss -ltn '( sport = :443 )' | grep -q ':443'; then
+        && ss -ltn "( sport = :$PRIMARY_PORT )" | grep -q ":$PRIMARY_PORT"; then
         STARTED=1
         break
     fi
@@ -215,6 +230,6 @@ if ! docker compose -f "$MAIN_DIR/docker-compose.yml" exec -T admin \
     echo "STOP: node NOT registered; check primary Marzban logs; admin unchanged"
     exit 2
 fi
-echo "DONE: primary main VPS is now a selectable VPN server."
+echo "DONE: primary main VPS is now a selectable VPN server on port $PRIMARY_PORT."
 echo "Telegram: Мой доступ -> Сменить страну -> Основной сервер (временно)"
 echo "Do NOT re-run the remote VPN node installer: it resets the firewall."
