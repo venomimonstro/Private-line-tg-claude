@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import PaymentStatus, ReferralStatus, SubscriptionStatus
+from app.enums import PaymentStatus, ReferralStatus, SubscriptionStatus, UserStatus
 from app.models.payment import Payment
 from app.models.referral import Referral
 from app.models.referral_transaction import ReferralTransaction
