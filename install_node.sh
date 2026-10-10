@@ -17,6 +17,7 @@ die()     { echo -e "${RED}[ERR]${RESET}  $*" >&2; exit 1; }
 section "Проверка параметров"
 
 [[ $EUID -eq 0 ]] || die "Запустите от root."
+[[ ! -f /opt/private-line/docker-compose.yml ]] || die "Это основной сервер. Для временной ноды используйте scripts/enable_primary_vpn.sh без сброса firewall."
 [[ -n "${ADMIN_URL:-}" ]] || die "ADMIN_URL не задан. Скопируйте команду из Admin Panel → VPN Серверы."
 [[ -n "${NODE_TOKEN:-}" ]] || die "NODE_TOKEN не задан. Скопируйте команду из Admin Panel → VPN Серверы."
 
@@ -320,9 +321,7 @@ fi
 # ─── Firewall ─────────────────────────────────────────────────────────────────
 section "Настройка файерволла"
 
-ufw --force reset >/dev/null 2>&1
-ufw default deny incoming >/dev/null 2>&1
-ufw default allow outgoing >/dev/null 2>&1
+# Preserve all existing firewall rules and defaults; never reset UFW over SSH.
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
 ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1
 if [[ -n "${MAIN_SERVER_IP:-}" ]]; then
