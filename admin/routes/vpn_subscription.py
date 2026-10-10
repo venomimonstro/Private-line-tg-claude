@@ -13,17 +13,19 @@ Token format:  base64url(telegram_id) + "." + hmac_sha256(SECRET_KEY, telegram_i
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.enums import VpnKeyStatus
+from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.user import User
+from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
-from app.services.vpn_key import get_access_url
+from app.services.vpn_key import get_client_access_url
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +55,13 @@ async def vpn_subscription(
         return Response(status_code=404)
 
     keys_result = await session.execute(
-        select(VpnKey).where(
+        select(VpnKey)
+        .join(Subscription, Subscription.id == VpnKey.subscription_id)
+        .where(
             VpnKey.user_id == user.id,
             VpnKey.status == VpnKeyStatus.active,
+            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+            Subscription.expires_at > datetime.utcnow(),
         )
     )
     keys = keys_result.scalars().all()
@@ -63,10 +69,11 @@ async def vpn_subscription(
     links: list[str] = []
     for key in keys:
         try:
-            url = get_access_url(key)
+            url = get_client_access_url(key)
             if url:
-                label = key.label or "Private Line VPN"
-                links.append(f"{url}#{label}")
+                # The canonical share URI already has exactly one #fragment.
+                # Never append another one: a duplicate breaks some importers.
+                links.append(url)
         except Exception as exc:
             logger.warning("sub: cannot decrypt key %d: %s", key.id, exc)
 
