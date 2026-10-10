@@ -90,6 +90,5 @@ async def add_subscription_server_key(
             "VPN-нода не прошла проверку готовности. Текущие ключи сохранены."
         ) from exc
 
-    server.current_users += 1
-    await session.flush()
+    # create_vpn_key owns the capacity counter transactionally.
     return key, True
