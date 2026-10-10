@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     """Send all access keys to user after activation, then send onboarding."""
     from app.bot_instance import get_bot
-    from app.services.vpn_key import get_access_url
+    from app.services.vpn_key import get_client_access_url
 
     bot = get_bot()
     temporary_bot = False
@@ -40,7 +40,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
         from html import escape
 
         if len(vpn_keys) == 1:
-            url = get_access_url(vpn_keys[0])  # type: ignore[arg-type]
+            url = get_client_access_url(vpn_keys[0])  # type: ignore[arg-type]
             first_url = url
             text = (
                 "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
@@ -50,7 +50,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
         else:
             lines = ["✅ <b>Ваши VPN-ключи готовы!</b>\n"]
             for key in vpn_keys:
-                url = get_access_url(key)  # type: ignore[arg-type]
+                url = get_client_access_url(key)  # type: ignore[arg-type]
                 if not first_url:
                     first_url = url
                 label = getattr(key, "label", None) or "VPN"
