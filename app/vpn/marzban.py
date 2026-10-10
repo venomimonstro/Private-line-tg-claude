@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import ipaddress
 import logging
@@ -50,6 +51,46 @@ class MarzbanClient:
         if self._token is None:
             await self._auth()
         return {"Authorization": f"Bearer {self._token}"}
+
+    async def restart_core_with_db_users(self, *, reason: str = "") -> None:
+        """Force Marzban to rebuild the live Xray runtime from its database.
+
+        Marzban's POST/PUT user endpoints update the DB first and enqueue Xray
+        changes as background work. A successful REST response therefore does
+        not prove the live Xray process accepted the user. POST /api/core/restart
+        uses include_db_users() upstream, making the DB and runtime converge.
+        """
+        headers = await self._headers()
+        response = await self._client.post(
+            f"{self._base}/api/core/restart",
+            headers=headers,
+            timeout=60.0,
+        )
+        if response.status_code not in (200, 204):
+            raise MarzbanConfigError(
+                f"Marzban Xray runtime resync failed HTTP {response.status_code}"
+            )
+
+        for _ in range(30):
+            try:
+                status = await self._client.get(
+                    f"{self._base}/api/core",
+                    headers=headers,
+                    timeout=4.0,
+                )
+                if status.status_code == 200 and status.json().get("started") is True:
+                    logger.info(
+                        "Marzban Xray runtime resynced%s",
+                        f" ({reason})" if reason else "",
+                    )
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+        raise MarzbanConfigError(
+            "Marzban Xray core did not return to started state after runtime resync"
+        )
 
     # ─── Core config (single source of truth) ─────────────────────────────────
 
@@ -506,9 +547,7 @@ class MarzbanClient:
         if final.hostname != expected_host or final.port != expected_port:
             raise MarzbanConfigError("Generated VLESS endpoint differs from published Marzban host")
 
-        logger.info("Key ready for %s (credentials omitted)", safe_name)
-        return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)
-
+        # Marzban adds/updates Xray users in a background task and may swallow\n        # runtime API connection errors. Do not return a paid credential until\n        # the live core has been rebuilt from the authoritative Marzban DB.\n        await self.restart_core_with_db_users(reason=f"provision {safe_name}")\n\n        logger.info("Key ready for %s (credentials omitted)", safe_name)\n        return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)\n
     # ─── Repair ────────────────────────────────────────────────────────────────
 
     async def repair_all_users_inbounds(self) -> tuple[int, int]:
@@ -592,18 +631,19 @@ class MarzbanClient:
         verify.raise_for_status()
         if verify.json().get("status") != "disabled":
             raise MarzbanConfigError("Marzban user disable did not persist")
+        # Revocation must reach the live Xray process, not only the Marzban DB.
+        await self.restart_core_with_db_users(reason=f"disable {username}")
 
     async def delete_key(self, username: str) -> None:
         headers = await self._headers()
         resp = await self._client.delete(
             f"{self._base}/api/user/{username}", headers=headers
         )
-        if resp.status_code == 404:
-            return
-        # Some Marzban builds delete the user but return HTTP 500 while
+        deleted = resp.status_code == 404
+        # Marzban 0.8.4 can delete successfully and then return HTTP 500 while
         # serializing an env-created sudo admin (Admin.model_validate(None)).
-        # Only treat it as success after a separate GET confirms deletion.
-        if resp.status_code >= 500:
+        # Accept that response only after an independent GET confirms 404.
+        if not deleted and resp.status_code >= 500:
             verify = await self._client.get(
                 f"{self._base}/api/user/{username}", headers=headers
             )
@@ -612,8 +652,16 @@ class MarzbanClient:
                     "Marzban DELETE /api/user/%s returned HTTP %s, but GET confirmed deletion",
                     username, resp.status_code,
                 )
-                return
-        resp.raise_for_status()
+                deleted = True
+        if not deleted:
+            resp.raise_for_status()
+            deleted = True
+
+        if deleted:
+            # The DELETE endpoint also schedules removal from Xray in background.
+            # A core resync guarantees a deleted test/revoked user is gone from
+            # the live runtime even if Marzban's background Xray API call failed.
+            await self.restart_core_with_db_users(reason=f"delete {username}")
 
     async def get_users(self) -> dict[str, dict]:
         """Read every page; never mistake a truncated list for deleted users."""
