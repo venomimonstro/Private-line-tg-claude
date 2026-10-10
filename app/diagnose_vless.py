@@ -210,7 +210,8 @@ async def main(sub_id: int, repair: bool) -> int:
             if problems:
                 print("ACTION: rerun with --repair-url to correct only the saved link")
                 return 1
-            print("PASS: key and node API agree. If the client still fails, check node Xray logs and client error.")
+            print("CONFIG PASS ONLY: database, Marzban API, and TCP port agree; this does NOT prove a working VPN handshake.")
+            print(f"RUN: bash scripts/probe_vless_e2e.sh {sub_id} (on main server)")
             return 0
         except Exception as exc:
             # Print exception class, not response objects, tokens, or secrets.
