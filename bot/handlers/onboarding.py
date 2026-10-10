@@ -14,7 +14,7 @@ router = Router(name="onboarding")
 CONNECTION_INSTRUCTIONS: dict[str, str] = {
     "android": (
         "📱 <b>Подключение на Android</b>\n\n"
-        "Ваш ключ начинается с <code>vless://</code> или <code>ss://</code> — оба формата поддерживаются всеми приложениями ниже.\n\n"
+        "Для сервера Spain-1 используйте <code>vless://</code> (Reality/Vision). Приложение Outline этот формат не поддерживает.\n\n"
         "<b>Рекомендуемые приложения:</b>\n\n"
         "🔹 <b>Hiddify</b> (проще всего)\n"
         "   • Google Play → «Hiddify»\n"
@@ -32,7 +32,7 @@ CONNECTION_INSTRUCTIONS: dict[str, str] = {
     ),
     "iphone": (
         "🍎 <b>Подключение на iPhone / iPad</b>\n\n"
-        "Ваш ключ начинается с <code>vless://</code> или <code>ss://</code> — оба формата поддерживаются.\n\n"
+        "Для сервера Spain-1 используйте <code>vless://</code> (Reality/Vision). В Outline он не работает.\n\n"
         "<b>Рекомендуемые приложения:</b>\n\n"
         "🔹 <b>Streisand</b> (бесплатно, рекомендуем)\n"
         "   • App Store → «Streisand»\n"
@@ -53,7 +53,7 @@ CONNECTION_INSTRUCTIONS: dict[str, str] = {
     ),
     "windows": (
         "🖥 <b>Подключение на Windows</b>\n\n"
-        "Ваш ключ начинается с <code>vless://</code> или <code>ss://</code> — оба формата поддерживаются.\n\n"
+        "Для сервера Spain-1 используйте <code>vless://</code> (Reality/Vision). В Outline он не работает.\n\n"
         "<b>Рекомендуемые приложения:</b>\n\n"
         "🔹 <b>Hiddify</b> (проще всего, рекомендуем)\n"
         "   • Скачайте с hiddify.com → раздел «Windows»\n"
@@ -74,7 +74,7 @@ CONNECTION_INSTRUCTIONS: dict[str, str] = {
     ),
     "macos": (
         "🍏 <b>Подключение на macOS</b>\n\n"
-        "Ваш ключ начинается с <code>vless://</code> или <code>ss://</code> — оба формата поддерживаются.\n\n"
+        "Для сервера Spain-1 используйте <code>vless://</code> (Reality/Vision). В Outline он не работает.\n\n"
         "<b>Рекомендуемые приложения:</b>\n\n"
         "🔹 <b>Hiddify</b> (проще всего, рекомендуем)\n"
         "   • Скачайте с hiddify.com → раздел «macOS»\n"
@@ -95,7 +95,7 @@ CONNECTION_INSTRUCTIONS: dict[str, str] = {
     ),
     "linux": (
         "🐧 <b>Подключение на Linux</b>\n\n"
-        "Ваш ключ начинается с <code>vless://</code> или <code>ss://</code>.\n\n"
+        "Для сервера Spain-1 используйте <code>vless://</code> (Reality/Vision).\n\n"
         "<b>Рекомендуемые приложения:</b>\n\n"
         "🔹 <b>Hiddify</b> (GUI, проще всего)\n"
         "   • Скачайте AppImage с hiddify.com → «Linux»\n"
