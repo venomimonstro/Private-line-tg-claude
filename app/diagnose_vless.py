@@ -67,7 +67,10 @@ async def main(sub_id: int, repair: bool) -> int:
             if parsed.scheme != "vless" or not parsed.username:
                 raise ValueError("Stored key has invalid VLESS URI")
             client_host = parsed.hostname
-            client_port = parsed.port
+            try:
+                client_port = parsed.port
+            except ValueError:
+                client_port = None  # malformed unbracketed IPv6 link; repairable after verifying UUID
             uuid = parsed.username
         except (ValueError, TypeError) as exc:
             print(f"FAIL: invalid server/client URL: {exc}")
