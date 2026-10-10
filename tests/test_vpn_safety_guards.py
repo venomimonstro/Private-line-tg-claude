@@ -73,6 +73,52 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("stale_key.status", retry)
         self.assertIn("reconcile_marzban_server", retry)
 
+
+    def test_manual_node_add_does_not_double_count_capacity(self):
+        text = (ROOT / "app" / "services" / "server_access.py").read_text(encoding="utf-8")
+        self.assertNotIn("server.current_users += 1", text)
+        self.assertIn("create_vpn_key(", text)
+
+    def test_existing_paid_access_does_not_depend_on_is_selectable(self):
+        text = (ROOT / "bot" / "handlers" / "access.py").read_text(encoding="utf-8")
+        start = text.index("async def _get_active_subscription")
+        end = text.index("@router.message", start)
+        block = text[start:end]
+        self.assertNotIn("VpnServer.is_selectable.is_(True)", block)
+        self.assertIn("VpnServer.status != VpnServerStatus.disabled", block)
+
+    def test_public_subscription_does_not_hide_existing_key_when_admission_paused(self):
+        text = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
+        self.assertNotIn("VpnServer.is_selectable.is_(True)", text)
+        self.assertIn("VpnServer.status != VpnServerStatus.disabled", text)
+
+    def test_node_smoke_publish_mode_is_initialized(self):
+        text = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn('MODE="${2:-}"', text)
+        self.assertIn('[[ -z "$MODE" || "$MODE" == "--publish" ]]', text)
+
+    def test_subscription_probe_joins_key_before_subscription(self):
+        text = (ROOT / "app" / "subscription_probe_targets.py").read_text(encoding="utf-8")
+        first = text.index(".join(VpnKey")
+        second = text.index(".join(Subscription")
+        self.assertLess(first, second)
+
+    def test_renewal_verifies_vpn_before_extending_expiry(self):
+        text = (ROOT / "app" / "payments" / "services.py").read_text(encoding="utf-8")
+        start = text.index("if subscription.status in (SubscriptionStatus.active")
+        block = text[start:start + 2200]
+        ensure_pos = block.index("ensure_subscription_vpn_key")
+        extend_pos = block.index("extend_subscription")
+        self.assertLess(ensure_pos, extend_pos)
+
+    def test_legacy_scheduler_repair_hook_is_non_mutating(self):
+        text = (ROOT / "scheduler" / "tasks.py").read_text(encoding="utf-8")
+        start = text.index("async def _job_repair_marzban_inbounds")
+        end = text.index("async def _job_vpn_integrity_audit", start)
+        block = text[start:end]
+        self.assertNotIn("repair_marzban_keys", block)
+        self.assertIn("is disabled", block)
+
     def test_public_subscription_brand(self):
         route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
         self.assertIn('"profile-title": "Private Line VPN"', route)
