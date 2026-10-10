@@ -135,8 +135,70 @@ async def create_vpn_key(
         async def _create():
             if protocol == "marzban":
                 assert isinstance(client, MarzbanClient)
+
+                # Fail closed BEFORE creating a paid user's remote credential.
+                # A healthy API is not sufficient: Xray must be running and
+                # Marzban must publish exactly one public host matching the
+                # node's API IP and Reality inbound port.
+                if not await client.check_connection():
+                    raise MarzbanConfigError("Marzban authentication unavailable")
+                headers = await client._headers()
+                core = await client._client.get(
+                    f"{client._base}/api/core", headers=headers
+                )
+                if core.status_code != 200 or core.json().get("started") is not True:
+                    raise MarzbanConfigError("Xray core is not running")
+                config = await client._get_core_config()
+                reality = await client.get_reality_params()
+                if not isinstance(config, dict) or reality is None:
+                    raise MarzbanConfigError("Reality configuration unavailable")
+                inbounds = [
+                    item for item in config.get("inbounds", [])
+                    if item.get("protocol") == "vless"
+                    and item.get("streamSettings", {}).get("security") == "reality"
+                ]
+                if len(inbounds) != 1:
+                    raise MarzbanConfigError("Expected exactly one VLESS Reality inbound")
+                inbound = inbounds[0]
+                tag = inbound.get("tag")
+                port = inbound.get("port")
+                if not tag or not isinstance(port, int) or not (1 <= port <= 65535):
+                    raise MarzbanConfigError("Invalid VLESS Reality inbound")
+                api_host = urlparse(server.api_url).hostname or ""
+                hosts_resp = await client._client.get(
+                    f"{client._base}/api/hosts", headers=headers
+                )
+                if hosts_resp.status_code != 200 or not isinstance(hosts_resp.json(), dict):
+                    raise MarzbanConfigError("Marzban public hosts API unavailable")
+                entries = hosts_resp.json().get(tag, [])
+                valid_hosts = [
+                    h for h in entries
+                    if isinstance(h, dict)
+                    and h.get("address") == api_host
+                    and h.get("port") in (None, "", 0, "0", port, str(port))
+                    and h.get("is_disabled") not in (True, "true", "True")
+                    and h.get("security") in (None, "", "inbound_default", "reality")
+                ]
+                if len(valid_hosts) != 1:
+                    raise MarzbanConfigError(
+                        "Marzban does not publish exactly one valid public VLESS host"
+                    )
+
                 name = _marzban_username(user_id, subscription_id)
-                return await client.create_key(name=name, traffic_limit_gb=traffic_limit_gb, ip_limit=ip_limit)
+                created = await client.create_key(
+                    name=name,
+                    traffic_limit_gb=traffic_limit_gb,
+                    ip_limit=ip_limit,
+                )
+                # Validate the exact link before the DB can consider it active.
+                from app.services.vpn_link import canonical_client_link
+                checked = canonical_client_link(created.access_url, "Private Line VPN")
+                parsed_created = urlparse(checked)
+                if parsed_created.hostname != api_host or parsed_created.port != port:
+                    raise MarzbanConfigError(
+                        "Generated VLESS endpoint differs from verified public node endpoint"
+                    )
+                return created
             else:
                 assert isinstance(client, OutlineClient)
                 key_name = f"user_{user_id}_sub_{subscription_id}"
