@@ -3,6 +3,9 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
+echo "[0/6] Checking installation layout before Docker..."
+bash scripts/validate_install_layout.sh
+
 echo "[1/6] Checking host-side Python syntax..."
 python3 - <<'PY'
 import ast
