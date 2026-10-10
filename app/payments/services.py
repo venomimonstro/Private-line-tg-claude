@@ -109,6 +109,7 @@ async def create_payment(
     session: AsyncSession,
     provider_name: str | None = None,
     amount_override: float | Decimal | None = None,
+    reuse_existing_subscription: bool = True,
 ) -> tuple[Payment, PaymentResult]:
     from app.payments.registry import get_provider_db
 
@@ -128,22 +129,36 @@ async def create_payment(
             raise ValueError("Invalid payment amount override")
     amount = float(amount_dec)
 
-    # One subscription per user: reuse existing instead of creating a new one.
-    # Order by id desc so we always pick the most recent (and most likely active) one.
-    existing_result = await session.execute(
-        select(Subscription).where(Subscription.user_id == user_id)
-        .order_by(Subscription.id.desc()).limit(1)
-    )
-    existing = existing_result.scalar_one_or_none()
+    # Reuse the actual live subscription for renewal/plan purchase, but do
+    # NOT mutate its tariff/status until the payment is confirmed. Gifts use a
+    # dedicated placeholder so the giver's live subscription is never touched.
+    existing = None
+    if reuse_existing_subscription:
+        existing = (await session.execute(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.status.in_([
+                    SubscriptionStatus.active,
+                    SubscriptionStatus.expires_soon,
+                ]),
+            ).order_by(Subscription.expires_at.desc(), Subscription.id.desc()).limit(1)
+        )).scalar_one_or_none()
+        if existing is None:
+            existing = (await session.execute(
+                select(Subscription).where(Subscription.user_id == user_id)
+                .order_by(Subscription.id.desc()).limit(1)
+            )).scalar_one_or_none()
 
     if existing is not None:
-        existing.tariff_id = tariff.id
-        existing.updated_at = datetime.utcnow()
-        # Don't touch active subscriptions (renewal path keeps them live until payment confirms).
-        if existing.status not in (SubscriptionStatus.active, SubscriptionStatus.expires_soon):
-            existing.status = SubscriptionStatus.pending_payment
-        await session.flush()
         subscription = existing
+        if existing.status not in (
+            SubscriptionStatus.active,
+            SubscriptionStatus.expires_soon,
+        ):
+            existing.tariff_id = tariff.id
+            existing.status = SubscriptionStatus.pending_payment
+            existing.updated_at = datetime.utcnow()
+            await session.flush()
     else:
         subscription = Subscription(
             user_id=user_id,
