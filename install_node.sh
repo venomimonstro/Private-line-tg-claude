@@ -147,8 +147,8 @@ mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 # Reproducible runtime: pin the Marzban image pulled during installation and
 # always run the tested Xray build instead of whichever core the panel bundles.
 MARZBAN_IMAGE="gozargah/marzban:latest"
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.9.9"
-XRAY_DIR="$MARZBAN_DATA/xray-core/26.9.9"
+XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27"
+XRAY_DIR="$MARZBAN_DATA/xray-core/26.6.27"
 XRAY_BIN="$XRAY_DIR/xray"
 
 info "Загружаю зафиксированные runtime images..."
@@ -164,7 +164,7 @@ docker cp "$TMP_XRAY_CONTAINER:/usr/local/bin/xray" "$XRAY_BIN"
 docker rm "$TMP_XRAY_CONTAINER" >/dev/null
 TMP_XRAY_CONTAINER=""
 chmod 755 "$XRAY_BIN"
-"$XRAY_BIN" version | head -1 | grep -q 'Xray 26.9.9' || die "Установлена неожиданная версия Xray."
+"$XRAY_BIN" version | head -1 | grep -q 'Xray 26.6.27' || die "Установлена неожиданная версия Xray."
 
 # Reality target must be reachable with TLS 1.3 from the node.
 timeout 12 openssl s_client -connect "$REALITY_DEST" -servername "$REALITY_SNI"     -tls1_3 </dev/null >/dev/null 2>&1     || die "Reality target $REALITY_DEST недоступен по TLS 1.3 с этой ноды."
@@ -213,12 +213,12 @@ UVICORN_PORT=${MARZBAN_PORT}
 SUDO_USERNAME=${MARZBAN_USER}
 SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
-XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.9.9/xray
+XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray
 EOF
 
 chmod 600 "$MARZBAN_DIR/.env"
 
-info "Запускаю Marzban с Xray 26.9.9..."
+info "Запускаю Marzban с Xray 26.6.27..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
 # Wait for Marzban API to become ready (up to 120s)
@@ -241,7 +241,7 @@ done
 section "Генерация VLESS Reality ключей"
 
 XRAY_KEYS="$("$XRAY_BIN" x25519 2>/dev/null || true)"
-[[ -n "$XRAY_KEYS" ]] || die "Xray 26.9.9 не смог сгенерировать Reality keypair."
+[[ -n "$XRAY_KEYS" ]] || die "Xray 26.6.27 не смог сгенерировать Reality keypair."
 
 # Xray outputs vary by release:
 # legacy: "Private key:" / "Public key:"
