@@ -530,6 +530,27 @@ class MarzbanClient:
 
     # ─── Other API methods ─────────────────────────────────────────────────────
 
+    async def disable_key(self, username: str) -> None:
+        """Disable a Marzban user without invoking the buggy DELETE/report path."""
+        headers = await self._headers()
+        url = f"{self._base}/api/user/{username}"
+        current = await self._client.get(url, headers=headers)
+        if current.status_code == 404:
+            return
+        current.raise_for_status()
+        data = current.json()
+        payload = {
+            "proxies": data.get("proxies", {}),
+            "inbounds": data.get("inbounds", {}),
+            "status": "disabled",
+        }
+        response = await self._client.put(url, headers=headers, json=payload)
+        response.raise_for_status()
+        verify = await self._client.get(url, headers=headers)
+        verify.raise_for_status()
+        if verify.json().get("status") != "disabled":
+            raise MarzbanConfigError("Marzban user disable did not persist")
+
     async def delete_key(self, username: str) -> None:
         headers = await self._headers()
         resp = await self._client.delete(
