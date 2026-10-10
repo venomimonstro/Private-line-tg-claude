@@ -206,6 +206,14 @@ networks:
     name: ${PRIMARY_VPN_NETWORK}
 YAML
 
+# Open only the chosen VPN TCP port in UFW; do not expose Marzban's API.
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+    if ! ufw status | grep -Eq "^$PRIMARY_PORT/tcp[[:space:]]+ALLOW"; then
+        echo "[firewall] Allowing TCP/$PRIMARY_PORT for this optional VPN node..."
+        ufw allow "$PRIMARY_PORT/tcp" comment 'Private Line primary VPN'
+    fi
+fi
+
 echo "[3/5] Starting co-located Marzban without exposing its API port..."
 docker compose -p private-line-primary --project-directory "$NODE_DIR" \
     -f "$NODE_DIR/docker-compose.yml" up -d marzban
@@ -235,6 +243,11 @@ if ! docker compose -f "$MAIN_DIR/docker-compose.yml" exec -T admin \
     echo "STOP: node NOT registered; check primary Marzban logs; admin unchanged"
     exit 2
 fi
-echo "DONE: primary main VPS is now a selectable VPN server on port $PRIMARY_PORT."
-echo "Telegram: Мой доступ -> Сменить страну -> Основной сервер (временно)"
-echo "Do NOT re-run the remote VPN node installer: it resets the firewall."
+echo "[6/6] Testing temporary VLESS credentials through primary VPN..."
+if ! bash "$MAIN_DIR/scripts/smoke_primary_vpn.sh"; then
+    echo "STOP: primary server remains unselectable; Spain and admin are unchanged."
+    exit 2
+fi
+echo "DONE: verified primary VPN node published on TCP/$PRIMARY_PORT"
+echo "Telegram: 🌍 Серверы -> Основной сервер (временно)"
+echo "Caution: local VPS tunnel verification does not prove every ISP can reach this port."
