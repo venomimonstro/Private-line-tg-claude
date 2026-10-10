@@ -23,9 +23,14 @@ if [[ ! -f "$ENV_FILE" && -z "${PRIMARY_VPN_PORT:-}" ]] && \
     PRIMARY_PORT=8443
     echo "NOTE: main port 443 is in use; choosing temporary VPN port 8443"
 fi
-if [[ -f "$ENV_FILE" && -z "${PRIMARY_VPN_PORT:-}" ]]; then
-    PRIMARY_PORT="$(sed -n 's/^PRIMARY_VPN_PORT=//p' "$ENV_FILE" | head -n 1)"
-    PRIMARY_PORT="${PRIMARY_PORT:-443}"
+if [[ -f "$ENV_FILE" ]]; then
+    SAVED_PORT="$(sed -n 's/^PRIMARY_VPN_PORT=//p' "$ENV_FILE" | head -n 1)"
+    SAVED_PORT="${SAVED_PORT:-443}"
+    if [[ -n "${PRIMARY_VPN_PORT:-}" && "$PRIMARY_VPN_PORT" != "$SAVED_PORT" ]]; then
+        echo "STOP: existing primary node uses port $SAVED_PORT; refusing to change it without migration"
+        exit 2
+    fi
+    PRIMARY_PORT="$SAVED_PORT"
 fi
 [[ "$PRIMARY_PORT" == "443" || "$PRIMARY_PORT" == "8443" ]] || {
     echo "STOP: supported primary VPN ports are 443 or 8443"; exit 2;
