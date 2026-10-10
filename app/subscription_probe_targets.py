@@ -12,12 +12,13 @@ from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
+from app.services.vpn_key import _server_protocol
 
 
 async def main(subscription_id: int) -> int:
     async with async_session_maker() as db:
         rows = (await db.execute(
-            select(VpnKey.server_id)
+            select(VpnServer)
             .join(Subscription, Subscription.id == VpnKey.subscription_id)
             .join(VpnServer, VpnServer.id == VpnKey.server_id)
             .where(
@@ -30,11 +31,14 @@ async def main(subscription_id: int) -> int:
                 Subscription.expires_at > datetime.utcnow(),
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnKey.server_id.asc())
-        )).all()
-        ids = sorted({row[0] for row in rows})
+        )).scalars().all()
+        ids = sorted({
+            server.id for server in rows
+            if _server_protocol(server) == "marzban"
+        })
         if not ids:
             return 2
         for server_id in ids:
