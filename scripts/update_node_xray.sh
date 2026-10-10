@@ -23,10 +23,14 @@ SUCCESS=false
 cleanup() {
     result=$?
     trap - EXIT
+    if [ "$SUCCESS" != true ] && [ "$result" -eq 0 ]; then
+        echo 'FAIL: update ended before startup verification' >&2
+        result=1
+    fi
     if [ "$CHANGED" = true ] && [ "$SUCCESS" != true ]; then
         echo 'Startup verification failed; restoring previous Xray configuration'
         cp -p "$BACKUP_DIR/marzban.env" /opt/marzban/.env
-        docker compose up -d --no-deps --force-recreate marzban || true
+        docker compose up -d --no-deps --force-recreate marzban </dev/null || true
     fi
     rm -rf -- "$WORKDIR"
     exit "$result"
@@ -51,8 +55,9 @@ mv -f "$CORE_DIR/xray.next" "$CORE"
 
 echo '[2/4] Validating existing configuration inside the Marzban container'
 # This also verifies the existing /var/lib/marzban bind mount exposes the binary.
+# -T disables TTY, NOT stdin: close stdin so docker cannot consume a bash -s script.
 if ! docker compose exec -T marzban "$CORE" run -test \
-    -config /var/lib/marzban/xray_config.json > "$WORKDIR/validation.log" 2>&1; then
+    -config /var/lib/marzban/xray_config.json </dev/null > "$WORKDIR/validation.log" 2>&1; then
     echo 'FAIL: new core rejected the existing configuration; active service unchanged'
     exit 1
 fi
@@ -76,7 +81,7 @@ os.replace(tmp, path)
 PY
 
 echo '[3/4] Restarting Marzban with the pinned Xray core'
-docker compose up -d --no-deps --force-recreate marzban
+docker compose up -d --no-deps --force-recreate marzban </dev/null
 for attempt in $(seq 1 30); do
     if docker compose exec -T marzban python - "$CORE" <<'PY'
 import os, pathlib, socket, sys, urllib.request
