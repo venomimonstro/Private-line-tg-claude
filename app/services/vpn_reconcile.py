@@ -301,6 +301,14 @@ async def reconcile_marzban_server(
                             max(0.0, float(traffic_limit) - used)
                             if traffic_limit and traffic_limit > 0 else None
                         )
+                        if traffic_limit and traffic_limit > 0 and remaining <= 0:
+                            # Never turn an exhausted paid key into an unlimited
+                            # credential just because its remote user vanished.
+                            logger.info(
+                                "Skipping missing Marzban user recreation for exhausted key=%d",
+                                key.id,
+                            )
+                            continue
                         ip_limit = int(getattr(tariff, "max_devices", 0) or 0) if tariff else 0
                         recreated = await client.create_key(
                             name=key.outline_key_id,
