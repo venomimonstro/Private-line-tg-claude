@@ -146,7 +146,9 @@ async def expire_subscriptions(session: AsyncSession, notify_user_callback: obje
 
         if notify_user_callback is not None:
             try:
-                await notify_user_callback(sub.user_id)
+                user = await session.get(User, sub.user_id)
+                if user and user.telegram_id:
+                    await notify_user_callback(user.telegram_id)
             except Exception as exc:
                 logger.error("Failed to notify user %s about expiry: %s", sub.user_id, exc)
 
@@ -171,7 +173,9 @@ async def check_expiring_soon(session: AsyncSession, notify_user_callback: objec
             sub.status = SubscriptionStatus.expires_soon
             if notify_user_callback is not None:
                 try:
-                    await notify_user_callback(sub.user_id, days)
+                    user = await session.get(User, sub.user_id)
+                    if user and user.telegram_id:
+                        await notify_user_callback(user.telegram_id, days)
                 except Exception as exc:
                     logger.error("Failed to notify user %s about expiry soon: %s", sub.user_id, exc)
 
