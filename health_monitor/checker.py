@@ -56,31 +56,40 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
     except Exception as exc:
         details["bot_error"] = str(exc)
 
-    # VPN API — protocol-aware check (Outline or Marzban)
+    # VPN fleet: every customer-selectable dedicated node must be coherent.
     vpn_api_status = _COMPONENT_FAIL
     vpn_server_result = await session.execute(
-        select(VpnServer).where(VpnServer.status == VpnServerStatus.active).limit(1)
+        select(VpnServer).where(
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+            VpnServer.provider != "private-line-primary",
+        )
     )
-    vpn_server = vpn_server_result.scalar_one_or_none()
-    if vpn_server is not None:
-        client = None
-        try:
-            client = _make_client(vpn_server)
-            ok = await client.check_connection()
-            vpn_api_status = _COMPONENT_OK if ok else _COMPONENT_FAIL
-            if not ok:
-                details["vpn_error"] = "check_connection returned False"
-        except Exception as exc:
-            details["vpn_error"] = str(exc)
-        finally:
-            if client is not None:
-                try:
-                    await client.aclose()
-                except Exception:
-                    pass
+    vpn_servers = list(vpn_server_result.scalars().all())
+    if vpn_servers:
+        failures: list[str] = []
+        from app.services.vpn_reconcile import reconcile_marzban_server
+        for vpn_server in vpn_servers:
+            try:
+                result = await reconcile_marzban_server(
+                    session, vpn_server.id, apply=False
+                )
+                if result.errors:
+                    failures.append(
+                        f"node#{vpn_server.id}: integrity_errors={result.errors}"
+                    )
+            except Exception as exc:
+                failures.append(
+                    f"node#{vpn_server.id}: {type(exc).__name__}: {str(exc)[:100]}"
+                )
+        if failures:
+            details["vpn_error"] = "; ".join(failures[:5])
+            vpn_api_status = _COMPONENT_FAIL
+        else:
+            vpn_api_status = _COMPONENT_OK
     else:
-        details["vpn_info"] = "No active VPN server configured"
-        vpn_api_status = "N/A"
+        details["vpn_error"] = "No selectable dedicated VPN server configured"
+        vpn_api_status = _COMPONENT_FAIL
 
     # DNS filter — check if a dns-resolving process or systemd-resolved is active
     dns_filter_status = _COMPONENT_OK
