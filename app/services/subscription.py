@@ -208,9 +208,7 @@ async def expire_subscriptions(session: AsyncSession, notify_user_callback: obje
                 server = key.server
                 if server is not None:
                     disabled = await vpn_key_service.disable_vpn_key(key, server, session)
-                    if disabled:
-                        server.current_users = max(0, server.current_users - 1)
-                    else:
+                    if not disabled:
                         logger.error(
                             "Expiry could not confirm remote disable for key %d on server %d; "
                             "capacity counter preserved",
