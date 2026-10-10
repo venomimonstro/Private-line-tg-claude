@@ -295,7 +295,8 @@ print(json.dumps({
         "sni": "${REALITY_SNI}",
         "host": "",
         "path": "",
-        "security": "reality",
+        # Marzban hosts inherit transport security from the Xray inbound.
+        "security": "inbound_default",
         "alpn": "",
         "fingerprint": "chrome",
         "allowinsecure": False,
