@@ -142,6 +142,20 @@ async def change_payment_status(
     except ValueError:
         raise HTTPException(status_code=400, detail="Неверный статус")
 
+    if status in (PaymentStatus.paid, PaymentStatus.refunded):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Статус paid устанавливается только через подтверждение платежа с fulfillment; "
+                "refunded — только через процесс возврата."
+            ),
+        )
+    if payment.fulfilled_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Завершённый оплаченный платёж нельзя менять через общий статус.",
+        )
+
     old_status = payment.status.value
     payment.status = status
     payment.updated_at = datetime.utcnow()
