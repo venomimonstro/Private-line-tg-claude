@@ -214,6 +214,7 @@ RELEASE_ID=$(py_cli create \
     --commit "$NEW_COMMIT" \
     --version "$(date '+%Y.%m.%d')-${NEW_COMMIT:0:7}" \
     --changelog "$CHANGELOG" \
+    --backup-id "$BACKUP_ID" \
     2>/tmp/cli_err) || { warn "DB registration failed: $(cat /tmp/cli_err)"; RELEASE_ID=""; }
 [[ -n "$RELEASE_ID" ]] && ok "Release #$RELEASE_ID registered" || warn "Continuing without DB tracking"
 
