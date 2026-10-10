@@ -1,3 +1,4 @@
+"""VPN node selection. A user can keep Spain while adding the temporary main node."""
 from __future__ import annotations
 
 import logging
@@ -5,49 +6,106 @@ from html import escape
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import select
 
+from app.database import async_session_maker
+from app.enums import SubscriptionStatus, VpnServerStatus
+from app.models.vpn_server import VpnServer
+from app.models.user import User
+from app.services.server_access import ServerSelectionError, add_subscription_server_key
 from app.services.vpn_key import get_client_access_url
 from bot.handlers.access import _get_active_subscription
-from app.models.user import User
 
 logger = logging.getLogger(__name__)
-
 router = Router(name="geo_switch")
 
 
 @router.callback_query(F.data == "geo_switch")
 async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
     sub, active_keys, _ = await _get_active_subscription(db_user.id)
-
-    if not active_keys:
-        await callback.answer("У вас нет активных ключей.", show_alert=True)
+    if (
+        sub is None
+        or sub.status not in (SubscriptionStatus.active, SubscriptionStatus.expires_soon)
+        or not sub.expires_at
+    ):
+        await callback.answer("Нет действующей подписки.", show_alert=True)
         return
 
-    if len(active_keys) == 1:
-        key = active_keys[0]
-        try:
-            url = get_client_access_url(key)
-        except Exception:
-            await callback.answer("Ошибка получения ключа.", show_alert=True)
-            return
-        label = key.label or "VPN"
-        await callback.message.answer(  # type: ignore[union-attr]
-            f"🔑 <b>Ваш ключ ({escape(label)}):</b>\n\n<code>{escape(url)}</code>\n\n"
-            f"Скопируйте и добавьте в приложение.",
-            parse_mode="HTML",
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(VpnServer)
+            .where(
+                VpnServer.status == VpnServerStatus.active,
+                VpnServer.is_selectable.is_(True),
+            )
+            .order_by(VpnServer.id.asc())
         )
-        await callback.answer()
+        servers = list(result.scalars().all())
+
+    if not servers:
+        await callback.answer("Пока нет доступных VPN-нод.", show_alert=True)
         return
 
-    rows = []
-    for key in active_keys:
-        label = key.label or "VPN"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"geo_view:{key.id}")])
-
-    await callback.message.answer(  # type: ignore[union-attr]
-        "🌍 <b>Выберите страну подключения:</b>\n\nКаждый ключ работает на отдельном сервере.",
+    existing = {key.server_id for key in active_keys}
+    rows = [
+        [InlineKeyboardButton(
+            text=f"{'✅' if srv.id in existing else '➕'} {srv.flag_emoji or '🌍'} {srv.name}",
+            callback_data=f"choose_server:{srv.id}",
+        )]
+        for srv in servers
+    ]
+    await callback.message.answer(
+        "🌍 <b>Выберите VPN-сервер</b>\n\n"
+        "✅ Подключённый ключ  •  ➕ Добавить сервер\n"
+        "При добавлении второго сервера существующий ключ останется активным.\n"
+        "Имя профиля в приложении: <b>Private Line VPN</b>.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("choose_server:"))
+async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
+    try:
+        server_id = int((callback.data or "").split(":", 1)[1])
+        if server_id <= 0:
+            raise ValueError()
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный сервер.", show_alert=True)
+        return
+
+    sub, _, _ = await _get_active_subscription(db_user.id)
+    if sub is None:
+        await callback.answer("Нет активной подписки.", show_alert=True)
+        return
+
+    try:
+        async with async_session_maker() as session:
+            key, created = await add_subscription_server_key(
+                session, user_id=db_user.id, subscription_id=sub.id, server_id=server_id
+            )
+            link = get_client_access_url(key)
+            server = await session.get(VpnServer, key.server_id)
+            display = escape(server.name if server else "VPN")
+            await session.commit()
+    except ServerSelectionError as exc:
+        await callback.answer(str(exc)[:180], show_alert=True)
+        return
+    except Exception as exc:
+        logger.exception("Node selection failed for user=%s node=%s", db_user.id, server_id)
+        await callback.answer(
+            "Не удалось подключить ноду. Существующие VPN-ключи сохранены.",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.answer(
+        f"{'✅ Сервер добавлен' if created else '✅ Ваш существующий ключ'}: <b>{display}</b>\n\n"
+        f"<code>{escape(link)}</code>\n\n"
+        "Импортируйте ссылку в Hiddify, v2rayNG, Streisand или V2Box.\n"
+        "Название профиля: <b>Private Line VPN</b>.",
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -55,30 +113,22 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
 @router.callback_query(F.data.startswith("geo_view:"))
 async def on_geo_view_key(callback: CallbackQuery, db_user: User) -> None:
     try:
-        key_id = int(callback.data.split(":", 1)[1])
+        key_id = int((callback.data or "").split(":", 1)[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
-
-    _, active_keys, _ = await _get_active_subscription(db_user.id)
-    key = next((k for k in active_keys if k.id == key_id), None)
-
+    _, keys, _ = await _get_active_subscription(db_user.id)
+    key = next((k for k in keys if k.id == key_id), None)
     if key is None:
         await callback.answer("Ключ не найден.", show_alert=True)
         return
-
     try:
-        url = get_client_access_url(key)
+        link = get_client_access_url(key)
     except Exception:
-        await callback.answer("Ошибка получения ключа.", show_alert=True)
+        await callback.answer("Некорректный VPN-ключ.", show_alert=True)
         return
-
-    label = key.label or "VPN"
-    await callback.message.answer(  # type: ignore[union-attr]
-        f"🔑 <b>Ключ для {escape(label)}:</b>\n\n<code>{escape(url)}</code>\n\n"
-        f"Скопируйте и импортируйте в приложение:\n"
-        f"• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
-        f"• <b>Hiddify</b> (Windows/Mac)",
+    await callback.message.answer(
+        f"🔑 <b>Private Line VPN</b>\n\n<code>{escape(link)}</code>",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -86,5 +136,5 @@ async def on_geo_view_key(callback: CallbackQuery, db_user: User) -> None:
 
 @router.callback_query(F.data == "back_to_access")
 async def on_back_to_access(callback: CallbackQuery) -> None:
-    await callback.message.delete()  # type: ignore[union-attr]
+    await callback.message.delete()
     await callback.answer()
