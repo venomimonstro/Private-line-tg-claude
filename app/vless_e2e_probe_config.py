@@ -41,8 +41,15 @@ def build_config_from_url(raw: str, socks_port: int) -> dict:
     args = parse_qs(parsed.query)
     get = lambda name: args.get(name, [""])[0]
     pub, sid, sni = get("pbk"), get("sid"), get("sni")
-    if get("security") != "reality" or get("flow") != "xtls-rprx-vision" or get("encryption") not in ("", "none"):
-        raise ValueError("VLESS link does not use expected Reality/Vision protocol")
+    if (
+        get("security") != "reality"
+        or get("flow") != "xtls-rprx-vision"
+        or get("encryption") not in ("", "none")
+        or get("type") not in ("tcp", "raw")
+        or get("fp") != "chrome"
+        or get("headerType") not in ("", "none")
+    ):
+        raise ValueError("VLESS share link differs from client Reality/Vision settings (security/flow/type/fp)")
     if not re.fullmatch(r"[A-Za-z0-9_-]{43,44}", pub):
         raise ValueError("Invalid Reality public key")
     if not re.fullmatch(r"(?:[a-f0-9]{2}){1,8}", sid):
