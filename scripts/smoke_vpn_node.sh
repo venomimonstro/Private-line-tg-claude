@@ -41,7 +41,7 @@ docker compose exec -T admin python -m app.vless_e2e_probe_config     --stdin-ur
 python3 -m json.tool "$WORK/client.json" >/dev/null
 
 echo "[3/5] Starting clean Xray 26.9.9 client..."
-docker run -d --name "$CONTAINER" --network host --read-only     --cap-drop ALL --security-opt no-new-privileges     -v "$WORK/client.json:/tmp/client.json:ro"     ghcr.io/xtls/xray-core:26.9.9 run -c /tmp/client.json >/dev/null
+docker run -d --name "$CONTAINER" --network host --user 0:0 --read-only     --cap-drop ALL --security-opt no-new-privileges     -v "$WORK/client.json:/tmp/client.json:ro"     ghcr.io/xtls/xray-core:26.9.9 run -c /tmp/client.json >/dev/null
 
 READY=0
 for _ in $(seq 1 20); do
