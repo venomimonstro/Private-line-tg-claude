@@ -37,6 +37,10 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                         "is_disabled": False,
                     }]
                 })
+            if req.url.path == "/api/core/restart" and req.method == "POST":
+                return httpx.Response(200, json={"detail": "Core restarted"})
+            if req.url.path == "/api/core" and req.method == "GET":
+                return httpx.Response(200, json={"started": True, "version": "26.9.9"})
             return handler(req)
 
         with patch.dict(os.environ, {k: "" for k in (
@@ -108,6 +112,28 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wrong_uuid_link_rejected(self):
         client, _ = await self.conflict(stale_link=True)
+        with self.assertRaises(MarzbanConfigError):
+            await client.create_key("u1s1")
+
+    async def test_create_key_fails_closed_when_runtime_resync_fails(self):
+        def handler(req):
+            if req.url.path == "/api/core/restart":
+                return httpx.Response(503)
+            if req.method == "POST":
+                return httpx.Response(200, json={
+                    "username": "u1s1",
+                    "status": "active",
+                    "inbounds": {"vless": ["VLESS-TCP"]},
+                    "proxies": {"vless": {"id": UUID, "flow": "xtls-rprx-vision"}},
+                    "links": [LINK],
+                })
+            return httpx.Response(200, json={})
+
+        client = await self.make_client(handler)
+        # Override the default successful core route so the failure is explicit.
+        async def failing_resync(*, reason=""):
+            raise MarzbanConfigError("runtime resync failed")
+        client.restart_core_with_db_users = failing_resync
         with self.assertRaises(MarzbanConfigError):
             await client.create_key("u1s1")
 
