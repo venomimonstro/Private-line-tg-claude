@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -75,10 +76,48 @@ async def payment_webhook(
         result.id, provider_name, result.status, result.amount,
     )
 
+    # Signature validity alone does not authorize a different order/provider
+    # or amount. Validate the signed provider payload against our immutable
+    # payment record before any state transition.
+    try:
+        incoming_amount = Decimal(str(incoming.amount)).quantize(Decimal("0.01"))
+        expected_amount = Decimal(str(result.amount)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        logger.error("Webhook payment %d has invalid monetary amount", result.id)
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    amount_ok = (
+        incoming_amount >= (expected_amount * Decimal("0.97")).quantize(Decimal("0.01"))
+        if provider_name == "yoomoney"
+        else incoming_amount == expected_amount
+    )
+    provider_ok = result.provider == provider_name
+    currency_ok = (incoming.currency or "").upper() == (result.currency or "").upper() == "RUB"
+    if not (provider_ok and currency_ok and amount_ok):
+        logger.error(
+            "Webhook invariant mismatch payment=%d provider_ok=%s currency_ok=%s amount_ok=%s",
+            result.id, provider_ok, currency_ok, amount_ok,
+        )
+        if provider_name in _PLAINTEXT_YES_PROVIDERS:
+            return PlainTextResponse("YES")
+        raise HTTPException(status_code=400, detail="Payment does not match order")
+
+    if result.status == PaymentStatus.paid:
+        # A provider retry is also a recovery signal for the durable state
+        # PAID + fulfilled_at=NULL. confirm_payment_auto is row-lock/idempotent.
+        if result.fulfilled_at is None:
+            await confirm_payment_auto(result, session)
+            state = "recovered" if result.fulfilled_at is not None else "fulfillment_pending"
+        else:
+            state = "already_processed"
+        if provider_name in _PLAINTEXT_YES_PROVIDERS:
+            return PlainTextResponse("YES")
+        return {"status": state}
+
     if result.status != PaymentStatus.pending:
         logger.info(
-            "Payment %d already in status %s — skipping (provider: %s)",
-            result.id, result.status, provider_name,
+            "Payment %d already in terminal/non-payable status %s",
+            result.id, result.status,
         )
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
             return PlainTextResponse("YES")
