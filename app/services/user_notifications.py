@@ -37,12 +37,14 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
             "Подробная инструкция: кнопка «📱 Как подключиться» в меню."
         )
 
+        from html import escape
+
         if len(vpn_keys) == 1:
             url = get_access_url(vpn_keys[0])  # type: ignore[arg-type]
             first_url = url
             text = (
                 "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
-                f"<code>{url}</code>\n\n"
+                f"<code>{escape(url)}</code>\n\n"
                 + _app_hint
             )
         else:
@@ -52,7 +54,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
                 if not first_url:
                     first_url = url
                 label = getattr(key, "label", None) or "VPN"
-                lines.append(f"<b>{label}:</b>\n<code>{url}</code>\n")
+                lines.append(f"<b>{escape(str(label))}:</b>\n<code>{escape(url)}</code>\n")
             lines.append(_app_hint)
             text = "\n".join(lines)
 
