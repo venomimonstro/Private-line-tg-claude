@@ -66,7 +66,8 @@ async def audit() -> int:
                 )
                 if stats.status_code != 200 or stats.json().get("started") is not True:
                     raise RuntimeError("Xray core is not running")
-                print(f"PASS: {server.name}; public={public[0]['address']}:{port}; "
+                exposed_port = public[0].get("port") or port
+                print(f"PASS: {server.name}; public={public[0]['address']}:{exposed_port}; "
                       f"Xray={stats.json().get('version','?')}; configured capacity={server.max_users}")
             except Exception as exc:
                 print(f"FAIL: {server.name}: {type(exc).__name__}: {str(exc)[:130]}")
