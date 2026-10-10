@@ -87,6 +87,7 @@ async def _job_auto_renew_subscriptions() -> None:
 async def _job_check_server_health() -> None:
     logger.info("Running: check_server_health")
     from app.services.circuit_breaker import get_circuit_breaker, CircuitState
+    from app.services.vpn_key import _server_protocol
     from app.models.vpn_server import VpnServer
     from app.enums import VpnServerStatus
     from sqlalchemy import select
@@ -103,6 +104,8 @@ async def _job_check_server_health() -> None:
         )
         servers = result.scalars().all()
         for server in servers:
+            if _server_protocol(server) != "marzban":
+                continue
             cb = get_circuit_breaker(server.id)
             if cb.state == CircuitState.OPEN and (server.failure_count or 0) >= 10:
                 server.status = VpnServerStatus.unreachable
