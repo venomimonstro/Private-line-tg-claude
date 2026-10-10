@@ -11,7 +11,6 @@ Reality private keys. It may briefly interrupt connections to this node.
 from __future__ import annotations
 
 import argparse
-import asyncio
 from datetime import datetime
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -111,29 +110,12 @@ async def resync(sub_id: int, apply: bool) -> int:
                 return 0
 
             print("Resyncing Xray with users from the Marzban database...")
-            result = await client._client.post(
-                f"{client._base}/api/core/restart",
-                headers=headers,
-                timeout=60.0,
+            await client.restart_core_with_db_users(
+                reason=f"subscription {sub_id} operator resync"
             )
-            if result.status_code not in (200, 204):
-                print(f"FAIL: Marzban core restart returned HTTP {result.status_code}")
-                return 2
-
-            for _ in range(30):
-                await asyncio.sleep(2)
-                try:
-                    s = await client._client.get(
-                        f"{client._base}/api/core", headers=headers, timeout=4.0
-                    )
-                    if s.status_code == 200 and s.json().get("started") is True:
-                        print("PASS: Marzban reports Xray restarted with DB users")
-                        print("NEXT: run 'bash scripts/probe_vless_e2e.sh 3' on main server")
-                        return 0
-                except Exception:
-                    continue
-            print("FAIL: Xray did not report a started core; inspect node logs")
-            return 2
+            print("PASS: Marzban reports Xray restarted with DB users")
+            print(f"NEXT: run 'bash scripts/probe_vless_e2e.sh {sub_id}' on main server")
+            return 0
         except Exception as exc:
             print(f"FAIL: {type(exc).__name__}: {str(exc)[:160]}")
             return 2
