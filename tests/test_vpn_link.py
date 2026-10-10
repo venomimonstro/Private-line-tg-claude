@@ -52,6 +52,10 @@ class VlessShareLinkTests(unittest.TestCase):
         out = canonical_client_link(raw)
         self.assertIn("sid=", urlsplit(out).query)
 
+    def test_private_line_brand_is_default_profile_name(self):
+        shared = canonical_client_link(self.URI)
+        self.assertEqual(urlsplit(shared).fragment, "Private%20Line%20VPN")
+
     def test_outline_url_left_alone(self):
         self.assertEqual(canonical_client_link("ss://abc@example.org:1111#old"), "ss://abc@example.org:1111#old")
 
