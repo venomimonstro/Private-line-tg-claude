@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 from datetime import datetime
 
 from sqlalchemy import select
@@ -79,8 +80,8 @@ async def retry_failed_activations(
             bot = get_bot()
             if send_key_callback is None and bot is not None:
                 try:
-                    from app.services.vpn_key import get_access_url
-                    url = get_access_url(vpn_key)
+                    from app.services.vpn_key import get_client_access_url
+                    url = get_client_access_url(vpn_key)
                     from app.models.user import User
                     user = await session.get(User, sub.user_id)
                     if user is None or not user.telegram_id:
@@ -89,7 +90,7 @@ async def retry_failed_activations(
                         chat_id=user.telegram_id,
                         text=(
                             "✅ Ваш персональный ключ доступа готов!\n\n"
-                            f"<code>{url}</code>\n\n"
+                            f"<code>{escape(url)}</code>\n\n"
                             "Скопируйте ключ и добавьте его в приложение."
                         ),
                         parse_mode="HTML",
