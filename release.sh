@@ -34,6 +34,9 @@ BRANCH=""
 
 cd "$DEPLOY_DIR"
 
+# Abort before backup/deploy if the checkout cannot safely back Docker bind mounts.
+bash scripts/validate_install_layout.sh
+
 # ── argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
