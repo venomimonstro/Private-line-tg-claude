@@ -17,7 +17,7 @@ async def main() -> int:
             .where(
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc())
         )).scalars().all()
