@@ -75,12 +75,14 @@ async def run(apply: bool) -> int:
                     )
                 )
                 server.current_users = int(active_count or 0)
+                # Per-key integrity failures must not take a structurally
+                # healthy VPN node offline for every other customer.
+                healthy += 1
                 if result.errors:
                     failures += 1
-                    server.is_selectable = False
-                    server.last_error = f"VPN reconciliation errors: {result.errors}"
+                    server.last_error = f"VPN key reconciliation errors: {result.errors}"
                 else:
-                    healthy += 1
+                    server.last_error = None
             except Exception as exc:
                 failures += 1
                 server.is_selectable = False
