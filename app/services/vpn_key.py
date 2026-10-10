@@ -286,7 +286,7 @@ async def create_vpn_key(
             await enqueue_create_key(
                 subscription_id=subscription_id,
                 server_id=server.id,
-                payload={"user_id": user_id, "traffic_limit_gb": traffic_limit_gb, "label": label},
+                payload={"user_id": user_id, "traffic_limit_gb": traffic_limit_gb, "label": label, "ip_limit": ip_limit},
                 session=session,
             )
         except Exception as enqueue_exc:
