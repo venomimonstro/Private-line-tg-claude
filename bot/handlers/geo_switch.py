@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.services.vpn_key import get_access_url
+from app.services.vpn_key import get_client_access_url
 from bot.handlers.access import _get_active_subscription
 from app.models.user import User
 
@@ -25,13 +26,13 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
     if len(active_keys) == 1:
         key = active_keys[0]
         try:
-            url = get_access_url(key)
+            url = get_client_access_url(key)
         except Exception:
             await callback.answer("Ошибка получения ключа.", show_alert=True)
             return
         label = key.label or "VPN"
         await callback.message.answer(  # type: ignore[union-attr]
-            f"🔑 <b>Ваш ключ ({label}):</b>\n\n<code>{url}</code>\n\n"
+            f"🔑 <b>Ваш ключ ({escape(label)}):</b>\n\n<code>{escape(url)}</code>\n\n"
             f"Скопируйте и добавьте в приложение.",
             parse_mode="HTML",
         )
@@ -67,14 +68,14 @@ async def on_geo_view_key(callback: CallbackQuery, db_user: User) -> None:
         return
 
     try:
-        url = get_access_url(key)
+        url = get_client_access_url(key)
     except Exception:
         await callback.answer("Ошибка получения ключа.", show_alert=True)
         return
 
     label = key.label or "VPN"
     await callback.message.answer(  # type: ignore[union-attr]
-        f"🔑 <b>Ключ для {label}:</b>\n\n<code>{url}</code>\n\n"
+        f"🔑 <b>Ключ для {escape(label)}:</b>\n\n<code>{escape(url)}</code>\n\n"
         f"Скопируйте и импортируйте в приложение:\n"
         f"• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
         f"• <b>Hiddify</b> (Windows/Mac)",
