@@ -63,17 +63,12 @@ async def cleanup_duplicate_subscriptions(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    """For every user with >1 subscription: keep the best one, delete the rest."""
-    from app.models.vpn_key import VpnKey
+    """Non-destructive duplicate cleanup.
 
-    _STATUS_PRIORITY = {
-        SubscriptionStatus.active: 0,
-        SubscriptionStatus.expires_soon: 1,
-        SubscriptionStatus.activation_error: 2,
-        SubscriptionStatus.pending_payment: 3,
-        SubscriptionStatus.expired: 4,
-        SubscriptionStatus.disabled: 5,
-    }
+    Never deletes subscriptions or VPN credentials automatically. Only stale
+    duplicate records with no live/error key may be marked disabled.
+    """
+    from app.models.vpn_key import VpnKey
 
     dup_result = await session.execute(
         select(Subscription.user_id)
@@ -81,47 +76,50 @@ async def cleanup_duplicate_subscriptions(
         .having(func.count() > 1)
     )
     user_ids = [row[0] for row in dup_result.all()]
+    disabled = 0
+    skipped = 0
 
-    removed = 0
     for user_id in user_ids:
-        subs_result = await session.execute(
+        subs = list((await session.execute(
             select(Subscription)
             .options(selectinload(Subscription.vpn_keys))
             .where(Subscription.user_id == user_id)
-        )
-        subs = list(subs_result.scalars().all())
+            .order_by(Subscription.id.desc())
+        )).scalars().all())
         if len(subs) <= 1:
             continue
-
-        best = min(subs, key=lambda s: (_STATUS_PRIORITY.get(s.status, 99), -s.id))
+        keep = next((
+            sub for sub in subs
+            if sub.status in (SubscriptionStatus.active, SubscriptionStatus.expires_soon)
+        ), subs[0])
         for sub in subs:
-            if sub.id == best.id:
+            if sub.id == keep.id:
                 continue
-            for key in sub.vpn_keys:
-                if key.status == VpnKeyStatus.active:
-                    srv = await session.get(VpnServer, key.server_id)
-                    if srv:
-                        try:
-                            await vpn_key_service.disable_vpn_key(key, srv, session)
-                            srv.current_users = max(0, srv.current_users - 1)
-                        except Exception:
-                            pass
-            await session.execute(sa_delete(VpnKey).where(VpnKey.subscription_id == sub.id))
-            await session.delete(sub)
-            removed += 1
+            live = any(
+                key.status in (VpnKeyStatus.active, VpnKeyStatus.error)
+                for key in sub.vpn_keys
+            )
+            if live:
+                skipped += 1
+                continue
+            if sub.status not in (SubscriptionStatus.expired, SubscriptionStatus.disabled):
+                sub.status = SubscriptionStatus.disabled
+                disabled += 1
 
     log = AdminLog(
         admin_user_id=admin.id,
-        action="cleanup_duplicate_subscriptions",
+        action="cleanup_duplicate_subscriptions_safe",
         target_entity="subscription",
         target_entity_id=0,
-        details={"users_cleaned": len(user_ids), "removed": removed},
+        details={"users_checked": len(user_ids), "disabled": disabled, "skipped_live": skipped},
         ip_address=request.client.host if request.client else None,
     )
     session.add(log)
     await session.commit()
-    return RedirectResponse(f"/admin/subscriptions?msg=Удалено+дубликатов%3A+{removed}", status_code=303)
-
+    return RedirectResponse(
+        f"/admin/subscriptions?msg=Безопасно+отключено%3A+{disabled}%2C+с+живыми+ключами+пропущено%3A+{skipped}",
+        status_code=303,
+    )
 
 @router.get("/{sub_id}", response_class=HTMLResponse)
 async def subscription_detail(
@@ -238,62 +236,65 @@ async def admin_activate_subscription(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    """Force-activate any subscription: disable existing keys, create fresh key, send to user."""
-    result = await session.execute(
+    """Activate preserve-first: reconcile an existing credential or create only if absent."""
+    from datetime import datetime as _dt, timedelta as _td
+    from app.services.user_notifications import send_key_to_user
+    from app.services.vpn_reconcile import reconcile_marzban_server
+
+    sub = (await session.execute(
         select(Subscription)
         .options(selectinload(Subscription.tariff), selectinload(Subscription.vpn_keys))
         .where(Subscription.id == sub_id)
-    )
-    sub = result.scalar_one_or_none()
+        .with_for_update()
+    )).scalar_one_or_none()
     if sub is None:
         raise HTTPException(status_code=404)
     if sub.tariff is None:
         raise HTTPException(status_code=400, detail="Тариф не найден")
 
-    from datetime import datetime as _dt
-    from app.models.vpn_key import VpnKey
-
-    # Disable all existing active keys cleanly
-    for key in sub.vpn_keys:
-        if key.status == VpnKeyStatus.active:
-            srv = await session.get(VpnServer, key.server_id)
-            if srv:
-                try:
-                    await vpn_key_service.disable_vpn_key(key, srv, session)
-                    srv.current_users = max(0, srv.current_users - 1)
-                except Exception:
-                    key.status = VpnKeyStatus.disabled
-                    key.disabled_at = _dt.utcnow()
-            else:
-                key.status = VpnKeyStatus.disabled
-                key.disabled_at = _dt.utcnow()
-
-    sub.activation_attempts = 0
-    sub.status = SubscriptionStatus.pending_payment
-    await session.flush()
-
-    from app.services.user_notifications import send_key_to_user
-    try:
+    active_keys = [k for k in sub.vpn_keys if k.status == VpnKeyStatus.active]
+    if active_keys:
+        for key in active_keys:
+            check = await reconcile_marzban_server(
+                session, key.server_id, apply=True, only_subscription_id=sub.id
+            )
+            if check.errors:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Существующий VPN-ключ не прошёл безопасную сверку; он не удалён.",
+                )
+        now = _dt.utcnow()
+        sub.status = SubscriptionStatus.active
+        sub.started_at = sub.started_at or now
+        if sub.expires_at is None or sub.expires_at <= now:
+            sub.expires_at = now + _td(days=sub.tariff.duration_days)
+        sub.activation_attempts = 0
+        vpn_key = active_keys[0]
+        user = await session.get(User, sub.user_id)
+        if user and user.telegram_id:
+            await send_key_to_user(user.telegram_id, vpn_key)
+    else:
+        sub.activation_attempts = 0
+        sub.status = SubscriptionStatus.pending_payment
         vpn_key = await activate_subscription(
             sub, sub.tariff, session, send_key_callback=send_key_to_user,
         )
-    except Exception as exc:
-        import logging as _logging
-        _logging.getLogger(__name__).error("Admin activate sub %d: %s", sub_id, exc)
-        raise HTTPException(status_code=503, detail=f"VPN сервер недоступен: {exc}")
+        if vpn_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Ни одна проверенная VPN-нода не смогла выдать ключ.",
+            )
 
-    log = AdminLog(
+    session.add(AdminLog(
         admin_user_id=admin.id,
-        action="admin_activate_subscription",
+        action="admin_activate_subscription_safe",
         target_entity="subscription",
         target_entity_id=sub_id,
-        details={"success": vpn_key is not None, "tariff": sub.tariff.slug},
+        details={"preserved_existing": bool(active_keys), "tariff": sub.tariff.slug},
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
-
 
 @router.post("/{sub_id}/disable")
 async def disable_subscription(
@@ -302,33 +303,41 @@ async def disable_subscription(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    result = await session.execute(
-        select(Subscription).options(selectinload(Subscription.vpn_keys)).where(Subscription.id == sub_id)
-    )
-    sub = result.scalar_one_or_none()
+    sub = (await session.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.vpn_keys))
+        .where(Subscription.id == sub_id)
+        .with_for_update()
+    )).scalar_one_or_none()
     if sub is None:
         raise HTTPException(status_code=404)
 
+    pending_remote = 0
     for key in sub.vpn_keys:
         if key.status == VpnKeyStatus.active:
-            server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
-            server = server_result.scalar_one_or_none()
-            if server:
-                await vpn_key_service.disable_vpn_key(key, server, session)
+            server = await session.get(VpnServer, key.server_id)
+            if server is None:
+                key.status = VpnKeyStatus.error
+                pending_remote += 1
+                continue
+            disabled = await vpn_key_service.disable_vpn_key(key, server, session)
+            if disabled:
                 server.current_users = max(0, server.current_users - 1)
+            else:
+                pending_remote += 1
 
+    # Hide access immediately in control-plane even if a remote retry is pending.
     sub.status = SubscriptionStatus.disabled
-    log = AdminLog(
+    session.add(AdminLog(
         admin_user_id=admin.id,
         action="disable_subscription",
         target_entity="subscription",
         target_entity_id=sub_id,
+        details={"pending_remote_disables": pending_remote},
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
-
 
 @router.post("/{sub_id}/retry")
 async def retry_activation(
@@ -337,61 +346,56 @@ async def retry_activation(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
-    result = await session.execute(
-        select(Subscription).options(selectinload(Subscription.tariff)).where(Subscription.id == sub_id)
-    )
-    sub = result.scalar_one_or_none()
+    sub = (await session.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff), selectinload(Subscription.vpn_keys))
+        .where(Subscription.id == sub_id)
+        .with_for_update()
+    )).scalar_one_or_none()
     if sub is None:
         raise HTTPException(status_code=404)
-
-    tariff = sub.tariff
-    if tariff is None:
+    if sub.tariff is None:
         raise HTTPException(status_code=400, detail="Tariff not found")
 
-    # Reset attempt counter and circuit breakers so activation can proceed
-    sub.activation_attempts = 0
-    sub.status = SubscriptionStatus.activation_error
-    await session.flush()
-
-    from app.services.circuit_breaker import _registry, reset_circuit
-    for sid in list(_registry.keys()):
-        reset_circuit(sid)
-
-    # Disable any existing active keys (may have empty URL from previous failed attempts)
-    from app.enums import VpnKeyStatus
-    from app.models.vpn_key import VpnKey
-    keys_result = await session.execute(
-        select(VpnKey).where(
-            VpnKey.subscription_id == sub_id,
-            VpnKey.status == VpnKeyStatus.active,
-        )
-    )
-    from datetime import datetime as _dt
-    for stale_key in keys_result.scalars().all():
-        stale_key.status = VpnKeyStatus.disabled
-        stale_key.disabled_at = _dt.utcnow()
-    await session.flush()
-
     from app.services.user_notifications import send_key_to_user
-    try:
-        vpn_key = await activate_subscription(sub, tariff, session, send_key_callback=send_key_to_user)
-    except Exception as exc:
-        import logging as _logging
-        _logging.getLogger(__name__).error("Retry activation sub %d failed: %s", sub_id, exc)
-        raise HTTPException(status_code=503, detail=f"VPN сервер недоступен: {exc}")
+    from app.services.vpn_reconcile import reconcile_marzban_server
 
-    log = AdminLog(
+    active_keys = [k for k in sub.vpn_keys if k.status == VpnKeyStatus.active]
+    if active_keys:
+        for key in active_keys:
+            result = await reconcile_marzban_server(
+                session, key.server_id, apply=True, only_subscription_id=sub.id
+            )
+            if result.errors:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Существующий ключ не прошёл сверку; он сохранён без ротации.",
+                )
+        sub.status = SubscriptionStatus.active
+        sub.activation_attempts = 0
+        vpn_key = active_keys[0]
+    else:
+        sub.activation_attempts = 0
+        sub.status = SubscriptionStatus.activation_error
+        vpn_key = await activate_subscription(
+            sub, sub.tariff, session, send_key_callback=send_key_to_user
+        )
+        if vpn_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Нет проверенной VPN-ноды для активации.",
+            )
+
+    session.add(AdminLog(
         admin_user_id=admin.id,
-        action="retry_activation",
+        action="retry_activation_safe",
         target_entity="subscription",
         target_entity_id=sub_id,
-        details={"success": vpn_key is not None},
+        details={"preserved_existing": bool(active_keys)},
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
-
 
 @router.post("/{sub_id}/keys/{key_id}/disable")
 async def admin_disable_key(
@@ -403,35 +407,42 @@ async def admin_disable_key(
 ) -> RedirectResponse:
     from app.models.vpn_key import VpnKey
 
-    result = await session.execute(
-        select(VpnKey).where(VpnKey.id == key_id, VpnKey.subscription_id == sub_id)
-    )
-    key = result.scalar_one_or_none()
+    key = (await session.execute(
+        select(VpnKey).where(
+            VpnKey.id == key_id,
+            VpnKey.subscription_id == sub_id,
+        ).with_for_update()
+    )).scalar_one_or_none()
     if key is None:
         raise HTTPException(status_code=404)
 
-    server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
-    server = server_result.scalar_one_or_none()
-    if server:
-        await vpn_key_service.disable_vpn_key(key, server, session)
+    server = await session.get(VpnServer, key.server_id)
+    if server is None:
+        key.status = VpnKeyStatus.error
+        await session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="Запись VPN-ноды отсутствует; удалённое отключение не подтверждено.",
+        )
+    disabled = await vpn_key_service.disable_vpn_key(key, server, session)
+    if disabled:
         server.current_users = max(0, server.current_users - 1)
-    else:
-        from app.enums import VpnKeyStatus
-        from datetime import datetime as _dt
-        key.status = VpnKeyStatus.disabled
-        key.disabled_at = _dt.utcnow()
 
-    log = AdminLog(
+    session.add(AdminLog(
         admin_user_id=admin.id,
         action="disable_vpn_key",
         target_entity="vpn_key",
         target_entity_id=key_id,
+        details={"confirmed": bool(disabled)},
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
+    if not disabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Удалённое отключение пока не подтверждено; создан retry.",
+        )
     return RedirectResponse(f"/admin/subscriptions/{sub_id}", status_code=303)
-
 
 @router.post("/{sub_id}/keys/{key_id}/reissue")
 async def admin_reissue_key(
@@ -509,40 +520,45 @@ async def delete_subscription(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> RedirectResponse:
+    from app.models.payment import Payment
     from app.models.vpn_key import VpnKey
     from sqlalchemy import delete as sa_delete
 
-    result = await session.execute(
-        select(Subscription).options(selectinload(Subscription.vpn_keys)).where(Subscription.id == sub_id)
-    )
-    sub = result.scalar_one_or_none()
+    sub = (await session.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.vpn_keys))
+        .where(Subscription.id == sub_id)
+        .with_for_update()
+    )).scalar_one_or_none()
     if sub is None:
         raise HTTPException(status_code=404)
 
-    if sub.status == SubscriptionStatus.active:
-        raise HTTPException(status_code=400, detail="Нельзя удалить активную подписку. Сначала отключите её.")
-
-    # Disable active keys on VPN server before removing from DB
-    for key in sub.vpn_keys:
-        if key.status == VpnKeyStatus.active:
-            server_result = await session.execute(select(VpnServer).where(VpnServer.id == key.server_id))
-            server = server_result.scalar_one_or_none()
-            if server:
-                try:
-                    await vpn_key_service.disable_vpn_key(key, server, session)
-                except Exception:
-                    pass
+    live = [
+        key for key in sub.vpn_keys
+        if key.status in (VpnKeyStatus.active, VpnKeyStatus.error)
+    ]
+    if live:
+        raise HTTPException(
+            status_code=409,
+            detail="Нельзя удалить подписку с активным или неподтверждённо отключённым VPN-ключом.",
+        )
+    payment_exists = await session.scalar(
+        select(Payment.id).where(Payment.subscription_id == sub_id).limit(1)
+    )
+    if payment_exists is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Подписка связана с платежом и сохраняется для финансового аудита.",
+        )
 
     await session.execute(sa_delete(VpnKey).where(VpnKey.subscription_id == sub_id))
     await session.delete(sub)
-
-    log = AdminLog(
+    session.add(AdminLog(
         admin_user_id=admin.id,
-        action="delete_subscription",
+        action="delete_subscription_safe",
         target_entity="subscription",
         target_entity_id=sub_id,
         ip_address=request.client.host if request.client else None,
-    )
-    session.add(log)
+    ))
     await session.commit()
     return RedirectResponse("/admin/subscriptions", status_code=303)
