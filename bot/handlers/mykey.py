@@ -26,6 +26,21 @@ def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@router.message(Command("chrome_extension"))
+async def send_chrome_extension_only(message: Message) -> None:
+    from app.chrome_bundle import build_chrome_extension_zip
+
+    await message.answer_document(
+        BufferedInputFile(build_chrome_extension_zip(), filename="private-line-extension.zip"),
+        caption=(
+            "🌐 Расширение Private Line для Google Chrome. Распакуйте архив, "
+            "откройте chrome://extensions, включите режим разработчика и нажмите "
+            "«Загрузить распакованное». Для подключения VLESS Reality нужен "
+            "отдельный локальный Xray из комплекта /chrome."
+        ),
+    )
+
+
 @router.message(Command("chrome"))
 async def send_chrome_extension(message: Message) -> None:
     """Send the generic, credential-free Chrome client installation kit."""
@@ -85,7 +100,7 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📄 Получить файл VLESS", callback_data=f"vless_file:{key.id}")],
                 [InlineKeyboardButton(text="📷 QR-код ключа", callback_data="get_key_qr")],
-                [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP)", callback_data="chrome_download")],
+                [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP + Xray)", callback_data="chrome_download")],
             ]),
         )
     else:
