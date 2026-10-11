@@ -3,6 +3,8 @@ using System.IO.Compression;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -12,7 +14,6 @@ namespace PrivateLineSetup;
 internal static class Program
 {
     const string Marker="PRIVATE_LINE_BOOTSTRAP_V1:";
-    static readonly HttpClient Http=new(){Timeout=TimeSpan.FromSeconds(45)};
 
     [STAThread]
     static async Task Main()
@@ -36,8 +37,30 @@ internal static class Program
         }
     }
 
-    record Bootstrap(string api_base,string pair_code);
+    record Bootstrap(string api_base,string pair_code,string tls_pin);
     record PairResponse(bool ok,string device_token);
+
+    static HttpClient PinnedHttp(string pin)
+    {
+        var handler=new HttpClientHandler();
+        handler.ServerCertificateCustomValidationCallback=(request,cert,chain,errors)=>{
+            if(errors==SslPolicyErrors.None)return true;
+            if(cert is null)return false;
+            try {
+                using var rsa=cert.GetRSAPublicKey();
+                byte[] spki;
+                if(rsa is not null) spki=rsa.ExportSubjectPublicKeyInfo();
+                else {
+                    using var ecdsa=cert.GetECDsaPublicKey();
+                    if(ecdsa is null)return false;
+                    spki=ecdsa.ExportSubjectPublicKeyInfo();
+                }
+                var actual="sha256//"+Convert.ToBase64String(SHA256.HashData(spki));
+                return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actual),Encoding.ASCII.GetBytes(pin));
+            } catch {return false;}
+        };
+        return new HttpClient(handler){Timeout=TimeSpan.FromSeconds(45)};
+    }
 
     static Bootstrap ReadBootstrap()
     {
@@ -47,7 +70,7 @@ internal static class Program
         if(pos<0) throw new InvalidOperationException("BOOTSTRAP_MISSING");
         var payload=Encoding.UTF8.GetString(bytes,pos+marker.Length,bytes.Length-pos-marker.Length);
         var b=JsonSerializer.Deserialize<Bootstrap>(payload)??throw new InvalidOperationException("BOOTSTRAP_INVALID");
-        if(!Uri.TryCreate(b.api_base,UriKind.Absolute,out var u)||u.Scheme!="https"||u.AbsolutePath!="/"||string.IsNullOrWhiteSpace(b.pair_code))
+        if(!Uri.TryCreate(b.api_base,UriKind.Absolute,out var u)||u.Scheme!="https"||u.AbsolutePath!="/"||string.IsNullOrWhiteSpace(b.pair_code)||!b.tls_pin.StartsWith("sha256//",StringComparison.Ordinal))
             throw new InvalidOperationException("BOOTSTRAP_INVALID");
         return b;
     }
@@ -71,7 +94,8 @@ internal static class Program
         var zip=Path.Combine(Path.GetTempPath(),"pl-"+Guid.NewGuid().ToString("N")+".zip");
         var tmp=Path.Combine(Path.GetTempPath(),"pl-"+Guid.NewGuid().ToString("N"));
         try {
-            using var response=await Http.GetAsync("https://github.com/XTLS/Xray-core/releases/download/v26.6.27/Xray-windows-64.zip",HttpCompletionOption.ResponseHeadersRead);
+            using var publicHttp=new HttpClient(){Timeout=TimeSpan.FromSeconds(45)};
+            using var response=await publicHttp.GetAsync("https://github.com/XTLS/Xray-core/releases/download/v26.6.27/Xray-windows-64.zip",HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
             await using(var output=File.Create(zip))await response.Content.CopyToAsync(output);
             if(new FileInfo(zip).Length<1_000_000)throw new InvalidOperationException("XRAY_DOWNLOAD_INCOMPLETE");
@@ -93,16 +117,17 @@ internal static class Program
 
     static async Task Pair(Bootstrap b,string dir)
     {
-        using var res=await Http.PostAsJsonAsync(b.api_base.TrimEnd('/')+"/api/windows/enroll",new{code=b.pair_code});
+        using var http=PinnedHttp(b.tls_pin);
+        using var res=await http.PostAsJsonAsync(b.api_base.TrimEnd('/')+"/api/windows/enroll",new{code=b.pair_code});
         if(!res.IsSuccessStatusCode)throw new InvalidOperationException("PAIRING_FAILED");
         var p=await res.Content.ReadFromJsonAsync<PairResponse>()??throw new InvalidOperationException("PAIRING_RESPONSE_INVALID");
         if(!p.ok||p.device_token.Length<45)throw new InvalidOperationException("PAIRING_RESPONSE_INVALID");
         var sealedToken=ProtectedData.Protect(Encoding.UTF8.GetBytes(p.device_token),null,DataProtectionScope.CurrentUser);
-        var obj=new{api_base=b.api_base,token_dpapi=Convert.ToBase64String(sealedToken),version=2};
+        var obj=new{api_base=b.api_base,token_dpapi=Convert.ToBase64String(sealedToken),tls_pin=b.tls_pin,version=2};
         await File.WriteAllTextAsync(Path.Combine(dir,"device.json"),JsonSerializer.Serialize(obj),new UTF8Encoding(false));
         using var check=new HttpRequestMessage(HttpMethod.Get,b.api_base.TrimEnd('/')+"/api/windows/profile");
         check.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",p.device_token);
-        using var chk=await Http.SendAsync(check);if(!chk.IsSuccessStatusCode)throw new InvalidOperationException("PROFILE_UNAVAILABLE");
+        using var chk=await http.SendAsync(check);if(!chk.IsSuccessStatusCode)throw new InvalidOperationException("PROFILE_UNAVAILABLE");
     }
 
     static void CreateShortcuts(string app,string dir)
