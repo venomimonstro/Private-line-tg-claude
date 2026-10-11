@@ -19,8 +19,9 @@ internal static class Program
     static async Task Main()
     {
         ApplicationConfiguration.Initialize();
+        Bootstrap? boot=null;
         try {
-            var boot=ReadBootstrap();
+            boot=ReadBootstrap();
             var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PrivateLine");
             Directory.CreateDirectory(dir);
             var app=Path.Combine(dir,"PrivateLine.exe");
@@ -32,6 +33,9 @@ internal static class Program
             MessageBox.Show("Private Line установлен.\n\nКлиент запущен и уже привязан к вашей VPN-подписке. Ничего вводить не нужно.","Private Line",MessageBoxButtons.OK,MessageBoxIcon.Information);
         } catch(Exception ex) {
             var code=SafeCode(ex.Message);
+            if(boot is not null) {
+                try { await ReportInstallFailure(boot,code); } catch {}
+            }
             MessageBox.Show("Установка не завершена.\n\nОшибка: "+code+"\n\nСкачайте свежий персональный PrivateLineSetup.exe из админки и запустите снова.","Private Line",MessageBoxButtons.OK,MessageBoxIcon.Error);
             Environment.ExitCode=1;
         }
@@ -105,6 +109,13 @@ internal static class Program
             if(p==null)return false;var line=await p.StandardOutput.ReadLineAsync();await p.WaitForExitAsync();
             return p.ExitCode==0 && line?.StartsWith("Xray 26.6.27",StringComparison.Ordinal)==true;
         }catch{return false;}
+    }
+
+    static async Task ReportInstallFailure(Bootstrap b,string code)
+    {
+        using var http=PinnedHttp(b.tls_pin);
+        var payload=new {pair_code=b.pair_code,code,windows=Environment.OSVersion.Version.ToString(),version="2.0.0"};
+        using var response=await http.PostAsJsonAsync(b.api_base.TrimEnd('/')+"/api/windows/install-report",payload);
     }
 
     static async Task Pair(Bootstrap b,string dir)
