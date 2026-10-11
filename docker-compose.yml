@@ -1,51 +1,13 @@
 services:
   bot:
-    build: .
+    image: private-line-app:runtime
     command: python -m bot.main
     env_file: .env
     environment:
       - PYTHONPATH=/app
+    # Production application code is immutable inside the image. Only runtime
+    # state is bind-mounted; git operations cannot mutate a running process.
     volumes:
-      - type: bind
-        source: ./app
-        target: /app/app
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./bot
-        target: /app/bot
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./backup_manager
-        target: /app/backup_manager
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./health_monitor
-        target: /app/health_monitor
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./update_manager
-        target: /app/update_manager
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./scheduler
-        target: /app/scheduler
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./alembic
-        target: /app/alembic
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./migrations
-        target: /app/migrations
-        bind:
-          create_host_path: false
       - type: bind
         source: ./data
         target: /app/data
@@ -65,6 +27,51 @@ services:
     mem_limit: 512m
     depends_on:
       db:
+        condition: service_healthy
+    networks:
+      - privateline
+
+  admin:
+    image: private-line-app:runtime
+    build:
+      context: .
+    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="*"
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backups
+        target: /app/backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /app/logs
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - privateline
+
+  db:
         condition: service_healthy
     networks:
       - privateline
