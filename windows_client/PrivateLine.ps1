@@ -118,7 +118,7 @@ function Connect-Client {
     $script:Stage.Clear()
     try {
         Check-Xray
-        $text=$Profile.Text.Trim()
+        $text=$ProfileInput.Text.Trim()
         if(-not $text -and (Test-Path $ConfigFile)){
             Add-Stage "parse" "ok" "SAVED_PROFILE"
         }else{
@@ -158,7 +158,7 @@ function Connect-Client {
         Set-ItemProperty -Path $settingsPath -Name ProxyServer -Value ("socks=127.0.0.1:"+$Port)
         Set-ItemProperty -Path $settingsPath -Name ProxyEnable -Value 1
         Add-Stage "proxy" "ok" "WINDOWS_USER_PROXY_ENABLED"
-        $Profile.Text=""
+        $ProfileInput.Text=""
         Show-Info "Подключено. Внешний VPN IP: $result. Настроен прокси Windows/Chrome (НЕ системный VPN)."
     }catch{
         $code="$($_.Exception.Message)"
@@ -191,7 +191,7 @@ $form.Font=New-Object Drawing.Font("Segoe UI",10)
 function Label($text,$y){$l=New-Object Windows.Forms.Label;$l.Text=$text;$l.Location=New-Object Drawing.Point(20,$y);$l.Size=New-Object Drawing.Size(515,25);$form.Controls.Add($l)}
 Label "PRIVATE LINE  •  Windows клиент" 18
 Label "Вставьте VLESS Reality ключ из Telegram-бота:" 65
-$Profile=New-Object Windows.Forms.TextBox;$Profile.Multiline=$true;$Profile.ScrollBars="Vertical";$Profile.Location=New-Object Drawing.Point(20,98);$Profile.Size=New-Object Drawing.Size(510,95);$form.Controls.Add($Profile)
+$ProfileInput=New-Object Windows.Forms.TextBox;$ProfileInput.Multiline=$true;$ProfileInput.ScrollBars="Vertical";$ProfileInput.Location=New-Object Drawing.Point(20,98);$ProfileInput.Size=New-Object Drawing.Size(510,95);$form.Controls.Add($ProfileInput)
 $connect=New-Object Windows.Forms.Button;$connect.Text="Подключить";$connect.Location=New-Object Drawing.Point(20,205);$connect.Size=New-Object Drawing.Size(248,40);$form.Controls.Add($connect)
 $disconnect=New-Object Windows.Forms.Button;$disconnect.Text="Отключить";$disconnect.Location=New-Object Drawing.Point(283,205);$disconnect.Size=New-Object Drawing.Size(247,40);$form.Controls.Add($disconnect)
 $Status=New-Object Windows.Forms.Label;$Status.Text="Готово. Windows HTTP/Chrome через локальный SOCKS5. Не системный VPN.";$Status.Location=New-Object Drawing.Point(20,258);$Status.Size=New-Object Drawing.Size(510,60);$form.Controls.Add($Status)
