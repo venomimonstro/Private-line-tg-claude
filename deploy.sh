@@ -9,7 +9,7 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 BRANCH="${1:-$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref HEAD)}"
-HEALTH_URL="http://localhost/_health"
+HEALTH_URL="http://127.0.0.1:8000/_health"
 HEALTH_RETRIES=8
 HEALTH_WAIT=4
 SPRINT_DIR="$DEPLOY_DIR/sprints"
