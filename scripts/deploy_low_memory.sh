@@ -87,7 +87,7 @@ WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
 if ! docker image inspect "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1; then
   docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
 fi
-rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe
+rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
 mkdir -p data/windows_dist
 docker run --rm -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" bash windows_native/build.sh || fail "native Windows installer build failed"
 [[ -s data/windows_dist/PrivateLineSetup.exe ]] || fail "PrivateLineSetup.exe was not produced"
