@@ -39,6 +39,10 @@ internal static class Program
             MessageBox.Show("Private Line установлен.\n\nКлиент запущен и уже привязан к вашей VPN-подписке. Ничего вводить не нужно.","Private Line",MessageBoxButtons.OK,MessageBoxIcon.Information);
         } catch(Exception ex) {
             var code=SafeCode(ex.Message);
+            try {
+                File.WriteAllText(Path.Combine(dir,"install-error.txt"),
+                    DateTime.UtcNow.ToString("O")+" "+code+Environment.NewLine, new UTF8Encoding(false));
+            } catch {}
             if(boot is not null) {
                 try { await ReportInstallFailure(boot,code); } catch {}
             }
