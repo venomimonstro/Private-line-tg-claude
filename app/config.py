@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # LAVA
     LAVA_PROJECT_ID: str = ""
     LAVA_SECRET_KEY: str = ""
+    LAVA_WEBHOOK_SECRET: str = ""
 
     # YooKassa
     YOOKASSA_SHOP_ID: str = ""
