@@ -66,8 +66,11 @@ async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
     return None
 
 
-async def create_enrollment(session: AsyncSession, user_id: int) -> tuple[str, str, str]:
-    base = public_base_url()
+async def create_enrollment(session: AsyncSession, user_id: int, *, base_url: str | None = None) -> tuple[str, str, str]:
+    base = (base_url or "").strip().rstrip("/") or public_base_url()
+    url = urlsplit(base)
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
+        raise ValueError("Windows installer requires an HTTPS control-plane origin")
     pin = (settings.CONTROL_PLANE_TLS_PIN or "").strip()
     if not pin.startswith("sha256//") or len(pin) < 50:
         raise ValueError("CONTROL_PLANE_TLS_PIN is not configured for Windows enrollment")
