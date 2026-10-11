@@ -73,4 +73,9 @@ async def accept_rules_only(callback: CallbackQuery, db_user: User) -> None:
     await callback.message.edit_text(  # type: ignore[union-attr]
         "✅ Условия приняты. Добро пожаловать в Private Line!"
     )
+    from bot.keyboards.main_menu import main_menu_keyboard
+    await callback.message.answer(  # type: ignore[union-attr]
+        "Главное меню:",
+        reply_markup=main_menu_keyboard(),
+    )
     await callback.answer()
