@@ -21,6 +21,11 @@ from app.models.admin_log import AdminLog
 from app.models.app_setting import AppSetting
 from app.models.user import User
 from app.models.vpn_server import VpnServer
+from app.services.node_ssh import (
+    clear_node_ssh_access,
+    get_node_ssh_access,
+    set_node_ssh_access,
+)
 from app.vpn.outline import OutlineClient
 
 router = APIRouter(prefix="/servers")
@@ -415,6 +420,81 @@ async def update_server_creds(
         server.api_url = marzban_api_url
     server.status = VpnServerStatus.disabled
     server.is_selectable = False
+    await session.commit()
+    return RedirectResponse("/admin/servers", status_code=303)
+
+
+@router.post("/{server_id}/ssh-access")
+async def update_node_ssh_access(
+    server_id: int,
+    request: Request,
+    ssh_host: str = Form(...),
+    ssh_port: int = Form(22),
+    ssh_username: str = Form("root"),
+    ssh_auth_type: str = Form("password"),
+    ssh_secret: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse:
+    server = await session.get(VpnServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404)
+
+    # Blank secret means "keep the existing one" only when the authentication
+    # type is unchanged. Secrets are never rendered back into the HTML form.
+    secret = ssh_secret
+    if not secret and server.ssh_configured and server.ssh_auth_type == ssh_auth_type:
+        secret = get_node_ssh_access(server).secret
+
+    try:
+        set_node_ssh_access(
+            server,
+            host=ssh_host,
+            port=ssh_port,
+            username=ssh_username,
+            auth_type=ssh_auth_type,
+            secret=secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    session.add(AdminLog(
+        admin_user_id=admin.id,
+        action="update_node_ssh_access",
+        target_entity="vpn_server",
+        target_entity_id=server_id,
+        details={
+            "host": server.ssh_host,
+            "port": server.ssh_port,
+            "username": server.ssh_username,
+            "auth_type": server.ssh_auth_type,
+            "secret_changed": bool(ssh_secret),
+        },
+        ip_address=request.client.host if request.client else None,
+    ))
+    await session.commit()
+    return RedirectResponse("/admin/servers", status_code=303)
+
+
+@router.post("/{server_id}/ssh-access/clear")
+async def clear_node_ssh_access_route(
+    server_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_super_admin),
+) -> RedirectResponse:
+    server = await session.get(VpnServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404)
+    clear_node_ssh_access(server)
+    session.add(AdminLog(
+        admin_user_id=admin.id,
+        action="clear_node_ssh_access",
+        target_entity="vpn_server",
+        target_entity_id=server_id,
+        details={},
+        ip_address=request.client.host if request.client else None,
+    ))
     await session.commit()
     return RedirectResponse("/admin/servers", status_code=303)
 
