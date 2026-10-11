@@ -147,6 +147,31 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MarzbanConfigError):
             await client.create_key("u1s1")
 
+    async def test_delete_accepts_transport_loss_when_fresh_get_confirms_absent(self):
+        client = await self.make_client(lambda req: httpx.Response(200, json={}))
+        client._client.delete = AsyncMock(
+            side_effect=httpx.RemoteProtocolError("server disconnected")
+        )
+        client.user_absent = AsyncMock(return_value=True)
+        client.restart_core_with_db_users = AsyncMock()
+
+        await client.delete_key("pltest_0123456789abcdef")
+
+        client.user_absent.assert_awaited_once_with("pltest_0123456789abcdef")
+        client.restart_core_with_db_users.assert_awaited_once()
+
+    async def test_delete_fails_closed_when_transport_loss_cannot_be_verified(self):
+        client = await self.make_client(lambda req: httpx.Response(200, json={}))
+        client._client.delete = AsyncMock(
+            side_effect=httpx.RemoteProtocolError("server disconnected")
+        )
+        client.user_absent = AsyncMock(return_value=False)
+        client.restart_core_with_db_users = AsyncMock()
+
+        with self.assertRaises(MarzbanConfigError):
+            await client.delete_key("pltest_0123456789abcdef")
+        client.restart_core_with_db_users.assert_not_awaited()
+
     async def test_pagination_includes_every_user(self):
         offsets = []
 
