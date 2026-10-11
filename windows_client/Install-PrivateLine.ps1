@@ -22,7 +22,7 @@ function ErrorMessage([string]$reason) {
     if ($safe.Length -gt 200) { $safe = $safe.Substring(0,200) }
     Write-Host ("[ERROR] " + $safe) -ForegroundColor Red
     [void][System.Windows.Forms.MessageBox]::Show(
-        ("Установка НЕ завершена.\n\n" + $safe + "\n\nПовторите запуск INSTALL-WINDOWS.cmd.\nФайл статуса: " + $InstallerLog),
+        ("Установка НЕ завершена." + [Environment]::NewLine + [Environment]::NewLine + $safe + [Environment]::NewLine + [Environment]::NewLine + "Повторите запуск INSTALL-WINDOWS.cmd." + [Environment]::NewLine + "Диагностика: " + $InstallerLog),
         "Private Line | Ошибка установки",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Error
@@ -126,7 +126,7 @@ try {
     Write-Host "[5/5] Opening Private Line..." -ForegroundColor Cyan
     Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
     # Using the same launcher as the desktop shortcut validates the real path.
-    $appProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", ('"' + $launcher + '"')) -WorkingDirectory $InstallDir -PassThru
+    $appProcess = Start-Process -FilePath "powershell.exe" -ArgumentList ("-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File " + [char]34 + $InstalledClient + [char]34) -WorkingDirectory $InstallDir -PassThru
     $opened = $false
     for ($i = 0; $i -lt 35; $i++) {
         Start-Sleep -Milliseconds 300
@@ -154,7 +154,7 @@ try {
     Write-Host "Desktop shortcut: Private Line"
     Write-Host "Now paste your VLESS key into the application and press Connect."
     [void][System.Windows.Forms.MessageBox]::Show(
-        "Установка завершена!\n\nXray 26.6.27 проверен.\nЯрлык Private Line создан на рабочем столе.\nОкно клиента запущено.\n\nВажно: VPN подключится только после ввода ключа и нажатия «Подключить».",
+        ("Установка завершена!" + [Environment]::NewLine + [Environment]::NewLine + "Xray 26.6.27 проверен." + [Environment]::NewLine + "Ярлык Private Line создан на рабочем столе." + [Environment]::NewLine + "Окно клиента запущено." + [Environment]::NewLine + [Environment]::NewLine + "Важно: VPN подключится только после ввода ключа и нажатия «Подключить»."),
         "Private Line | Установлено",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information
