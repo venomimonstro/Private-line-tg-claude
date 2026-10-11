@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal, InvalidOperation
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -52,27 +53,46 @@ async def payment_webhook(
     body = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
 
+    # YooMoney's "test notification" is a connectivity check, not a payment.
+    # Their UI can send an empty test request; acknowledge only this explicit
+    # non-payment case without requiring a payment signature.
+    yoomoney_test = False
+    if provider_name == "yoomoney":
+        try:
+            ym = parse_qs(
+                body.decode("utf-8", errors="strict"),
+                keep_blank_values=True,
+            )
+            yoomoney_test = (
+                not body
+                or (ym.get("test_notification", ["false"])[0].lower() == "true")
+            )
+        except Exception:
+            yoomoney_test = False
+
     try:
         incoming = await provider.verify_webhook(body, headers)
     finally:
         await provider.aclose()
     if incoming is None:
+        if provider_name == "yoomoney" and yoomoney_test:
+            return {"status": "ok", "detail": "test_notification"}
         logger.warning("Webhook signature verification failed for provider %s", provider_name)
+        # Never ACK an invalid real notification. FreeKassa retries until it
+        # receives the literal YES; YooMoney/YooKassa retry non-success delivery.
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
-            return PlainTextResponse("YES")
-        # Return 200 for YooMoney — they retry on non-200, causing noise in logs.
-        # Returning 400 also breaks their URL validation check.
-        if provider_name == "yoomoney":
-            return {"status": "error", "detail": "invalid_signature"}
-        raise HTTPException(status_code=400, detail="Invalid signature")
+            return PlainTextResponse("INVALID", status_code=403)
+        raise HTTPException(status_code=403, detail="Invalid signature")
 
     result = await session.get(Payment, incoming.our_payment_id)
     if result is None:
         logger.error("Payment %d not found (provider: %s)", incoming.our_payment_id, provider_name)
-        # Return success to prevent infinite retries for unknown payments
+        # This can be a commit race: the provider can deliver faster than our
+        # checkout transaction becomes visible. Do not acknowledge it as
+        # processed; ask the provider to retry.
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
-            return PlainTextResponse("YES")
-        return {"status": "ok"}
+            return PlainTextResponse("RETRY", status_code=503)
+        raise HTTPException(status_code=503, detail="Payment record not ready")
 
     logger.info(
         "Webhook payment lookup: id=%d provider=%s status=%s amount=%s",
@@ -101,8 +121,8 @@ async def payment_webhook(
             result.id, provider_ok, currency_ok, amount_ok,
         )
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
-            return PlainTextResponse("YES")
-        raise HTTPException(status_code=400, detail="Payment does not match order")
+            return PlainTextResponse("MISMATCH", status_code=409)
+        raise HTTPException(status_code=409, detail="Payment does not match order")
 
     if result.status == PaymentStatus.paid:
         # A provider retry is also a recovery signal for the durable state
