@@ -24,6 +24,8 @@ for name in     install_node.sh     scripts/update_node_xray.sh     scripts/prob
     scripts/validate_install_layout.sh \
     scripts/migrate_marzban_env_admin.sh \
     scripts/migrate_reality_target.sh \
+    scripts/update_production.sh \
+    update.sh \
     scripts/restore_postgres_backup.sh \
     scripts/restore.sh \
     scripts/verify_backup.sh; do
