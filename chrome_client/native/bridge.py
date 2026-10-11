@@ -250,8 +250,18 @@ def real_https_egress() -> str:
                 response += chunk
     if not response.startswith(b"HTTP/1.1 200") and not response.startswith(b"HTTP/1.0 200"):
         raise ValueError("VLESS работает, но HTTPS-проверка не прошла")
-    body = response.split(b"\r\n\r\n", 1)[1].strip()
-    first = body.split(b"\r\n", 1)[0].decode("ascii", "ignore").strip()
+    headers, body = response.split(b"\r\n\r\n", 1)
+    if b"transfer-encoding: chunked" in headers.lower():
+        # Parse one small chunk containing the textual IP address.
+        chunk_size_hex, sep, chunk_body = body.partition(b"\r\n")
+        if not sep:
+            raise ValueError("Пустой HTTPS-ответ")
+        try:
+            chunk_size = int(chunk_size_hex.split(b";", 1)[0], 16)
+        except ValueError as exc:
+            raise ValueError("Некорректный HTTPS chunked-ответ") from exc
+        body = chunk_body[:chunk_size]
+    first = body.decode("ascii", "ignore").strip()
     try:
         address = ipaddress.ip_address(first)
         if not address.is_global:
@@ -307,6 +317,17 @@ def start_saved() -> dict:
 
     if socks_ready():
         return {"ok": False, "error": f"Порт SOCKS5 {SOCKS_PORT} занят другой программой"}
+
+    try:
+        profile = json.loads(conf.read_text(encoding="utf-8"))
+        destination = profile["outbounds"][0]["settings"]["vnext"][0]
+        with socket.create_connection((destination["address"], int(destination["port"])), timeout=5):
+            pass
+    except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
+        return {
+            "ok": False,
+            "error": "Нет TCP-соединения с VPN-нодой из вашей сети. Проверьте доступ к IP:443 и блокировки провайдера."
+        }
 
     with open(home() / "xray.log", "ab") as log:
         kwargs = {}
