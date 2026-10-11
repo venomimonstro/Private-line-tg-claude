@@ -209,6 +209,16 @@ if [[ "$PREV_COMMIT" == "$NEW_COMMIT" ]]; then
 fi
 
 log "New commit: ${NEW_COMMIT:0:7}"
+
+# Prepare the encrypted ingress while the old application is still running.
+# This writes only the public URL/SPKI pin to .env and preserves an existing
+# valid certificate.
+bash scripts/validate_install_layout.sh
+bash scripts/ensure_control_plane_tls.sh
+[[ -s nginx/ssl/cert.pem && -s nginx/ssl/key.pem ]] \
+    || fail "Control-plane TLS certificate/key are missing"
+docker compose config -q
+
 CHANGELOG=$(git log --oneline "${PREV_COMMIT}..${NEW_COMMIT}" 2>/dev/null | head -30 || true)
 echo "$CHANGELOG" | sed 's/^/    ► /'
 
@@ -324,6 +334,13 @@ if [[ "$SYNTAX_ERRORS" -gt 0 ]]; then
     auto_rollback "Found $SYNTAX_ERRORS Python syntax errors — deploy aborted before any changes"
 fi
 ok "New code valid: $CHECKED files, 0 errors"
+
+log "🔍 Validating production shell scripts..."
+for script in release.sh deploy.sh scripts/*.sh install_node.sh install_main.sh fix_reality.sh; do
+    [[ -f "$script" ]] || continue
+    bash -n "$script" || auto_rollback "Shell syntax failed: $script"
+done
+ok "Shell syntax passed"
 
 # Production code is immutable inside one shared image. Build every release
 # before cutover; the currently running containers keep their old image.
