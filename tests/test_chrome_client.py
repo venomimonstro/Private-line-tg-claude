@@ -8,7 +8,7 @@ import pathlib
 import unittest
 import zipfile
 
-from app.chrome_bundle import build_chrome_bundle, FILES, ROOT
+from app.chrome_bundle import build_chrome_bundle, build_chrome_extension_zip, FILES, ROOT
 
 BRIDGE_SOURCE = ROOT / "native" / "bridge.py"
 spec = importlib.util.spec_from_file_location("private_line_chrome_bridge", BRIDGE_SOURCE)
@@ -36,6 +36,16 @@ class ChromeClientTests(unittest.TestCase):
             self.assertIn("background.js", manifest["background"]["service_worker"])
             self.assertNotIn("client.json", archive.namelist())
             self.assertNotIn(".env", archive.namelist())
+
+    def test_extension_only_zip_has_manifest_at_root(self):
+        with zipfile.ZipFile(io.BytesIO(build_chrome_extension_zip())) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertIn("manifest.json", archive.namelist())
+            self.assertIn("background.js", archive.namelist())
+            self.assertIn("popup.html", archive.namelist())
+            self.assertNotIn("extension/manifest.json", archive.namelist())
+            self.assertNotIn("native/bridge.py", archive.namelist())
+            self.assertEqual(json.loads(archive.read("manifest.json"))["manifest_version"], 3)
 
     def test_reality_url_builds_isolated_local_socks_config(self):
         config = bridge.config_from_vless(TEST_URL)
