@@ -52,7 +52,10 @@ async def payment_webhook(
     body = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
 
-    incoming = await provider.verify_webhook(body, headers)
+    try:
+        incoming = await provider.verify_webhook(body, headers)
+    finally:
+        await provider.aclose()
     if incoming is None:
         logger.warning("Webhook signature verification failed for provider %s", provider_name)
         if provider_name in _PLAINTEXT_YES_PROVIDERS:
