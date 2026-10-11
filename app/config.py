@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     BACKUP_DIR: str = "./backups"
     APP_DIR: str = "."
     MAINTENANCE_MODE: bool = False
+    CONTROL_PLANE_PUBLIC_URL: str = ""
+    CONTROL_PLANE_TLS_PIN: str = ""
 
     # Admin session
     SESSION_TIMEOUT_MINUTES: int = 60
