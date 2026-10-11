@@ -44,12 +44,25 @@ HEAD="$(git rev-parse HEAD)"
 CODE_CHANGED="${PRIVATE_LINE_CODE_CHANGED:-1}"
 
 echo "=== CONTROL PLANE ==="
-if [[ "$CODE_CHANGED" == "1" ]]; then
+WINDOWS_SOURCE_HASH="$(
+    find windows_native -type f       ! -path '*/bin/*' ! -path '*/obj/*'       ! -path '*/out-client/*' ! -path '*/out-installer/*'       ! -path '*/Payload/*.exe' -print0 2>/dev/null     | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | awk '{print $1}'
+)"
+WINDOWS_HASH_FILE="$ROOT/data/windows_dist/.source.sha256"
+WINDOWS_EXE="$ROOT/data/windows_dist/PrivateLineSetup.exe"
+WINDOWS_STALE=true
+if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]]    && [[ "$(cat "$WINDOWS_HASH_FILE")" == "$WINDOWS_SOURCE_HASH" ]]    && [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]]; then
+    WINDOWS_STALE=false
+fi
+
+if [[ "$CODE_CHANGED" == "1" || "$WINDOWS_STALE" == true ]]; then
+    if [[ "$WINDOWS_STALE" == true ]]; then
+        echo "Windows installer is missing/stale; deployment is required."
+    fi
     bash scripts/deploy_low_memory.sh
 else
     RUNNING_COUNT="$(docker compose ps --status running -q db admin bot nginx | sed '/^$/d' | wc -l)"
     if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1 && [[ "$RUNNING_COUNT" -eq 4 ]]; then
-        echo "PASS: no new control-plane commit; all four core services are healthy"
+        echo "PASS: no new control-plane commit; Windows installer current; all four core services are healthy"
     else
         echo "Control plane is not fully healthy; running recovery deploy."
         bash scripts/deploy_low_memory.sh
