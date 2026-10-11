@@ -9,7 +9,8 @@ function busy(flag) { for (const id of buttons) $(id).disabled = flag; }
 function render(s) {
   $("status-dot").className = "dot" + (s.connected ? " on" : (s.proxy && !s.running ? " error" : ""));
   $("status-title").textContent = s.connected ? "VPN подключён" : "VPN отключён";
-  $("status-detail").textContent = s.connected ? "SOCKS5 · локальный Xray" :
+  $("status-detail").textContent = s.connected ? "HTTPS проверен через VPN" :
+    s.proxy && s.running && !s.verified ? "Xray запущен, VPN-туннель не подтверждён" :
     s.proxy && !s.running ? "Прокси включён, Xray недоступен" :
     s.installed ? "Готов к подключению" : "Нужна установка локального клиента";
   $("saved").hidden = !s.hasProfile;
