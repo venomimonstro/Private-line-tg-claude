@@ -35,3 +35,18 @@ def build_chrome_bundle() -> bytes:
                 raise ValueError(f"Chrome client source too large: {relative}")
             archive.writestr(relative, data)
     return sink.getvalue()
+
+
+def build_chrome_extension_zip() -> bytes:
+    """Standard extension-only archive with manifest.json at ZIP root.
+
+    Extract this ZIP and choose its extracted directory in chrome://extensions
+    -> Load unpacked. Chrome won't one-click install arbitrary external ZIP/CRX.
+    """
+    sources = tuple(item for item in FILES if item.startswith("extension/"))
+    result = io.BytesIO()
+    with zipfile.ZipFile(result, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=8) as archive:
+        for relative in sources:
+            payload = (ROOT / relative).read_bytes()
+            archive.writestr(relative.removeprefix("extension/"), payload)
+    return result.getvalue()
