@@ -5,15 +5,12 @@ OUT="$ROOT/data/windows_dist"
 WORK="$ROOT/windows_native"
 PAYLOAD="$WORK/PrivateLine.Installer/Payload"
 mkdir -p "$OUT" "$PAYLOAD"
-rm -f "$OUT/PrivateLineSetup.exe" "$PAYLOAD/PrivateLine.exe" "$PAYLOAD/xray.exe"
+rm -f "$OUT/PrivateLineSetup.exe" "$PAYLOAD/xray.exe"
 
 if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends curl unzip ca-certificates >/dev/null
 fi
-
-dotnet publish "$WORK/PrivateLine.Client/PrivateLine.Client.csproj" -c Release -r win-x64 --self-contained false -o "$WORK/out-client" -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false
-cp "$WORK/out-client/PrivateLine.exe" "$PAYLOAD/PrivateLine.exe"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
