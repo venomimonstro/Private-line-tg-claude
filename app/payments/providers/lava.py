@@ -26,9 +26,15 @@ class LavaProvider(PaymentProviderBase):
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    def _sign(self, data: dict) -> str:
-        body = json.dumps(data, sort_keys=True, ensure_ascii=False)
-        return hmac.new(self._secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    def _signed_body(self, data: dict) -> tuple[bytes, str]:
+        # LAVA signs the exact raw JSON bytes sent over HTTP.
+        body = json.dumps(
+            data, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        signature = hmac.new(
+            self._secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+        return body, signature
 
     async def create_payment(
         self,
@@ -44,11 +50,15 @@ class LavaProvider(PaymentProviderBase):
             "shopId": self._project_id,
             "sum": round(amount, 2),
         }
-        sign = self._sign(payload)
+        body, sign = self._signed_body(payload)
         resp = await self._http.post(
             self._API_URL,
-            json=payload,
-            headers={"Signature": sign, "Content-Type": "application/json"},
+            content=body,
+            headers={
+                "Accept": "application/json",
+                "Signature": sign,
+                "Content-Type": "application/json",
+            },
         )
         resp.raise_for_status()
         data = resp.json()
@@ -63,13 +73,10 @@ class LavaProvider(PaymentProviderBase):
             "shopId": self._project_id,
             "orderId": str(order_id),
         }
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        signature = hmac.new(
-            self._secret.encode(), body.encode(), hashlib.sha256
-        ).hexdigest()
+        body, signature = self._signed_body(payload)
         response = await self._http.post(
             "https://api.lava.ru/business/invoice/status",
-            content=body.encode(),
+            content=body,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
