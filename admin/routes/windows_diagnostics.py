@@ -138,15 +138,17 @@ async def download_personal_windows_client(user_id: int | None = None,
                                            db: AsyncSession = Depends(get_async_session)):
     from io import BytesIO
     from fastapi.responses import StreamingResponse
-    from app.windows_bundle import build_windows_client
     from app.windows_enrollment import create_enrollment
+    from app.windows_native_installer import build_personal_windows_exe
     try:
         base, code = await create_enrollment(db, user_id if user_id is not None else admin.id)
+        payload = build_personal_windows_exe(base_url=base, pairing_code=code)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="Native Windows installer is not built on this server") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    payload = build_windows_client(base_url=base, pairing_code=code)
-    return StreamingResponse(BytesIO(payload), media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="private-line-windows-personal.zip"',
+    return StreamingResponse(BytesIO(payload), media_type="application/vnd.microsoft.portable-executable",
+        headers={"Content-Disposition": 'attachment; filename="PrivateLineSetup.exe"',
                  "Cache-Control": "private, no-store", "X-Content-Type-Options":"nosniff"})
 
 
