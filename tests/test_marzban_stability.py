@@ -24,6 +24,16 @@ LINK = (
 )
 
 
+class ConstructorRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_always_initializes_http_transport(self):
+        client = MarzbanClient("http://127.0.0.1:2096", "admin", "test")
+        try:
+            self.assertTrue(hasattr(client, "_client"))
+            self.assertIsInstance(client._client, httpx.AsyncClient)
+        finally:
+            await client.aclose()
+
+
 class ClientTests(unittest.IsolatedAsyncioTestCase):
     async def make_client(self, handler):
         def routed(req):
