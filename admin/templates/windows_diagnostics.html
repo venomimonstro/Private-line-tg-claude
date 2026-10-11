@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card p-3 mb-3">
+  <h6>Windows-клиент и отчёты</h6>
+  <p class="text-muted small">Отправка только после нажатия пользователем «Отправить диагностику». Не принимаем VLESS-ссылки, UUID, пароли, сырые логи или IP.</p>
+  <a class="btn btn-primary mb-3" href="/admin/windows-client/download">Скачать Windows-клиент (ZIP)</a>
+  <label class="form-label">Ключ приёма диагностики (введите в Windows-клиенте один раз)</label>
+  <input class="form-control font-monospace" type="password" value="{{ token }}" id="diag-token" readonly onclick="this.select()">
+  <button class="btn btn-outline-secondary mt-2" onclick="navigator.clipboard.writeText(document.getElementById('diag-token').value)">Копировать ключ</button>
+  <p class="small text-muted mt-2">Ключ разрешает загружать только ограниченные отчёты. Не публикуйте его открыто. Для клиентского публичного сервиса потребуется персональная авторизация вместо общего ключа.</p>
+</div>
+{% for report in reports %}
+<div class="card p-3 mb-2">
+  <div class="fw-semibold">Отчёт {{ report.id }} · {{ report.at }} · Windows {{ report.details.windows }} · клиент {{ report.details.version }}</div>
+  <div class="mt-2 d-flex gap-2 flex-wrap">
+  {% for stage in report.details.stages %}
+    <span class="badge {% if stage.result == 'ok' %}bg-success{% elif stage.result == 'failed' %}bg-danger{% else %}bg-secondary{% endif %}">{{ stage.stage }}: {{ stage.result }} / {{ stage.code }}</span>
+  {% endfor %}
+  </div>
+</div>
+{% else %}
+<p class="text-muted">Отчётов пока нет.</p>
+{% endfor %}
+{% endblock %}
