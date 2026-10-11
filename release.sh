@@ -270,6 +270,35 @@ if [[ "$SYNTAX_ERRORS" -gt 0 ]]; then
 fi
 ok "New code valid: $CHECKED files, 0 errors"
 
+# Rebuild application images when runtime dependencies or the base image changed.
+# A plain docker restart never applies Dockerfile/requirements changes.
+REBUILD_REQUIRED=0
+if git diff --name-only "$PREV_COMMIT" "$NEW_COMMIT" -- Dockerfile requirements.txt \
+    | grep -q .; then
+    REBUILD_REQUIRED=1
+    log "📦 Runtime dependencies changed; rebuilding sequentially..."
+    if ! COMPOSE_PARALLEL_LIMIT=1 docker compose build admin bot; then
+        auto_rollback "Application image rebuild failed"
+    fi
+    ok "Application images rebuilt"
+fi
+
+# Run the regression suite before touching the database. Use a fresh container
+# when images were rebuilt so tests exercise the image that will be deployed.
+log "🧪 Running production regression tests before migrations..."
+if [[ "$REBUILD_REQUIRED" -eq 1 ]]; then
+    if ! docker compose run --rm --no-deps admin \
+        python -m unittest discover -s /app/tests -p 'test_*.py' -q; then
+        auto_rollback "Regression tests failed in rebuilt application image"
+    fi
+else
+    if ! docker compose exec -T admin \
+        python -m unittest discover -s /app/tests -p 'test_*.py' -q; then
+        auto_rollback "Regression tests failed"
+    fi
+fi
+ok "Regression tests passed"
+
 # ── Step 6: Run DB migrations ─────────────────────────────────────────────────
 log "🗄  [6/8] Running database migrations..."
 # A failing Alembic invocation may already have committed an earlier revision.
@@ -280,12 +309,37 @@ if ! docker compose exec -T admin alembic upgrade head 2>&1 | tee /tmp/alembic_l
 fi
 ok "Migrations applied"
 
-# ── Step 7: Restart services ──────────────────────────────────────────────────
-log "🔄 [7/8] Restarting services..."
-docker compose restart admin bot 2>&1 | sed 's/^/    /'
+# ── Step 7: Recreate stateless services sequentially ─────────────────────────
+log "🔄 [7/8] Applying compose/image changes sequentially..."
 
-# reload nginx gracefully
-docker compose exec -T nginx nginx -s reload 2>/dev/null || docker compose restart nginx 2>/dev/null || true
+docker compose up -d --no-deps --force-recreate admin 2>&1 | sed 's/^/    /'
+ADMIN_READY=0
+for i in $(seq 1 30); do
+    if curl -sf --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; then
+        ADMIN_READY=1
+        break
+    fi
+    sleep 2
+done
+[[ "$ADMIN_READY" -eq 1 ]] || auto_rollback "Admin did not become healthy after recreate"
+
+docker compose up -d --no-deps --force-recreate bot 2>&1 | sed 's/^/    /'
+sleep 3
+docker compose ps --status running -q bot | grep -q . \
+    || auto_rollback "Bot did not remain running after recreate"
+
+# nginx config is bind-mounted; validate before reload. If compose itself
+# changed, recreate nginx so port/mount changes also take effect.
+docker compose exec -T nginx nginx -t >/dev/null 2>&1 \
+    || auto_rollback "nginx configuration is invalid"
+if git diff --name-only "$PREV_COMMIT" "$NEW_COMMIT" -- docker-compose.yml \
+    | grep -q .; then
+    docker compose up -d --no-deps --force-recreate nginx >/dev/null \
+        || auto_rollback "nginx recreate failed"
+else
+    docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 \
+        || auto_rollback "nginx reload failed"
+fi
 
 # ── Step 8: Health check ──────────────────────────────────────────────────────
 log "🏥 [8/8] Health check (up to $((HEALTH_RETRIES * HEALTH_WAIT))s)..."
