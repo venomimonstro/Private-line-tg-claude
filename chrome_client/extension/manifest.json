@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Private Line VPN",
+  "version": "1.0.0",
+  "description": "Управление VLESS Reality через локальный Xray. Не передаёт ключи расширению после подключения.",
+  "permissions": [
+    "proxy",
+    "storage",
+    "nativeMessaging"
+  ],
+  "action": {
+    "default_title": "Private Line VPN",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "minimum_chrome_version": "109"
+}
