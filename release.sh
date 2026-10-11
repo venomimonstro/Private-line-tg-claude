@@ -338,6 +338,12 @@ if ! docker compose exec -T admin alembic upgrade head 2>&1 | tee /tmp/alembic_l
 fi
 ok "Migrations applied"
 
+log "🔐 Encrypting any legacy plaintext integration secrets..."
+if ! docker compose exec -T admin python -m app.migrate_secret_settings --apply; then
+    auto_rollback "Integration secret migration failed"
+fi
+ok "Integration secrets are encrypted at rest"
+
 # ── Step 7: Recreate stateless services sequentially ─────────────────────────
 log "🔄 [7/8] Applying compose/image changes sequentially..."
 
