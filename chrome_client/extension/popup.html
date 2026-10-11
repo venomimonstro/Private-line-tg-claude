@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private Line VPN</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main>
+  <header><div class="brand-mark">P</div><div><strong>Private Line</strong><small>Secure browser connection</small></div></header>
+  <div class="status"><span id="status-dot" class="dot"></span><div><b id="status-title">Проверка подключения</b><p id="status-detail">Локальный клиент Xray</p></div></div>
+  <label for="vless">VLESS Reality профиль</label>
+  <textarea id="vless" rows="4" spellcheck="false" autocomplete="off" placeholder="vless://UUID@IP:443?security=reality&..."></textarea>
+  <p class="hint">Профиль хранится локально у вас на компьютере. Вставьте ключ из Telegram-бота.</p>
+  <button id="connect" class="primary">Подключить VPN</button>
+  <button id="saved" class="secondary">Подключить сохранённый профиль</button>
+  <button id="disconnect" class="muted">Отключить</button>
+  <p id="message" role="status" aria-live="polite"></p>
+  <footer>Защищает трафик Chrome через локальный Xray. Не является системным VPN.</footer>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>
