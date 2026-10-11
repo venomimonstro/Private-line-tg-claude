@@ -99,7 +99,12 @@ docker compose exec -T admin python - <<'PY'
 import io
 import json
 import zipfile
-from app.chrome_bundle import build_chrome_bundle
+from app.chrome_bundle import build_chrome_bundle, build_chrome_extension_zip
+extension = build_chrome_extension_zip()
+with zipfile.ZipFile(io.BytesIO(extension)) as only_extension:
+    assert only_extension.testzip() is None
+    assert "manifest.json" in only_extension.namelist()
+    assert "extension/manifest.json" not in only_extension.namelist()
 bundle = build_chrome_bundle()
 with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
     assert archive.testzip() is None
