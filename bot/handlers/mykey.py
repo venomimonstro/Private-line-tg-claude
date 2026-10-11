@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -10,6 +11,7 @@ from app.models.user import User
 from app.services.vpn_key import get_client_access_url
 from bot.handlers.access import _get_active_subscription
 
+logger = logging.getLogger(__name__)
 router = Router(name="mykey")
 
 
@@ -51,7 +53,6 @@ _WINDOWS_CAPTION = (
 
 @router.message(Command("windows"))
 async def send_windows_installer(message: Message, db_user: User) -> None:
-    from app.windows_enrollment import public_base_url
     try:
         data = await _personal_windows_kit(db_user.id)
     except ValueError:
@@ -60,6 +61,10 @@ async def send_windows_installer(message: Message, db_user: User) -> None:
             "VPN-подписка либо на основном сервере не указан HTTPS-адрес "
             "CONTROL_PLANE_PUBLIC_URL. Проверьте подписку и настройки сервера."
         )
+        return
+    except Exception:
+        logger.exception("Personal Windows kit generation failed")
+        await message.answer("Ошибка подготовки Windows-клиента. Основной бот продолжает работать; попробуйте позднее.")
         return
     await message.answer_document(
         BufferedInputFile(data, filename="private-line-windows-personal.zip"),
@@ -78,6 +83,10 @@ async def send_windows_installer_callback(callback: CallbackQuery, db_user: User
             "Автоматическая установка недоступна: проверьте активную подписку "
             "и HTTPS-адрес основного сервера."
         )
+        return
+    except Exception:
+        logger.exception("Personal Windows callback kit generation failed")
+        await callback.message.answer("Ошибка подготовки Windows-клиента. Основной бот продолжает работать; попробуйте позднее.")
         return
     await callback.message.answer_document(
         BufferedInputFile(data, filename="private-line-windows-personal.zip"),
