@@ -47,7 +47,7 @@ $VersionOutput = (& $XrayExe version 2>&1 | Select-Object -First 1)
 if ($LASTEXITCODE -ne 0 -or "$VersionOutput" -notmatch '^Xray 26\.6\.27(\s|$)') {
     throw "Unexpected Xray version: $VersionOutput. Expected 26.6.27."
 }
-Set-Content -LiteralPath (Join-Path $InstallDir "xray-path.txt") -Value $XrayExe -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $InstallDir "xray-path.txt"), $XrayExe, (New-Object System.Text.UTF8Encoding($false)))
 
 $CmdPath = Join-Path $InstallDir "host.cmd"
 [System.IO.File]::WriteAllText($CmdPath, "@echo off`r`npy -3 -u `"%~dp0bridge.py`"`r`n", [System.Text.Encoding]::ASCII)
