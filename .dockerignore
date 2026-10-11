@@ -54,3 +54,4 @@ windows_native/**/obj/
 windows_native/out-client/
 windows_native/out-installer/
 windows_native/PrivateLine.Installer/Payload/PrivateLine.exe
+windows_native/PrivateLine.Installer/Payload/xray.exe
