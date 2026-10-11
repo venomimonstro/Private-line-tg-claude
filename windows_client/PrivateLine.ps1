@@ -36,16 +36,6 @@ function Refresh-WindowsProxy {
     [void][PrivateLineWinInet]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)
     [void][PrivateLineWinInet]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)
 }
-function Load-Settings {
-    if(Test-Path $AppSettings) {
-        try { return (Get-Content $AppSettings -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {}
-    }
-    return $null
-}
-function Save-Settings {
-    @{ endpoint=$Endpoint.Text.Trim(); token=$Token.Text.Trim() } |
-      ConvertTo-Json -Compress | Set-Content -Encoding UTF8 -LiteralPath $AppSettings
-}
 function Get-Profile([string]$Link) {
     $uri = [Uri]$Link
     if ($uri.Scheme -ne 'vless') { throw "INVALID_SCHEME" }
@@ -334,7 +324,7 @@ try {
     $pair=Get-PairedDevice
     Show-Info "Клиент привязан к вашей VPN-подписке. Нажмите «Подключить»."
 } catch {
-    Show-Info "Привязка не найдена. Скачайте персональный установщик через Telegram /windows."
+    Show-Info "Привязка не найдена. Скачайте персональный установщик в админке → Диагностика Windows."
 }
 if(Test-Path -LiteralPath (Join-Path $Base "pending-reports.json")) {
     Flush-PendingReports
