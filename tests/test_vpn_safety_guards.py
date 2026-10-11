@@ -183,13 +183,22 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("git pull --ff-only", top)
         self.assertIn("update_production.sh", top)
         self.assertIn(".node_deploy_commit", orchestrator)
-        self.assertIn("root@$NODE_HOST", orchestrator)
-        self.assertIn("migrate_marzban_env_admin.sh", orchestrator)
+        self.assertIn("app.node_ssh_access", orchestrator)
+        self.assertNotIn('"root@$NODE_HOST"', orchestrator)
+        self.assertNotIn('bash "$tmp/scripts/migrate_marzban_env_admin.sh"', orchestrator)
         self.assertIn("update_node_xray.sh", orchestrator)
         self.assertIn("migrate_reality_target.sh", orchestrator)
         self.assertIn("smoke_vpn_node.sh", orchestrator)
         self.assertIn("probe_vless_e2e.sh", orchestrator)
         self.assertIn("docker compose build admin", deploy)
+
+    def test_xray_updater_checks_live_runtime_before_pull(self):
+        source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
+        self.assertIn('version_matches() {', source)
+        self.assertIn('with socket.create_connection(("127.0.0.1", 443)', source)
+        self.assertIn("no pull required", source)
+        self.assertIn('version_matches "$WORKDIR/xray"', source)
+        self.assertNotIn('version | head -n 1 | grep', source)
 
     def test_marzban_create_key_has_live_return_path(self):
         source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
