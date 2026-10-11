@@ -71,7 +71,7 @@ else
         echo "Previous node revision is unavailable locally; convergence required."
         NODE_UPDATE=true
     elif [[ "$NODE_STATE" != "$HEAD" ]]; then
-        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/update_node_xray.sh             scripts/migrate_reality_target.sh             scripts/migrate_marzban_env_admin.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
+        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/update_node_xray.sh             scripts/migrate_reality_target.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
         if [[ -n "$NODE_CHANGED_FILES" ]]; then
             echo "Node/VPN changes since last successful node rollout:"
             printf '%s
@@ -136,7 +136,7 @@ CRED_ROOT="$(mktemp -d)"
 chmod 700 "$CRED_ROOT"
 trap 'rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"' EXIT
 
-tar -czf "$REMOTE_ARCHIVE"     scripts/update_node_xray.sh     scripts/migrate_reality_target.sh     scripts/migrate_marzban_env_admin.sh
+tar -czf "$REMOTE_ARCHIVE"     scripts/update_node_xray.sh     scripts/migrate_reality_target.sh
 
 while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
     [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || fail "invalid server id: $SERVER_ID"
@@ -194,9 +194,6 @@ for key in ("host","port","username","auth_type","secret_b64"):
          tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
          trap '"'"'rm -rf "$tmp"'"'"' EXIT
          tar -xzf - -C "$tmp"
-         if ! bash "$tmp/scripts/migrate_marzban_env_admin.sh"; then
-           echo "WARN: Marzban DB-admin migration was rolled back; continuing with VPN runtime update" >&2
-         fi
          bash "$tmp/scripts/update_node_xray.sh"
          bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com
          echo "REMOTE NODE PASS"'
