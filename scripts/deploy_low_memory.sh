@@ -88,17 +88,34 @@ for _ in $(seq 1 45); do
 done
 docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1   || fail "PostgreSQL is not ready"
 
-echo "[4/8] Build native Windows installer + immutable application runtime..."
-WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
-if ! docker image inspect "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1; then
-  docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
+echo "[4/8] TLS identity + native Windows installer + immutable application runtime..."
+bash scripts/ensure_control_plane_tls.sh || fail "control-plane HTTPS identity setup failed"
+
+WINDOWS_SOURCE_HASH="$(find windows_native -type f ! -path '*/bin/*' ! -path '*/obj/*' ! -path '*/out-client/*' ! -path '*/out-installer/*' ! -path '*/Payload/*.exe' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+WINDOWS_HASH_FILE="data/windows_dist/.source.sha256"
+WINDOWS_EXE="data/windows_dist/PrivateLineSetup.exe"
+WINDOWS_BUILD_NEEDED=true
+if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]] && [[ "$(cat "$WINDOWS_HASH_FILE")" == "$WINDOWS_SOURCE_HASH" ]] && [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]]; then
+  WINDOWS_BUILD_NEEDED=false
 fi
-rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
-mkdir -p data/windows_dist
-docker run --rm -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" bash windows_native/build.sh || fail "native Windows installer build failed"
-[[ -s data/windows_dist/PrivateLineSetup.exe ]] || fail "PrivateLineSetup.exe was not produced"
-[[ "$(head -c2 data/windows_dist/PrivateLineSetup.exe)" == "MZ" ]] || fail "PrivateLineSetup.exe is not a PE executable"
-echo "PASS: native Windows PrivateLineSetup.exe built"
+
+if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
+  echo "Windows sources changed or installer missing; building once..."
+  WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
+  docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
+  rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
+  mkdir -p data/windows_dist
+  docker run --rm -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" bash windows_native/build.sh || fail "native Windows installer build failed"
+  [[ -s "$WINDOWS_EXE" ]] || fail "PrivateLineSetup.exe was not produced"
+  [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]] || fail "PrivateLineSetup.exe is not a PE executable"
+  printf '%s\n' "$WINDOWS_SOURCE_HASH" > "$WINDOWS_HASH_FILE"
+  rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
+  docker image rm "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1 || true
+  docker builder prune -af >/dev/null 2>&1 || true
+  echo "PASS: native Windows PrivateLineSetup.exe built and build cache released"
+else
+  echo "PASS: existing native Windows PrivateLineSetup.exe matches current sources; rebuild skipped"
+fi
 
 # Application source is baked into private-line-app:runtime; it is no longer
 # bind-mounted. A force-recreate without a build would silently keep old code.
