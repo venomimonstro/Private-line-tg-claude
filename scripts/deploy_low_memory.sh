@@ -118,6 +118,7 @@ with zipfile.ZipFile(io.BytesIO(build_windows_client())) as win_archive:
     assert "INSTALL-WINDOWS.cmd" in win_archive.namelist()
     assert "CHECK-INSTALL.cmd" in win_archive.namelist()
     assert "Check-Install.ps1" in win_archive.namelist()
+    assert "Pair-PrivateLine.ps1" in win_archive.namelist()
     assert "PrivateLine.ps1" in win_archive.namelist()
     for powershell_file in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1"):
         assert win_archive.read(powershell_file).startswith(bytes((0xEF,0xBB,0xBF)))
