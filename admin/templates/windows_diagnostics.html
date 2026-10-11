@@ -11,15 +11,13 @@
       <option value="{{ client.id }}">{{ client.id }} · @{{ client.username or ('TG '+(client.telegram_id|string)) }}</option>
       {% endfor %}
     </select>
-    <button class="btn btn-primary" type="submit" {% if not eligible_users %}disabled{% endif %}>Скачать персональный Windows (ZIP)</button>
+    <button class="btn btn-primary" type="submit" {% if not eligible_users %}disabled{% endif %}>Скачать PrivateLineSetup.exe</button>
   </form>
-  <p class="small text-muted">Либо клиент получает свой комплект через команду <code>/windows</code> в Telegram. Одноразовый код действует 24 часа. Не пересылайте персональный ZIP.</p>
-  <a class="btn btn-outline-secondary btn-sm mb-3" href="/admin/windows-client/download">Общий архив (без привязки, только для диагностики файлов)</a>
-  <p class="small mb-2"><strong>Скачивание не означает установку.</strong> После загрузки выберите «Извлечь все» и откройте распакованную папку.</p>
+  <p class="small text-muted">Скачивается один персональный <code>PrivateLineSetup.exe</code>. Одноразовый код внутри действует 24 часа. Не пересылайте установщик третьим лицам.</p>
   <div class="small mb-3">
-    <div>1. Запустите <code>INSTALL-WINDOWS.cmd</code> и дождитесь сообщения <strong>PRIVATE LINE IS INSTALLED AND LAUNCHED</strong>.</div>
-    <div>2. Запустите <code>CHECK-INSTALL.cmd</code>, чтобы увидеть статус «УСТАНОВЛЕНО» или конкретную ошибку.</div>
-    <div>3. Откройте ярлык <strong>Private Line</strong> на рабочем столе, вставьте ключ и нажмите «Подключить».</div>
+    <div>1. Запустите <code>PrivateLineSetup.exe</code> двойным кликом.</div>
+    <div>2. Установщик сам скачает и проверит Xray 26.6.27, установит <code>PrivateLine.exe</code>, создаст ярлык и привяжет приложение к подписке.</div>
+    <div>3. Откроется настоящий Windows-клиент. В нём достаточно нажать <strong>«Подключить VPN»</strong>. IP, ключи и токены вводить не нужно.</div>
   </div>
   <p class="small text-muted">Отчёты будут приходить автоматически из авторизованного Windows-клиента, если пользователь разрешил диагностику.</p>
 </div>
