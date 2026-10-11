@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent / "chrome_client"
 
 FILES = (
     "README_RU.md",
+    "SETUP-WINDOWS.cmd",
     "extension/manifest.json",
     "extension/background.js",
     "extension/popup.html",
