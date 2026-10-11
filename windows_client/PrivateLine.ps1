@@ -124,7 +124,7 @@ function Connect-Client {
         }else{
             try {$config=Get-Profile $text;Add-Stage "parse" "ok" "PROFILE_VALID"}
             catch {Add-Stage "parse" "failed" "INVALID_PROFILE";throw "INVALID_PROFILE"}
-            $config | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $ConfigFile -Encoding UTF8
+            [IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json -Depth 24), (New-Object Text.UTF8Encoding($false)))
         }
         # Never leak the VLESS credentials into the diagnostic stage log.
         $profileJson=Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
