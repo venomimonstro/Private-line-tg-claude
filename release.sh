@@ -299,6 +299,15 @@ else
 fi
 ok "Regression tests passed"
 
+# Validate data invariants before Alembic installs stricter uniqueness guards.
+# This produces an actionable audit instead of discovering legacy duplicates
+# halfway through a schema migration.
+log "🔎 Auditing production data invariants before migrations..."
+if ! docker compose exec -T admin python -m app.audit_data_integrity; then
+    auto_rollback "Production data invariants failed before migration"
+fi
+ok "Production data invariants passed"
+
 # ── Step 6: Run DB migrations ─────────────────────────────────────────────────
 log "🗄  [6/8] Running database migrations..."
 # A failing Alembic invocation may already have committed an earlier revision.
