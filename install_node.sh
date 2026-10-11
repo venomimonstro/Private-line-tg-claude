@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Private Line VPN Bot — VPN Node Installer (Marzban + XRay VLESS Reality)
 # Usage (copy from Admin Panel → VPN Серверы):
-#   ADMIN_URL=http://your-server NODE_TOKEN=xxx bash <(curl -fsSL http://your-server/admin/api/install-script)
+#   ADMIN_URL=https://control-plane ADMIN_PIN=sha256//... NODE_TOKEN=xxx bash <(curl --insecure --pinnedpubkey "$ADMIN_PIN" -fsSL https://control-plane/admin/api/install-script)
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -19,10 +19,14 @@ section "Проверка параметров"
 [[ $EUID -eq 0 ]] || die "Запустите от root."
 [[ ! -f /opt/private-line/docker-compose.yml ]] || die "Это основной control-plane сервер. VPN-ноды устанавливаются только на отдельные VPS."
 [[ -n "${ADMIN_URL:-}" ]] || die "ADMIN_URL не задан. Скопируйте команду из Admin Panel → VPN Серверы."
+[[ -n "${ADMIN_PIN:-}" ]] || die "ADMIN_PIN не задан. Используйте полную команду из Admin Panel."
 [[ -n "${NODE_TOKEN:-}" ]] || die "NODE_TOKEN не задан. Скопируйте команду из Admin Panel → VPN Серверы."
 
 ADMIN_URL="${ADMIN_URL%/}"
+[[ "$ADMIN_URL" == https://* ]] || die "Регистрация VPN-ноды разрешена только через HTTPS."
+[[ "$ADMIN_PIN" =~ ^sha256//[A-Za-z0-9+/]{43}=$ ]] || die "Некорректный ADMIN_PIN."
 success "Admin URL: $ADMIN_URL"
+success "TLS pin задан"
 success "Токен задан"
 
 # Marzban API on a VPN node is reachable only from the control-plane server.
@@ -471,7 +475,7 @@ print(json.dumps({
 PYEOF
 )
 
-HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
+HTTP_RESPONSE=$(curl --insecure --pinnedpubkey "$ADMIN_PIN" -sS -w "\n%{http_code}" \
     -X POST "${ADMIN_URL}/admin/api/register-node" \
     -H "Content-Type: application/json" \
     -H "X-Node-Token: ${NODE_TOKEN}" \
