@@ -99,7 +99,8 @@ async def diagnostics_page(request: Request, db: AsyncSession = Depends(get_asyn
         except (ValueError, TypeError):
             continue
     return templates.TemplateResponse("windows_diagnostics.html",
-        {"request":request,"admin":admin,"page_title":"Диагностика Windows", "token":token,"reports":reports})
+        {"request":request,"admin":admin,"page_title":"Диагностика Windows", "token":token,
+         "endpoint":str(request.base_url).rstrip("/"), "reports":reports})
 
 
 @router.post("/api/windows-diagnostics", response_class=JSONResponse)
