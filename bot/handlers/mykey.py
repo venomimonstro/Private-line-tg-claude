@@ -26,6 +26,34 @@ def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@router.message(Command("windows"))
+async def send_windows_installer(message: Message) -> None:
+    from app.windows_bundle import build_windows_client
+
+    await message.answer_document(
+        BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
+        caption=(
+            "🖥 <b>Private Line для Windows</b>\n\n"
+            "Распакуйте ZIP и запустите INSTALL-WINDOWS.cmd. "
+            "Будет установлен Xray и создан ярлык на рабочем столе. "
+            "Вставьте ключ из /mykey. Для отправки диагностики используйте "
+            "отдельную кнопку в приложении; VPN-ключ не отправляется."
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "windows_download")
+async def send_windows_installer_callback(callback: CallbackQuery) -> None:
+    from app.windows_bundle import build_windows_client
+
+    await callback.answer("Отправляю Windows-клиент")
+    await callback.message.answer_document(
+        BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
+        caption="🖥 Распакуйте ZIP, запустите INSTALL-WINDOWS.cmd. Введите свой ключ VLESS Reality.",
+    )
+
+
 @router.message(Command("chrome_extension"))
 async def send_chrome_extension_only(message: Message) -> None:
     from app.chrome_bundle import build_chrome_extension_zip
@@ -101,6 +129,7 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
                 [InlineKeyboardButton(text="📄 Получить файл VLESS", callback_data=f"vless_file:{key.id}")],
                 [InlineKeyboardButton(text="📷 QR-код ключа", callback_data="get_key_qr")],
                 [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP + Xray)", callback_data="chrome_download")],
+                [InlineKeyboardButton(text="🖥 Windows клиент", callback_data="windows_download")],
             ]),
         )
     else:
