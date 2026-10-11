@@ -12,7 +12,7 @@ from app.models.admin_log import AdminLog
 from app.models.release import Release
 from app.models.user import User
 
-router = APIRouter(prefix="/admin/releases")
+router = APIRouter(prefix="/releases")
 templates = Jinja2Templates(directory="admin/templates")
 
 _PAGE_SIZE = 30
