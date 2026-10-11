@@ -179,6 +179,27 @@ async def reality_debug(
     }
 
 
+@router.get("/chrome/download")
+async def download_chrome_client(
+    admin: User = Depends(require_super_admin),
+):
+    """Authenticated download of the credential-free Chrome client bundle."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.chrome_bundle import build_chrome_bundle
+
+    payload = build_chrome_bundle()
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="private-line-chrome.zip"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("", response_class=HTMLResponse)
 async def list_servers(
     request: Request,
