@@ -78,6 +78,39 @@ class PairRequest(BaseModel):
     code: str = Field(min_length=35, max_length=128)
 
 
+class InstallReport(BaseModel):
+    pair_code: str = Field(min_length=35, max_length=128)
+    code: str = Field(min_length=1, max_length=48)
+    windows: str = Field(max_length=30)
+    version: str = Field(max_length=20)
+
+
+@router.post("/api/windows/install-report")
+async def windows_install_report(body: InstallReport, db: AsyncSession = Depends(get_async_session)):
+    from app.windows_enrollment import digest, PAIR_PREFIX
+    row = await db.get(AppSetting, PAIR_PREFIX + digest(body.pair_code))
+    if row is None:
+        raise HTTPException(status_code=403, detail="Unknown or expired pairing code")
+    if not body.code.isascii() or not all(ch.isalnum() or ch == "_" for ch in body.code):
+        raise HTTPException(status_code=400, detail="Invalid diagnostic code")
+    try:
+        pair = json.loads(row.value or "{}")
+        user_id = int(pair["user_id"])
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(status_code=403, detail="Invalid pairing record")
+    report_id = secrets.token_hex(8)
+    safe = {
+        "user_id": user_id,
+        "version": "".join(ch for ch in body.version if ch.isalnum() or ch in ".-_")[:20],
+        "windows": "".join(ch for ch in body.windows if ch.isalnum() or ch in ".-_")[:30],
+        "stages": [{"stage": "install", "result": "failed", "code": body.code}],
+    }
+    db.add(AppSetting(key="win_diag_" + report_id, value=json.dumps(safe, separators=(",", ":")),
+                      description="Native Windows installer failure; structured only"))
+    await db.commit()
+    return {"ok": True, "report_id": report_id}
+
+
 @router.post("/api/windows/enroll")
 async def enroll_windows_device(body: PairRequest,
                                 db: AsyncSession = Depends(get_async_session)):
