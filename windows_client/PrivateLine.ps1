@@ -3,6 +3,14 @@
 # No telemetry is sent unless the user explicitly clicks Send diagnostics.
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PrivateLineWinInet {
+    [DllImport("wininet.dll", SetLastError=true)]
+    public static extern bool InternetSetOption(IntPtr handle, int option, IntPtr buffer, int bufferLength);
+}
+'@
 $ErrorActionPreference = "Stop"
 $Base = Join-Path $env:LOCALAPPDATA "PrivateLineWindows"
 $ConfigFile = Join-Path $Base "profile.json"
@@ -10,6 +18,8 @@ $StateFile = Join-Path $Base "process.json"
 $AppSettings = Join-Path $Base "settings.json"
 $Xray = Join-Path $Base "xray.exe"
 $Port = 19590
+$ClientVersion = "1.1.0"
+$ReadyFile = Join-Path $Base "gui-ready.json"
 New-Item -ItemType Directory -Force -Path $Base | Out-Null
 $script:Stage = New-Object 'System.Collections.Generic.List[object]'
 $script:SavedProxy = $null
@@ -20,6 +30,11 @@ function Add-Stage([string]$Name,[string]$Result,[string]$Code) {
 function Show-Info([string]$Text) {
     $Status.Text = $Text
     [System.Windows.Forms.Application]::DoEvents()
+}
+function Refresh-WindowsProxy {
+    # Registry changes alone can be ignored by running Chrome/WinINET clients.
+    [void][PrivateLineWinInet]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)
+    [void][PrivateLineWinInet]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)
 }
 function Load-Settings {
     if(Test-Path $AppSettings) {
@@ -92,12 +107,15 @@ function Stop-Client {
         Set-ItemProperty -Path $settingsPath -Name ProxyEnable -Value $script:SavedProxy.enabled
         Set-ItemProperty -Path $settingsPath -Name ProxyServer -Value $script:SavedProxy.server
         $script:SavedProxy=$null
+        Remove-Item (Join-Path $Base "original-proxy.json") -Force -ErrorAction SilentlyContinue
+        Refresh-WindowsProxy
     } elseif(Test-Path (Join-Path $Base "original-proxy.json")) {
         try {
             $old=Get-Content (Join-Path $Base "original-proxy.json") -Raw | ConvertFrom-Json
             Set-ItemProperty -Path $settingsPath -Name ProxyEnable -Value ([int]$old.enabled)
             Set-ItemProperty -Path $settingsPath -Name ProxyServer -Value ([string]$old.server)
             Remove-Item (Join-Path $Base "original-proxy.json") -Force
+            Refresh-WindowsProxy
         }catch{}
     }
 }
@@ -146,7 +164,7 @@ function Connect-Client {
         Add-Stage "socks" "ok" "SOCKS_LISTENER_OK"
         $curl=Join-Path $env:SystemRoot "System32\curl.exe"
         if(-not (Test-Path $curl)){Add-Stage "https" "failed" "CURL_NOT_FOUND";throw "CURL_NOT_FOUND"}
-        $result=& $curl --silent --show-error --fail --ipv4 --noproxy "" --socks5-hostname "127.0.0.1:$Port" --connect-timeout 8 --max-time 18 "https://api.ipify.org" 2>$null
+        $result=& $curl --silent --show-error --fail --ipv4 --noproxy "localhost" --socks5-hostname "127.0.0.1:$Port" --connect-timeout 8 --max-time 18 "https://api.ipify.org" 2>$null
         if($LASTEXITCODE -ne 0 -or "$result" -notmatch '^\d{1,3}(\.\d{1,3}){3}$'){
             Add-Stage "https" "failed" "VPN_EGRESS_FAILED";throw "VPN_EGRESS_FAILED"
         }
@@ -157,6 +175,7 @@ function Connect-Client {
         $script:SavedProxy | ConvertTo-Json | Set-Content (Join-Path $Base "original-proxy.json") -Encoding UTF8
         Set-ItemProperty -Path $settingsPath -Name ProxyServer -Value ("socks=127.0.0.1:"+$Port)
         Set-ItemProperty -Path $settingsPath -Name ProxyEnable -Value 1
+        Refresh-WindowsProxy
         Add-Stage "proxy" "ok" "WINDOWS_USER_PROXY_ENABLED"
         $ProfileInput.Text=""
         Show-Info "Подключено. Внешний VPN IP: $result. Настроен прокси Windows/Chrome (НЕ системный VPN)."
@@ -183,8 +202,8 @@ function Send-Diagnostics {
     }catch{Show-Info ("Отправка не удалась. HTTP/сеть/токен: " + $_.Exception.GetType().Name)}
 }
 $form=New-Object Windows.Forms.Form
-$form.Text="Private Line | Windows"
-$form.Size=New-Object Drawing.Size(570,650)
+$form.Text="Private Line | Windows (1.1.0)"
+$form.Size=New-Object Drawing.Size(570,705)
 $form.StartPosition="CenterScreen"
 $form.BackColor=[Drawing.Color]::FromArgb(243,248,246)
 $form.Font=New-Object Drawing.Font("Segoe UI",10)
@@ -194,14 +213,38 @@ Label "Вставьте VLESS Reality ключ из Telegram-бота:" 65
 $ProfileInput=New-Object Windows.Forms.TextBox;$ProfileInput.Multiline=$true;$ProfileInput.ScrollBars="Vertical";$ProfileInput.Location=New-Object Drawing.Point(20,98);$ProfileInput.Size=New-Object Drawing.Size(510,95);$form.Controls.Add($ProfileInput)
 $connect=New-Object Windows.Forms.Button;$connect.Text="Подключить";$connect.Location=New-Object Drawing.Point(20,205);$connect.Size=New-Object Drawing.Size(248,40);$form.Controls.Add($connect)
 $disconnect=New-Object Windows.Forms.Button;$disconnect.Text="Отключить";$disconnect.Location=New-Object Drawing.Point(283,205);$disconnect.Size=New-Object Drawing.Size(247,40);$form.Controls.Add($disconnect)
-$Status=New-Object Windows.Forms.Label;$Status.Text="Готово. Windows HTTP/Chrome через локальный SOCKS5. Не системный VPN.";$Status.Location=New-Object Drawing.Point(20,258);$Status.Size=New-Object Drawing.Size(510,60);$form.Controls.Add($Status)
+$Status=New-Object Windows.Forms.Label;$Status.Text="Клиент установлен. VPN пока отключён. Вставьте ключ и нажмите «Подключить».";$Status.Location=New-Object Drawing.Point(20,258);$Status.Size=New-Object Drawing.Size(510,60);$form.Controls.Add($Status)
 Label "Диагностика • отправляется только по вашему согласию" 320
 Label "Адрес основного сервера (https://...)" 351
 $Endpoint=New-Object Windows.Forms.TextBox;$Endpoint.Location=New-Object Drawing.Point(20,378);$Endpoint.Size=New-Object Drawing.Size(510,26);$form.Controls.Add($Endpoint)
 Label "Токен диагностики из админки" 410
 $Token=New-Object Windows.Forms.TextBox;$Token.Location=New-Object Drawing.Point(20,437);$Token.Size=New-Object Drawing.Size(510,26);$Token.UseSystemPasswordChar=$true;$form.Controls.Add($Token)
-$Consent=New-Object Windows.Forms.CheckBox;$Consent.Location=New-Object Drawing.Point(20,475);$Consent.Size=New-Object Drawing.Size(515,50);$Consent.Text="Согласен отправить только результаты этапов подключения.\nБез UUID, VPN-ключей, IP и сырых журналов.";$form.Controls.Add($Consent)
+$Consent=New-Object Windows.Forms.CheckBox;$Consent.Location=New-Object Drawing.Point(20,475);$Consent.Size=New-Object Drawing.Size(515,50);$Consent.Text="Согласен отправить только результаты этапов подключения. Без UUID, VPN-ключей, IP и сырых журналов.";$form.Controls.Add($Consent)
 $send=New-Object Windows.Forms.Button;$send.Text="Отправить диагностику на сервер";$send.Location=New-Object Drawing.Point(20,531);$send.Size=New-Object Drawing.Size(510,37);$form.Controls.Add($send)
+$verify=New-Object Windows.Forms.Button
+$verify.Text="Проверить установку"
+$verify.Location=New-Object Drawing.Point(20,576)
+$verify.Size=New-Object Drawing.Size(510,36)
+$form.Controls.Add($verify)
+$verify.Add_Click({
+    try {
+        Check-Xray
+        $shortcut=Join-Path ([Environment]::GetFolderPath("DesktopDirectory")) "Private Line.lnk"
+        if(-not (Test-Path -LiteralPath $shortcut)) { Show-Info "Xray установлен, но ярлык отсутствует. Повторите INSTALL-WINDOWS.cmd для восстановления.";return }
+        Show-Info "УСТАНОВЛЕНО: приложение и Xray 26.6.27. Ярлык на рабочем столе. VPN подключится после нажатия «Подключить»."
+    } catch {
+        Show-Info "УСТАНОВКА НЕПОЛНАЯ: проверьте INSTALL-WINDOWS.cmd. Xray 26.6.27 отсутствует или повреждён."
+    }
+})
+$form.Add_Shown({
+    # Installer verifies this exact marker before claiming successful launch.
+    $marker=@{version=$ClientVersion;pid=$PID} | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText($ReadyFile,$marker,(New-Object Text.UTF8Encoding($false)))
+})
+$form.Add_FormClosed({
+    Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
+    Stop-Client
+})
 $settings=Load-Settings
 if($settings){$Endpoint.Text=$settings.endpoint;$Token.Text=$settings.token}
 $connect.Add_Click({Connect-Client})
