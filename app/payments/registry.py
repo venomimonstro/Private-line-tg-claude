@@ -61,7 +61,7 @@ def _build_with_creds(name: str, g) -> PaymentProviderBase:
 
     if name == "lava":
         from app.payments.providers.lava import LavaProvider
-        return LavaProvider(g("LAVA_PROJECT_ID"), g("LAVA_SECRET_KEY"))
+        return LavaProvider(g("LAVA_PROJECT_ID"), g("LAVA_SECRET_KEY"), g("LAVA_WEBHOOK_SECRET"))
 
     if name == "yookassa":
         from app.payments.providers.yookassa import YooKassaProvider
