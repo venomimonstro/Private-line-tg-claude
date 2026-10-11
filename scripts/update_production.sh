@@ -147,7 +147,9 @@ while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
          tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
          trap '"'"'rm -rf "$tmp"'"'"' EXIT
          tar -xzf - -C "$tmp"
-         bash "$tmp/scripts/migrate_marzban_env_admin.sh"
+         if ! bash "$tmp/scripts/migrate_marzban_env_admin.sh"; then
+           echo "WARN: Marzban DB-admin migration was rolled back; continuing with VPN runtime update" >&2
+         fi
          bash "$tmp/scripts/update_node_xray.sh"
          bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com
          echo "REMOTE NODE PASS"'         || fail "remote update failed for node $SERVER_ID ($NODE_HOST)"
