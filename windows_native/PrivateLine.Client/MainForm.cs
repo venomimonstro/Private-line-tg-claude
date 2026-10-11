@@ -4,6 +4,8 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -24,7 +26,6 @@ public sealed class MainForm : Form
     readonly Button disconnect = new();
     readonly Button send = new();
     readonly CheckBox diagnostics = new();
-    readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(20) };
     readonly List<Stage> stages = new();
     Process? xray;
     int previousProxyEnable;
@@ -71,10 +72,10 @@ public sealed class MainForm : Form
             : "Нет привязки. Скачайте новый персональный PrivateLineSetup.exe.";
     }
 
-    record Device(string api_base, string token_dpapi);
+    record Device(string api_base, string token_dpapi, string tls_pin);
     record Stage(string stage, string result, string code);
 
-    (string BaseUrl,string Token) ReadDevice()
+    (string BaseUrl,string Token,string TlsPin) ReadDevice()
     {
         if (!File.Exists(DevicePath)) throw new InvalidOperationException("DEVICE_NOT_PAIRED");
         var d = JsonSerializer.Deserialize<Device>(File.ReadAllText(DevicePath)) ?? throw new InvalidOperationException("DEVICE_INVALID");
@@ -82,12 +83,36 @@ public sealed class MainForm : Form
             throw new InvalidOperationException("DEVICE_SERVER_INVALID");
         var token = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(d.token_dpapi), null, DataProtectionScope.CurrentUser));
         if (token.Length < 45) throw new InvalidOperationException("DEVICE_TOKEN_INVALID");
-        return (d.api_base.TrimEnd('/'),token);
+        if(string.IsNullOrWhiteSpace(d.tls_pin)||!d.tls_pin.StartsWith("sha256//",StringComparison.Ordinal)) throw new InvalidOperationException("DEVICE_TLS_PIN_INVALID");
+        return (d.api_base.TrimEnd('/'),token,d.tls_pin);
+    }
+
+    HttpClient PinnedHttp(string pin)
+    {
+        var handler=new HttpClientHandler();
+        handler.ServerCertificateCustomValidationCallback=(request,cert,chain,errors)=>{
+            if(errors==SslPolicyErrors.None)return true;
+            if(cert is null)return false;
+            try {
+                using var rsa=cert.GetRSAPublicKey();
+                byte[] spki;
+                if(rsa is not null) spki=rsa.ExportSubjectPublicKeyInfo();
+                else {
+                    using var ecdsa=cert.GetECDsaPublicKey();
+                    if(ecdsa is null)return false;
+                    spki=ecdsa.ExportSubjectPublicKeyInfo();
+                }
+                var actual="sha256//"+Convert.ToBase64String(SHA256.HashData(spki));
+                return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actual),Encoding.ASCII.GetBytes(pin));
+            } catch {return false;}
+        };
+        return new HttpClient(handler){Timeout=TimeSpan.FromSeconds(20)};
     }
 
     async Task<string> FetchProfileAsync()
     {
         var d=ReadDevice();
+        using var http=PinnedHttp(d.TlsPin);
         using var req=new HttpRequestMessage(HttpMethod.Get,d.BaseUrl+"/api/windows/profile");
         req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",d.Token);
         using var res=await http.SendAsync(req);
@@ -224,6 +249,7 @@ public sealed class MainForm : Form
         var report=new {version="2.0.0",windows=Environment.OSVersion.Version.ToString(),consent=true,stages=stages};
         try {
             var d=ReadDevice();
+            using var http=PinnedHttp(d.TlsPin);
             using var req=new HttpRequestMessage(HttpMethod.Post,d.BaseUrl+"/api/windows/report");
             req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",d.Token);
             req.Content=new StringContent(JsonSerializer.Serialize(report),Encoding.UTF8,"application/json");
@@ -249,7 +275,7 @@ public sealed class MainForm : Form
     {
         if(!File.Exists(PendingPath)||!diagnostics.Checked)return;
         try {
-            var d=ReadDevice(); var items=JsonSerializer.Deserialize<List<JsonElement>>(await File.ReadAllTextAsync(PendingPath))??[];
+            var d=ReadDevice(); using var http=PinnedHttp(d.TlsPin); var items=JsonSerializer.Deserialize<List<JsonElement>>(await File.ReadAllTextAsync(PendingPath))??[];
             var remaining=new List<JsonElement>();
             foreach(var item in items) {
                 try {
