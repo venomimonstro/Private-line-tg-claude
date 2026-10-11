@@ -72,6 +72,81 @@ async def _token(db: AsyncSession) -> str:
     return setting.value
 
 
+class PairRequest(BaseModel):
+    code: str = Field(min_length=35, max_length=128)
+
+
+@router.post("/api/windows/enroll")
+async def enroll_windows_device(body: PairRequest,
+                                db: AsyncSession = Depends(get_async_session)):
+    from app.windows_enrollment import redeem_enrollment
+    device_token = await redeem_enrollment(db, body.code)
+    if not device_token:
+        raise HTTPException(status_code=403, detail="Pairing code expired, already used or subscription unavailable")
+    return JSONResponse({"ok": True, "device_token": device_token})
+
+
+async def _device_user(request: Request, db: AsyncSession) -> int:
+    from app.windows_enrollment import authenticated_device
+    user_id = await authenticated_device(db, request.headers.get("authorization", ""))
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Windows device not paired or session expired")
+    return user_id
+
+
+@router.get("/api/windows/profile")
+async def windows_device_profile(request: Request, db: AsyncSession = Depends(get_async_session)):
+    from app.windows_enrollment import active_user_link
+    user_id = await _device_user(request, db)
+    url = await active_user_link(db, user_id)
+    if not url:
+        raise HTTPException(status_code=403, detail="VPN subscription is not active")
+    return JSONResponse({"ok": True, "vless_url": url},
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@router.post("/api/windows/report")
+async def windows_device_report(request: Request, report: DiagnosticReport,
+                                db: AsyncSession = Depends(get_async_session)):
+    # No IPs, credentials or raw logs are accepted. Each report belongs to a
+    # paired device and is submitted only after the user opts in on the client.
+    from app.windows_enrollment import authenticated_device
+    user_id = await _device_user(request, db)
+    try:
+        safe = sanitize(report)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    report_id = secrets.token_hex(8)
+    safe["user_id"] = user_id
+    db.add(AppSetting(key="win_diag_" + report_id,
+                      value=json.dumps(safe, separators=(",", ":")),
+                      description="Opt-in Windows automatic error report; no raw logs"))
+    await db.commit()
+    old = (await db.execute(select(AppSetting.key).where(
+        AppSetting.key.like("win_diag_%")).order_by(AppSetting.updated_at.desc()).offset(100))).scalars().all()
+    if old:
+        await db.execute(delete(AppSetting).where(AppSetting.key.in_(old)))
+        await db.commit()
+    return {"ok": True, "report_id": report_id}
+
+
+@router.get("/windows-client/personal")
+async def download_personal_windows_client(admin: User = Depends(require_super_admin),
+                                           db: AsyncSession = Depends(get_async_session)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.windows_bundle import build_windows_client
+    from app.windows_enrollment import create_enrollment
+    try:
+        base, code = await create_enrollment(db, admin.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    payload = build_windows_client(base_url=base, pairing_code=code)
+    return StreamingResponse(BytesIO(payload), media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="private-line-windows-personal.zip"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options":"nosniff"})
+
+
 @router.get("/windows-client/download")
 async def download_windows_client(admin: User = Depends(require_super_admin)):
     from io import BytesIO
