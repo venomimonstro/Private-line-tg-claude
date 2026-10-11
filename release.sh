@@ -110,6 +110,17 @@ if [[ "$ROLLBACK_MODE" -eq 1 ]]; then
     log "Rolling code back to ${PREV_COMMIT:0:7} and restoring its matching DB snapshot..."
     git reset --hard "$PREV_COMMIT" >/dev/null || { rm -f "$HELPER"; err "Git rollback failed"; exit 2; }
 
+    # Rebuild the exact historical application code before its migrations run.
+    # This works for both old per-service images and the current shared runtime image.
+    log "Rebuilding application image(s) from historical commit..."
+    if ! COMPOSE_PARALLEL_LIMIT=1 docker compose build admin bot; then
+        rm -f "$HELPER"
+        err "Historical application image build failed"
+        exit 2
+    fi
+
+    docker stop private-line-bot-1 private-line-admin-1 >/dev/null 2>&1 || true
+
     if ! PRIVATE_LINE_ROOT="$DEPLOY_DIR" PRIVATE_LINE_SKIP_LAYOUT_VALIDATION=1 \
         bash "$HELPER" "$ROLLBACK_BACKUP"; then
         rm -f "$HELPER"
@@ -118,12 +129,18 @@ if [[ "$ROLLBACK_MODE" -eq 1 ]]; then
     fi
     rm -f "$HELPER"
 
-    if curl -sf --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
-        ok "Rollback complete — code and PostgreSQL restored together"
-    else
-        err "Rollback completed but admin is unhealthy"
-        exit 2
-    fi
+    docker compose up -d --no-deps --force-recreate admin >/dev/null
+    for _ in $(seq 1 30); do
+        curl -sf --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && break
+        sleep 2
+    done
+    curl -sf --max-time 5 "$HEALTH_URL" >/dev/null 2>&1 \
+        || { err "Historical admin image is unhealthy after rollback"; exit 2; }
+
+    docker compose up -d --no-deps --force-recreate bot >/dev/null
+    docker compose up -d --no-deps --force-recreate nginx >/dev/null
+
+    ok "Rollback complete — historical code image and PostgreSQL restored together"
     exit 0
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -213,6 +230,7 @@ cp -p scripts/restore_postgres_backup.sh "$ROLLBACK_RESTORE_HELPER"
 chmod 700 "$ROLLBACK_RESTORE_HELPER"
 MIGRATION_TOUCHED=0
 REBUILD_REQUIRED=0
+CUTOVER_STARTED=0
 
 # Remember the exact service images before any optional rebuild. Git/DB rollback
 # is insufficient if a failed release left Compose's image tags pointing at a
@@ -221,6 +239,11 @@ OLD_ADMIN_IMAGE_REF="$(docker inspect -f '{{.Config.Image}}' private-line-admin-
 OLD_ADMIN_IMAGE_ID="$(docker inspect -f '{{.Image}}' private-line-admin-1 2>/dev/null || true)"
 OLD_BOT_IMAGE_REF="$(docker inspect -f '{{.Config.Image}}' private-line-bot-1 2>/dev/null || true)"
 OLD_BOT_IMAGE_ID="$(docker inspect -f '{{.Image}}' private-line-bot-1 2>/dev/null || true)"
+
+if [[ -n "$OLD_ADMIN_IMAGE_REF" && "$OLD_ADMIN_IMAGE_REF" == "$OLD_BOT_IMAGE_REF" \
+      && "$OLD_ADMIN_IMAGE_ID" != "$OLD_BOT_IMAGE_ID" ]]; then
+    fail "Admin and bot use the same image tag but different image IDs; reconcile before deployment"
+fi
 
 auto_rollback() {
     local reason="$1"
@@ -256,14 +279,25 @@ auto_rollback() {
             err "FATAL: database rollback failed. Backup: $PRE_RELEASE_BACKUP"
             exit 2
         fi
-    else
-        docker compose restart admin bot >/dev/null 2>&1 || true
+    fi
+
+    if [[ "$CUTOVER_STARTED" -eq 1 ]]; then
+        warn "Recreating pre-release application containers..."
+        docker compose up -d --no-deps --force-recreate admin >/dev/null 2>&1 \
+            || { err "FATAL: old admin recreation failed"; exit 2; }
+        for _ in $(seq 1 30); do
+            curl -sf --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && break
+            sleep 2
+        done
+        docker compose up -d --no-deps --force-recreate bot >/dev/null 2>&1 \
+            || { err "FATAL: old bot recreation failed"; exit 2; }
+        docker compose up -d --no-deps --force-recreate nginx >/dev/null 2>&1 || true
     fi
 
     rm -f "$ROLLBACK_RESTORE_HELPER"
-    sleep 3
+    sleep 2
     if curl -sf --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
-        ok "Rollback successful — code and required database state restored"
+        ok "Rollback successful — code/image and required database state restored"
     else
         err "Rollback completed but admin is unhealthy — manual intervention required"
         exit 2
@@ -291,31 +325,19 @@ if [[ "$SYNTAX_ERRORS" -gt 0 ]]; then
 fi
 ok "New code valid: $CHECKED files, 0 errors"
 
-# Rebuild application images when runtime dependencies or the base image changed.
-# A plain docker restart never applies Dockerfile/requirements changes.
-if git diff --name-only "$PREV_COMMIT" "$NEW_COMMIT" -- Dockerfile requirements.txt \
-    | grep -q .; then
-    REBUILD_REQUIRED=1
-    log "📦 Runtime dependencies changed; rebuilding sequentially..."
-    if ! COMPOSE_PARALLEL_LIMIT=1 docker compose build admin bot; then
-        auto_rollback "Application image rebuild failed"
-    fi
-    ok "Application images rebuilt"
+# Production code is immutable inside one shared image. Build every release
+# before cutover; the currently running containers keep their old image.
+REBUILD_REQUIRED=1
+log "📦 Building immutable application image..."
+if ! COMPOSE_PARALLEL_LIMIT=1 docker compose build admin; then
+    auto_rollback "Application image build failed"
 fi
+ok "Application image built"
 
-# Run the regression suite before touching the database. Use a fresh container
-# when images were rebuilt so tests exercise the image that will be deployed.
-log "🧪 Running production regression tests before migrations..."
-if [[ "$REBUILD_REQUIRED" -eq 1 ]]; then
-    if ! docker compose run --rm --no-deps admin \
-        python -m unittest discover -s /app/tests -p 'test_*.py' -q; then
-        auto_rollback "Regression tests failed in rebuilt application image"
-    fi
-else
-    if ! docker compose exec -T admin \
-        python -m unittest discover -s /app/tests -p 'test_*.py' -q; then
-        auto_rollback "Regression tests failed"
-    fi
+log "🧪 Running regression tests in the NEW image before migrations..."
+if ! docker compose run --rm --no-deps admin \
+    python -m unittest discover -s /app/tests -p 'test_*.py' -q; then
+    auto_rollback "Regression tests failed in new application image"
 fi
 ok "Regression tests passed"
 
@@ -323,29 +345,35 @@ ok "Regression tests passed"
 # This produces an actionable audit instead of discovering legacy duplicates
 # halfway through a schema migration.
 log "🔎 Auditing production data invariants before migrations..."
-if ! docker compose exec -T admin python -m app.audit_data_integrity; then
+if ! docker compose run --rm --no-deps admin python -m app.audit_data_integrity; then
     auto_rollback "Production data invariants failed before migration"
 fi
 ok "Production data invariants passed"
 
-# ── Step 6: Run DB migrations ─────────────────────────────────────────────────
-log "🗄  [6/8] Running database migrations..."
+# ── Step 6: Stop writers and migrate with the NEW image ─────────────────────
+CUTOVER_STARTED=1
+log "⏸  [6/8] Stopping application writers for schema cutover..."
+docker stop private-line-bot-1 private-line-admin-1 >/dev/null 2>&1 || true
+
+log "🗄  Running database migrations from the new image..."
 # A failing Alembic invocation may already have committed an earlier revision.
 MIGRATION_TOUCHED=1
-if ! docker compose exec -T admin alembic upgrade head 2>&1 | tee /tmp/alembic_log | sed 's/^/    /'; then
-    ALEMBIC_ERR=$(cat /tmp/alembic_log | tail -10)
+if ! docker compose run --rm --no-deps admin alembic upgrade head \
+    2>&1 | tee /tmp/alembic_log | sed 's/^/    /'; then
+    ALEMBIC_ERR=$(tail -10 /tmp/alembic_log)
     auto_rollback "Database migration failed: $ALEMBIC_ERR"
 fi
 ok "Migrations applied"
 
 log "🔐 Encrypting any legacy plaintext integration secrets..."
-if ! docker compose exec -T admin python -m app.migrate_secret_settings --apply; then
+if ! docker compose run --rm --no-deps admin \
+    python -m app.migrate_secret_settings --apply; then
     auto_rollback "Integration secret migration failed"
 fi
 ok "Integration secrets are encrypted at rest"
 
-# ── Step 7: Recreate stateless services sequentially ─────────────────────────
-log "🔄 [7/8] Applying compose/image changes sequentially..."
+# ── Step 7: Start new immutable application containers ───────────────────────
+log "🔄 [7/8] Starting immutable application image sequentially..."
 
 docker compose up -d --no-deps --force-recreate admin 2>&1 | sed 's/^/    /'
 ADMIN_READY=0
