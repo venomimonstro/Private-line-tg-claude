@@ -215,6 +215,7 @@ async def add_server(
     admin: User = Depends(require_super_admin),
 ) -> RedirectResponse:
     import json as _json
+    from urllib.parse import urlsplit as _urlsplit
 
     if protocol == "marzban":
         api_url = marzban_api_url
@@ -227,12 +228,16 @@ async def add_server(
         api_url = outline_api_url
         creds = _json.dumps({"protocol": "outline"})
 
+    ssh_default_host = _urlsplit(api_url).hostname if protocol == "marzban" and api_url else None
     server = VpnServer(
         name=name,
         country=country,
         provider=provider or protocol,
         api_url=api_url,
         api_secret_encrypted=encrypt(creds),
+        ssh_host=ssh_default_host,
+        ssh_port=22 if ssh_default_host else None,
+        ssh_username="root" if ssh_default_host else None,
         max_users=max_users,
         # Manual entries are staging only. A node becomes customer-selectable
         # only after the safe Reality reconciliation endpoint verifies it.
@@ -837,6 +842,10 @@ async def register_node(
         server.flag_emoji = body.flag_emoji or None
         server.provider = "marzban"
         server.api_secret_encrypted = encrypt(creds)
+        if not server.ssh_host:
+            server.ssh_host = host
+            server.ssh_port = 22
+            server.ssh_username = "root"
         server.max_users = max(1, body.max_users)
         server.status = VpnServerStatus.active
         # Any registration can change credentials/runtime metadata. Pause
@@ -858,6 +867,9 @@ async def register_node(
             provider="marzban",
             api_url=body.api_url,
             api_secret_encrypted=encrypt(creds),
+            ssh_host=host,
+            ssh_port=22,
+            ssh_username="root",
             max_users=max(1, body.max_users),
             status=VpnServerStatus.active,
             is_selectable=False,
