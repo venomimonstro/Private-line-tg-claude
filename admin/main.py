@@ -40,6 +40,7 @@ from admin.routes import (
     vpn_subscription,
     web_portal,
     withdrawals,
+    windows_diagnostics,
 )
 from app.database import get_async_session, async_session_maker
 from app.config import settings
@@ -135,6 +136,7 @@ app.include_router(integrations.router)
 app.include_router(webhook_router)
 app.include_router(vpn_subscription.router)
 app.include_router(web_portal.router)
+app.include_router(windows_diagnostics.router)
 
 
 @app.get("/login", response_class=HTMLResponse)
