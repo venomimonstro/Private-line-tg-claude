@@ -10,7 +10,18 @@ $shortcut = Join-Path ([Environment]::GetFolderPath("DesktopDirectory")) "Privat
 $missing = @()
 if (-not (Test-Path -LiteralPath $client -PathType Leaf)) { $missing += "APPLICATION_MISSING" }
 if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { $missing += "LAUNCHER_MISSING" }
-if (-not (Test-Path -LiteralPath $status -PathType Leaf)) { $missing += "INSTALL_STATUS_MISSING" }
+if (-not (Test-Path -LiteralPath $status -PathType Leaf)) {
+    $missing += "INSTALL_STATUS_MISSING"
+} else {
+    try {
+        $installInfo = Get-Content -LiteralPath $status -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($installInfo.status -ne "installed" -or $installInfo.gui_confirmed -ne $true -or $installInfo.version -ne "1.1.0") {
+            $missing += "INSTALL_NOT_CONFIRMED"
+        }
+    } catch {
+        $missing += "INSTALL_STATUS_INVALID"
+    }
+}
 if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { $missing += "SHORTCUT_MISSING" }
 if (-not (Test-Path -LiteralPath $xray -PathType Leaf)) {
     $missing += "XRAY_MISSING"
