@@ -191,6 +191,19 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("probe_vless_e2e.sh", orchestrator)
         self.assertIn("docker compose build admin", deploy)
 
+    def test_marzban_create_key_has_live_return_path(self):
+        source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
+        self.assertIn("return MarzbanKey(", source)
+        self.assertNotIn('background task and may swallow\\n', source)
+        self.assertNotIn('restart_core_with_db_users(reason=f"provision {safe_name}")\\n', source)
+
+    def test_production_updater_uses_encrypted_node_ssh_access(self):
+        text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        self.assertIn("app.node_ssh_access", text)
+        self.assertIn("SSH_ASKPASS_REQUIRE=force", text)
+        self.assertIn("StrictHostKeyChecking=accept-new", text)
+        self.assertNotIn('"root@$NODE_HOST"', text)
+
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
         self.assertIn("retired", text.lower())
