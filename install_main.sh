@@ -151,7 +151,7 @@ echo "  crypto    — CryptoBot"
 prompt PAYMENT_PROVIDER "Платёжная система" "manual"
 
 YOOKASSA_SHOP_ID="" YOOKASSA_SECRET_KEY=""
-LAVA_PROJECT_ID="" LAVA_SECRET_KEY=""
+LAVA_PROJECT_ID="" LAVA_SECRET_KEY="" LAVA_WEBHOOK_SECRET=""
 CRYPTO_BOT_TOKEN=""
 
 case "$PAYMENT_PROVIDER" in
@@ -161,7 +161,8 @@ case "$PAYMENT_PROVIDER" in
         ;;
     lava)
         prompt LAVA_PROJECT_ID "LAVA Project ID"
-        prompt_secret LAVA_SECRET_KEY "LAVA Secret Key"
+        prompt_secret LAVA_SECRET_KEY "LAVA API Secret Key"
+        prompt_secret LAVA_WEBHOOK_SECRET "LAVA дополнительный ключ для webhook"
         ;;
     crypto)
         prompt_secret CRYPTO_BOT_TOKEN "CryptoBot Token"
@@ -169,13 +170,14 @@ case "$PAYMENT_PROVIDER" in
 esac
 
 # Generate encryption keys
-ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null \
-    || openssl rand -base64 32)
+ENCRYPTION_KEY=$(python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')
 SECRET_KEY=$(openssl rand -hex 32)
 
 WEBHOOK_BASE_URL=""
+CONTROL_PLANE_PUBLIC_URL=""
 if [[ "$USE_DOMAIN" == "true" ]]; then
     WEBHOOK_BASE_URL="https://${DOMAIN}"
+    CONTROL_PLANE_PUBLIC_URL="https://${DOMAIN}"
 fi
 
 # ─── Create directories ───────────────────────────────────────────────────────
@@ -223,6 +225,7 @@ YOOKASSA_SECRET_KEY=${YOOKASSA_SECRET_KEY}
 # LAVA
 LAVA_PROJECT_ID=${LAVA_PROJECT_ID}
 LAVA_SECRET_KEY=${LAVA_SECRET_KEY}
+LAVA_WEBHOOK_SECRET=${LAVA_WEBHOOK_SECRET}
 
 # CryptoBot
 CRYPTO_BOT_TOKEN=${CRYPTO_BOT_TOKEN}
@@ -243,9 +246,11 @@ PRODAMUS_WEBHOOK_SECRET=
 APP_VERSION=1.0.0
 BACKUP_DIR=./backups
 MAINTENANCE_MODE=false
+CONTROL_PLANE_PUBLIC_URL=${CONTROL_PLANE_PUBLIC_URL}
+CONTROL_PLANE_TLS_PIN=
 REFUND_WINDOW_DAYS=7
 REFUND_MAX_TRAFFIC_MB=100.0
-ADMIN_ALLOWED_IPS=[]
+ADMIN_ALLOWED_IPS=
 BACKUP_BOT_TOKEN=
 TELEGRAM_API_URL=
 EOF
@@ -281,32 +286,39 @@ if [[ "$USE_DOMAIN" == "true" ]]; then
         warn "Используется самоподписанный сертификат. Браузер покажет предупреждение."
     fi
 else
-    info "Домен не указан — генерирую самоподписанный сертификат..."
-    SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "localhost")
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout nginx/ssl/key.pem -out nginx/ssl/cert.pem \
-        -subj "/CN=${SERVER_IP}" 2>/dev/null
-    success "Самоподписанный сертификат создан (CN=${SERVER_IP})"
+    info "Домен не указан — будет создан self-signed TLS с IP SAN и SPKI pin."
 fi
+
+bash scripts/ensure_control_plane_tls.sh || die "Не удалось подготовить HTTPS control-plane."
 chmod 600 nginx/ssl/key.pem
+CONTROL_PLANE_PUBLIC_URL="$(sed -n 's/^CONTROL_PLANE_PUBLIC_URL=//p' .env | tail -1)"
 
 # ─── Database migrations ──────────────────────────────────────────────────────
 section "Запуск миграций базы данных"
 
+info "Собираю immutable application image..."
+COMPOSE_PARALLEL_LIMIT=1 docker compose build admin \
+    || die "Не удалось собрать application image."
+
 info "Поднимаю базу данных..."
 docker compose up -d db >/dev/null 2>&1
-sleep 5  # Wait for postgres to initialize
+for _ in $(seq 1 30); do
+    docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1 && break
+    sleep 2
+done
+docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1 \
+    || die "PostgreSQL не готов."
 
 info "Применяю миграции Alembic..."
-if ! docker compose run --rm bot python -m alembic upgrade head 2>&1; then
+if ! docker compose run --rm --no-deps admin python -m alembic upgrade head 2>&1; then
     die "Миграции не применились. Проверьте подключение к БД."
 fi
 success "Миграции применены"
 
 info "Создаю admin-пользователя..."
-if ! docker compose run --rm bot python scripts/setup_admin.py 2>&1; then
+if ! docker compose run --rm --no-deps admin python scripts/setup_admin.py 2>&1; then
     warn "Не удалось создать admin автоматически. После запуска выполните:"
-    warn "  docker compose run --rm bot python scripts/setup_admin.py"
+    warn "  docker compose run --rm --no-deps admin python scripts/setup_admin.py"
 else
     success "Admin-пользователь создан"
 fi
@@ -348,8 +360,8 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo
 echo -e "${BOLD}📋 Ваши данные:${RESET}"
 echo -e "  Бот в Telegram:   ${CYAN}Найдите по токену в BotFather${RESET}"
-echo -e "  Admin Panel:      ${CYAN}https://${DOMAIN:-$SERVER_IP}/admin${RESET}"
-echo -e "  Grafana:          ${CYAN}http://${SERVER_IP}:3000${RESET}"
+echo -e "  Admin Panel:      ${CYAN}${CONTROL_PLANE_PUBLIC_URL}/admin/${RESET}"
+echo -e "  Monitoring:       ${CYAN}выключен по умолчанию (profile monitoring)${RESET}"
 echo
 echo -e "${BOLD}🔑 Учётные данные Admin Panel:${RESET}"
 echo -e "  Логин:    ${YELLOW}${ADMIN_USERNAME}${RESET}"
