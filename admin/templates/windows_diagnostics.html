@@ -3,7 +3,13 @@
 <div class="card p-3 mb-3">
   <h6>Windows-клиент и отчёты</h6>
   <p class="text-muted small">Отправка только после нажатия пользователем «Отправить диагностику». Не принимаем VLESS-ссылки, UUID, пароли, сырые логи или IP.</p>
-  <a class="btn btn-primary mb-3" href="/admin/windows-client/download">Скачать Windows-клиент (ZIP)</a>
+  <a class="btn btn-primary mb-3" href="/admin/windows-client/download">Скачать установочный архив Windows (ZIP)</a>
+  <p class="small mb-2"><strong>Скачивание не означает установку.</strong> После загрузки выберите «Извлечь все» и откройте распакованную папку.</p>
+  <div class="small mb-3">
+    <div>1. Запустите <code>INSTALL-WINDOWS.cmd</code> и дождитесь сообщения <strong>PRIVATE LINE IS INSTALLED AND LAUNCHED</strong>.</div>
+    <div>2. Запустите <code>CHECK-INSTALL.cmd</code>, чтобы увидеть статус «УСТАНОВЛЕНО» или конкретную ошибку.</div>
+    <div>3. Откройте ярлык <strong>Private Line</strong> на рабочем столе, вставьте ключ и нажмите «Подключить».</div>
+  </div>
   <label class="form-label">Адрес сервера для Windows-клиента</label>
   <input class="form-control mb-3" type="text" value="{{ endpoint }}" readonly onclick="this.select()">
   <label class="form-label">Ключ приёма диагностики (введите в Windows-клиенте один раз)</label>
