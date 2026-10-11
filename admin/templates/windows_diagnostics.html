@@ -3,23 +3,29 @@
 <div class="card p-3 mb-3">
   <h6>Windows-клиент и отчёты</h6>
   <p class="text-muted small">Отправка только после нажатия пользователем «Отправить диагностику». Не принимаем VLESS-ссылки, UUID, пароли, сырые логи или IP.</p>
-  <a class="btn btn-primary mb-3" href="/admin/windows-client/download">Скачать установочный архив Windows (ZIP)</a>
+  <p class="small"><strong>Персональная автоматическая установка:</strong> выберите пользователя с активной подпиской. IP, VLESS-ключ и диагностический токен в программе вводить не нужно.</p>
+  <form method="get" action="/admin/windows-client/personal" class="d-flex gap-2 mb-3">
+    <select name="user_id" class="form-select" required aria-label="Пользователь">
+      <option value="">Выберите активного клиента</option>
+      {% for client in eligible_users %}
+      <option value="{{ client.id }}">{{ client.id }} · @{{ client.username or ('TG '+(client.telegram_id|string)) }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary" type="submit" {% if not eligible_users %}disabled{% endif %}>Скачать персональный Windows (ZIP)</button>
+  </form>
+  <p class="small text-muted">Либо клиент получает свой комплект через команду <code>/windows</code> в Telegram. Одноразовый код действует 24 часа. Не пересылайте персональный ZIP.</p>
+  <a class="btn btn-outline-secondary btn-sm mb-3" href="/admin/windows-client/download">Общий архив (без привязки, только для диагностики файлов)</a>
   <p class="small mb-2"><strong>Скачивание не означает установку.</strong> После загрузки выберите «Извлечь все» и откройте распакованную папку.</p>
   <div class="small mb-3">
     <div>1. Запустите <code>INSTALL-WINDOWS.cmd</code> и дождитесь сообщения <strong>PRIVATE LINE IS INSTALLED AND LAUNCHED</strong>.</div>
     <div>2. Запустите <code>CHECK-INSTALL.cmd</code>, чтобы увидеть статус «УСТАНОВЛЕНО» или конкретную ошибку.</div>
     <div>3. Откройте ярлык <strong>Private Line</strong> на рабочем столе, вставьте ключ и нажмите «Подключить».</div>
   </div>
-  <label class="form-label">Адрес сервера для Windows-клиента</label>
-  <input class="form-control mb-3" type="text" value="{{ endpoint }}" readonly onclick="this.select()">
-  <label class="form-label">Ключ приёма диагностики (введите в Windows-клиенте один раз)</label>
-  <input class="form-control font-monospace" type="password" value="{{ token }}" id="diag-token" readonly onclick="this.select()">
-  <button class="btn btn-outline-secondary mt-2" onclick="navigator.clipboard.writeText(document.getElementById('diag-token').value)">Копировать ключ</button>
-  <p class="small text-muted mt-2">Ключ разрешает загружать только ограниченные отчёты. Не публикуйте его открыто. Для клиентского публичного сервиса потребуется персональная авторизация вместо общего ключа.</p>
+  <p class="small text-muted">Отчёты будут приходить автоматически из авторизованного Windows-клиента, если пользователь разрешил диагностику.</p>
 </div>
 {% for report in reports %}
 <div class="card p-3 mb-2">
-  <div class="fw-semibold">Отчёт {{ report.id }} · {{ report.at }} · Windows {{ report.details.windows }} · клиент {{ report.details.version }}</div>
+  <div class="fw-semibold">Отчёт {{ report.id }} · {{ report.at }}{% if report.details.user_id %} · Клиент #{{ report.details.user_id }}{% endif %} · Windows {{ report.details.windows }} · клиент {{ report.details.version }}</div>
   <div class="mt-2 d-flex gap-2 flex-wrap">
   {% for stage in report.details.stages %}
     <span class="badge {% if stage.result == 'ok' %}bg-success{% elif stage.result == 'failed' %}bg-danger{% else %}bg-secondary{% endif %}">{{ stage.stage }}: {{ stage.result }} / {{ stage.code }}</span>
