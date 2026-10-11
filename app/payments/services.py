@@ -209,13 +209,16 @@ async def create_payment(
 
     provider = await get_provider_db(provider_name, session)
     description = f"Private Line — {tariff.name}"
-    payment_result = await provider.create_payment(
-        our_payment_id=payment.id,
-        amount=amount,
-        currency="RUB",
-        description=description,
-        user_id=user_id,
-    )
+    try:
+        payment_result = await provider.create_payment(
+            our_payment_id=payment.id,
+            amount=amount,
+            currency="RUB",
+            description=description,
+            user_id=user_id,
+        )
+    finally:
+        await provider.aclose()
 
     if payment_result.provider_payment_id and payment_result.provider_payment_id != "manual":
         payment.provider_payment_id = payment_result.provider_payment_id
