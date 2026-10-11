@@ -13,6 +13,7 @@ from admin.dependencies import require_super_admin
 from app.database import get_async_session
 from app.models.app_setting import AppSetting
 from app.models.user import User
+from app.services.secret_settings import decode_setting_value, encode_setting_value
 
 router = APIRouter(prefix="/integrations")
 templates = Jinja2Templates(directory="admin/templates")
@@ -106,10 +107,15 @@ def _provider_status(section: str, values: dict[str, str]) -> dict:
 async def _load_settings(session: AsyncSession) -> dict[str, str]:
     result = await session.execute(select(AppSetting))
     db_vals = {row.key: (row.value or "") for row in result.scalars().all()}
-    return {
-        meta["key"]: db_vals.get(meta["key"]) or os.environ.get(meta["key"], "")
-        for meta in _SETTINGS_META
-    }
+
+    values: dict[str, str] = {}
+    for meta in _SETTINGS_META:
+        key = meta["key"]
+        if key in db_vals and db_vals[key]:
+            values[key] = decode_setting_value(key, db_vals[key])
+        else:
+            values[key] = os.environ.get(key, "")
+    return values
 
 
 def _build_context(request, admin, values: dict, saved: bool) -> dict:
@@ -156,13 +162,16 @@ async def save_integrations(
             if meta["type"] == "password" and not val:
                 pass  # keep existing value when password field left empty
             else:
-                existing.value = val
+                existing.value = encode_setting_value(key, val)
             existing.updated_at = now
             existing.updated_by = admin.id
         elif val:
             session.add(AppSetting(
-                key=key, value=val, description=meta["label"],
-                updated_at=now, updated_by=admin.id,
+                key=key,
+                value=encode_setting_value(key, val),
+                description=meta["label"],
+                updated_at=now,
+                updated_by=admin.id,
             ))
     await session.commit()
     values = await _load_settings(session)
