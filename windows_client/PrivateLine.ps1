@@ -137,14 +137,12 @@ function Connect-Client {
     Add-Stage "install" "ok" "GUI_STARTED"
     try {
         Check-Xray
-        $text=$ProfileInput.Text.Trim()
-        if(-not $text -and (Test-Path $ConfigFile)){
-            Add-Stage "parse" "ok" "SAVED_PROFILE"
-        }else{
-            try {$config=Get-Profile $text;Add-Stage "parse" "ok" "PROFILE_VALID"}
-            catch {Add-Stage "parse" "failed" "INVALID_PROFILE";throw "INVALID_PROFILE"}
-            [IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json -Depth 24), (New-Object Text.UTF8Encoding($false)))
-        }
+        Show-Info "Получаем VPN-профиль автоматически..."
+        try {$text=Fetch-VpnProfile}
+        catch {Add-Stage "parse" "failed" "PROFILE_FETCH_FAILED";throw "PROFILE_FETCH_FAILED"}
+        try {$config=Get-Profile $text;Add-Stage "parse" "ok" "PROFILE_VALID"}
+        catch {Add-Stage "parse" "failed" "INVALID_PROFILE";throw "INVALID_PROFILE"}
+        [IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json -Depth 24), (New-Object Text.UTF8Encoding($false)))
         # Never leak the VLESS credentials into the diagnostic stage log.
         $profileJson=Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
         $remote=$profileJson.outbounds[0].settings.vnext[0]
@@ -178,12 +176,12 @@ function Connect-Client {
         Set-ItemProperty -Path $settingsPath -Name ProxyEnable -Value 1
         Refresh-WindowsProxy
         Add-Stage "proxy" "ok" "WINDOWS_USER_PROXY_ENABLED"
-        $ProfileInput.Text=""
         Show-Info "Подключено. Внешний VPN IP: $result. Настроен прокси Windows/Chrome (НЕ системный VPN)."
     }catch{
         $code="$($_.Exception.Message)"
-        Show-Info ("Ошибка: " + $code + ". Отправьте диагностику через кнопку ниже.")
         Stop-Client
+        $report=Send-Diagnostics -Automatic
+        Show-Info ("VPN не подключён: " + $code + ". " + $report)
     }
 }
 function Send-Diagnostics {
