@@ -179,6 +179,26 @@ async def reality_debug(
     }
 
 
+@router.get("/chrome/extension.zip")
+async def download_chrome_extension(
+    admin: User = Depends(require_super_admin),
+):
+    """Download only the Chrome extension with manifest.json at ZIP root."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.chrome_bundle import build_chrome_extension_zip
+
+    return StreamingResponse(
+        BytesIO(build_chrome_extension_zip()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="private-line-extension.zip"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/chrome/download")
 async def download_chrome_client(
     admin: User = Depends(require_super_admin),
