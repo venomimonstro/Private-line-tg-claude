@@ -25,7 +25,7 @@ internal static class Program
             Directory.CreateDirectory(dir);
             var app=Path.Combine(dir,"PrivateLine.exe");
             ExtractResource("PrivateLine.exe",app);
-            await InstallXray(dir);
+            InstallEmbeddedXray(dir);
             await Pair(boot,dir);
             CreateShortcuts(app,dir);
             Process.Start(new ProcessStartInfo(app){UseShellExecute=true,WorkingDirectory=dir});
@@ -87,23 +87,15 @@ internal static class Program
         using var f=File.Create(path);s.CopyTo(f);
     }
 
-    static async Task InstallXray(string dir)
+    static void InstallEmbeddedXray(string dir)
     {
         var xray=Path.Combine(dir,"xray.exe");
-        if(File.Exists(xray)&&await XrayOk(xray))return;
-        var zip=Path.Combine(Path.GetTempPath(),"pl-"+Guid.NewGuid().ToString("N")+".zip");
-        var tmp=Path.Combine(Path.GetTempPath(),"pl-"+Guid.NewGuid().ToString("N"));
-        try {
-            using var publicHttp=new HttpClient(){Timeout=TimeSpan.FromSeconds(45)};
-            using var response=await publicHttp.GetAsync("https://github.com/XTLS/Xray-core/releases/download/v26.6.27/Xray-windows-64.zip",HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            await using(var output=File.Create(zip))await response.Content.CopyToAsync(output);
-            if(new FileInfo(zip).Length<1_000_000)throw new InvalidOperationException("XRAY_DOWNLOAD_INCOMPLETE");
-            ZipFile.ExtractToDirectory(zip,tmp,true);
-            var found=Directory.GetFiles(tmp,"xray.exe",SearchOption.AllDirectories).FirstOrDefault()??throw new InvalidOperationException("XRAY_BINARY_MISSING");
-            File.Copy(found,xray,true);
-            if(!await XrayOk(xray))throw new InvalidOperationException("XRAY_VERSION_INVALID");
-        } finally {try{File.Delete(zip);}catch{} try{Directory.Delete(tmp,true);}catch{}}
+        ExtractResource("xray.exe",xray);
+        var p=Process.Start(new ProcessStartInfo(xray,"version"){UseShellExecute=false,RedirectStandardOutput=true,RedirectStandardError=true,CreateNoWindow=true})
+            ?? throw new InvalidOperationException("XRAY_START_FAILED");
+        var line=p.StandardOutput.ReadLine(); p.WaitForExit();
+        if(p.ExitCode!=0 || line?.StartsWith("Xray 26.6.27",StringComparison.Ordinal)!=true)
+            throw new InvalidOperationException("XRAY_VERSION_INVALID");
     }
 
     static async Task<bool> XrayOk(string path)
