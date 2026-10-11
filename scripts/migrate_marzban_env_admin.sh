@@ -37,33 +37,30 @@ if ! grep -qE '^[[:space:]]*(export[[:space:]]+)?SUDO_PASSWORD[[:space:]]*=' .en
   exit 2
 fi
 
-mapfile -t ADMIN_CREDS < <(python3 - <<'PY'
-from pathlib import Path
-import re
-text = Path("/opt/marzban/.env").read_text()
-def value(name):
-    match = re.search(
-        rf"^\s*(?:export\s+)?{name}\s*=\s*(.*)\s*$",
-        text,
-        flags=re.MULTILINE,
-    )
-    if not match:
+# Read the effective credentials from the running container, not by parsing
+# .env ourselves. Docker Compose/python-decouple may interpret quoting and
+# special characters differently than a hand-written shell parser.
+mapfile -t ADMIN_CREDS < <(
+  docker compose exec -T marzban python - <<'PY'
+import os, base64
+for name in ("SUDO_USERNAME", "SUDO_PASSWORD"):
+    value = os.environ.get(name, "")
+    if not value:
         raise SystemExit(2)
-    raw = match.group(1).strip()
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
-        raw = raw[1:-1]
-    return raw
-print(value("SUDO_USERNAME"))
-print(value("SUDO_PASSWORD"))
+    print(base64.b64encode(value.encode()).decode())
 PY
 )
-[[ "${#ADMIN_CREDS[@]}" -eq 2 && -n "${ADMIN_CREDS[0]}" && -n "${ADMIN_CREDS[1]}" ]] || {
-  echo "FAIL: cannot safely read existing Marzban admin credentials" >&2
+[[ "${#ADMIN_CREDS[@]}" -eq 2 ]] || {
+  echo "FAIL: cannot read effective Marzban admin credentials from container" >&2
   exit 2
 }
-MARZBAN_ADMIN_USER="${ADMIN_CREDS[0]}"
-MARZBAN_ADMIN_PASS="${ADMIN_CREDS[1]}"
+MARZBAN_ADMIN_USER="$(printf '%s' "${ADMIN_CREDS[0]}" | base64 -d)"
+MARZBAN_ADMIN_PASS="$(printf '%s' "${ADMIN_CREDS[1]}" | base64 -d)"
 unset ADMIN_CREDS
+[[ -n "$MARZBAN_ADMIN_USER" && -n "$MARZBAN_ADMIN_PASS" ]] || {
+  echo "FAIL: effective Marzban admin credentials are empty" >&2
+  exit 2
+}
 
 echo "[1/4] Importing current env sudo admin into Marzban database..."
 docker compose exec -T marzban marzban-cli admin import-from-env -y </dev/null
