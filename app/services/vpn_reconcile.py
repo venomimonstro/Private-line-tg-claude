@@ -154,6 +154,7 @@ async def reconcile_marzban_server(
             and isinstance(current_entries[0], dict)
             and current_entries[0].get("address") == public_host
             and current_entries[0].get("port") in (port, str(port))
+            and current_entries[0].get("sni") == sni
             and current_entries[0].get("is_disabled") not in (True, "true", "True")
             and current_entries[0].get("fingerprint") in ("chrome", None, "")
             and current_entries[0].get("security") in ("inbound_default", None, "")
