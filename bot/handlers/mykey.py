@@ -26,32 +26,63 @@ def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(Command("windows"))
-async def send_windows_installer(message: Message) -> None:
+async def _personal_windows_kit(user_id: int) -> bytes:
+    from app.database import async_session_maker
     from app.windows_bundle import build_windows_client
+    from app.windows_enrollment import create_enrollment
 
+    async with async_session_maker() as session:
+        base, code = await create_enrollment(session, user_id)
+    return build_windows_client(base_url=base, pairing_code=code)
+
+
+_WINDOWS_CAPTION = (
+    "🖥 <b>Private Line для Windows</b>\n\n"
+    "Персональный установщик уже привязан к вашей активной VPN-подписке. "
+    "IP, VLESS-ключ и токен диагностики вводить не потребуется.\n\n"
+    "1. Распакуйте ZIP. 2. Запустите INSTALL-WINDOWS.cmd. "
+    "3. Нажмите «Подключить».\n\n"
+    "Код установки одноразовый, действует 24 часа. "
+    "Диагностические коды ошибок отправляются автоматически, "
+    "если разрешена диагностика в приложении. "
+    "Не передавайте ZIP третьим лицам."
+)
+
+
+@router.message(Command("windows"))
+async def send_windows_installer(message: Message, db_user: User) -> None:
+    from app.windows_enrollment import public_base_url
+    try:
+        data = await _personal_windows_kit(db_user.id)
+    except ValueError:
+        await message.answer(
+            "Не могу выдать автоматический Windows-клиент: отсутствует активная "
+            "VPN-подписка либо на основном сервере не указан HTTPS-адрес "
+            "CONTROL_PLANE_PUBLIC_URL. Проверьте подписку и настройки сервера."
+        )
+        return
     await message.answer_document(
-        BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
-        caption=(
-            "🖥 <b>Private Line для Windows</b>\n\n"
-            "Скачивание ZIP ещё не означает установку. Выберите «Извлечь все», "
-            "запустите INSTALL-WINDOWS.cmd и дождитесь зелёного подтверждения. "
-            "Затем запустите CHECK-INSTALL.cmd — он проверит Xray и ярлык на рабочем столе. "
-            "Вставьте ключ из /mykey. Для отправки диагностики используйте "
-            "отдельную кнопку в приложении; VPN-ключ не отправляется."
-        ),
-        parse_mode="HTML",
+        BufferedInputFile(data, filename="private-line-windows-personal.zip"),
+        caption=_WINDOWS_CAPTION, parse_mode="HTML",
+        protect_content=True,
     )
 
 
 @router.callback_query(F.data == "windows_download")
-async def send_windows_installer_callback(callback: CallbackQuery) -> None:
-    from app.windows_bundle import build_windows_client
-
-    await callback.answer("Отправляю Windows-клиент")
+async def send_windows_installer_callback(callback: CallbackQuery, db_user: User) -> None:
+    await callback.answer("Готовлю персональную установку Windows")
+    try:
+        data = await _personal_windows_kit(db_user.id)
+    except ValueError:
+        await callback.message.answer(
+            "Автоматическая установка недоступна: проверьте активную подписку "
+            "и HTTPS-адрес основного сервера."
+        )
+        return
     await callback.message.answer_document(
-        BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
-        caption="🖥 Извлеките весь ZIP, запустите INSTALL-WINDOWS.cmd, затем CHECK-INSTALL.cmd. После подтверждения установки вставьте VLESS Reality ключ в Private Line.",
+        BufferedInputFile(data, filename="private-line-windows-personal.zip"),
+        caption=_WINDOWS_CAPTION, parse_mode="HTML",
+        protect_content=True,
     )
 
 
