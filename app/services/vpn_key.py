@@ -346,6 +346,25 @@ async def disable_vpn_key(
     credential may still work. One retry operation is queued. The pending worker
     calls this with enqueue_on_failure=False and raise_on_failure=True.
     """
+    # Serialize every capacity-changing operation on this node. Creation already
+    # locks the same server row; doing the same here prevents two concurrent
+    # disables from committing a stale current_users count.
+    locked_server = (await session.execute(
+        select(VpnServer).where(VpnServer.id == server.id).with_for_update()
+    )).scalar_one_or_none()
+    if locked_server is None:
+        raise ValueError("VPN server disappeared during disable")
+    server = locked_server
+
+    locked_key = (await session.execute(
+        select(VpnKey).where(VpnKey.id == vpn_key.id).with_for_update()
+    )).scalar_one_or_none()
+    if locked_key is None or locked_key.server_id != server.id:
+        raise ValueError("VPN key/server mismatch during disable")
+    vpn_key = locked_key
+    if vpn_key.status == VpnKeyStatus.disabled:
+        return True
+
     client = _make_client(server)
     try:
         if isinstance(client, MarzbanClient):
