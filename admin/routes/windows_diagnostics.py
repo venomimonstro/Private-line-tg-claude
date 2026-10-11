@@ -19,6 +19,8 @@ from admin.dependencies import require_super_admin
 from app.database import get_async_session
 from app.models.app_setting import AppSetting
 from app.models.user import User
+from app.models.subscription import Subscription
+from app.models.vpn_key import VpnKey
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -131,14 +133,15 @@ async def windows_device_report(request: Request, report: DiagnosticReport,
 
 
 @router.get("/windows-client/personal")
-async def download_personal_windows_client(admin: User = Depends(require_super_admin),
+async def download_personal_windows_client(user_id: int | None = None,
+                                           admin: User = Depends(require_super_admin),
                                            db: AsyncSession = Depends(get_async_session)):
     from io import BytesIO
     from fastapi.responses import StreamingResponse
     from app.windows_bundle import build_windows_client
     from app.windows_enrollment import create_enrollment
     try:
-        base, code = await create_enrollment(db, admin.id)
+        base, code = await create_enrollment(db, user_id if user_id is not None else admin.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     payload = build_windows_client(base_url=base, pairing_code=code)
@@ -166,6 +169,18 @@ async def diagnostics_page(request: Request, db: AsyncSession = Depends(get_asyn
         select(AppSetting).where(AppSetting.key.like("win_diag_%"))
         .order_by(AppSetting.updated_at.desc()).limit(50)
     )).scalars().all()
+    # Only super-admins can prepare personalised installers for existing
+    # customers. These contain an expiring one-time pairing code, not keys.
+    from app.enums import SubscriptionStatus, VpnKeyStatus
+    eligible = (await db.execute(
+        select(User)
+        .join(Subscription, Subscription.user_id == User.id)
+        .join(VpnKey, VpnKey.subscription_id == Subscription.id)
+        .where(Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+               Subscription.expires_at > datetime.utcnow(),
+               VpnKey.status == VpnKeyStatus.active)
+        .distinct().order_by(User.id)
+    )).scalars().all()
     reports = []
     for row in rows:
         try:
@@ -175,7 +190,7 @@ async def diagnostics_page(request: Request, db: AsyncSession = Depends(get_asyn
             continue
     return templates.TemplateResponse("windows_diagnostics.html",
         {"request":request,"admin":admin,"page_title":"Диагностика Windows", "token":token,
-         "endpoint":str(request.base_url).rstrip("/"), "reports":reports})
+         "endpoint":str(request.base_url).rstrip("/"), "reports":reports, "eligible_users":eligible})
 
 
 @router.post("/api/windows-diagnostics", response_class=JSONResponse)
