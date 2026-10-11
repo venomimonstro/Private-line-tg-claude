@@ -44,15 +44,34 @@ class YooKassaProvider(PaymentProviderBase):
             "metadata": {"order_id": str(our_payment_id)},
             "capture": True,
         }
-        resp = await self._http.post(
-            f"{self._API_URL}/payments",
-            json=payload,
-            auth=(self._shop_id, self._secret),
-            headers={
-                "Idempotence-Key": str(uuid.uuid4()),
+        # Stable for one local payment row: if the request reached YooKassa
+        # but the HTTP response was lost, the retry returns the same payment
+        # instead of creating a duplicate checkout.
+        idempotence_key = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"private-line:yookassa:{self._shop_id}:{our_payment_id}",
+            )
+        )
+        request_kwargs = {
+            "json": payload,
+            "auth": (self._shop_id, self._secret),
+            "headers": {
+                "Idempotence-Key": idempotence_key,
                 "Content-Type": "application/json",
             },
-        )
+        }
+        try:
+            resp = await self._http.post(
+                f"{self._API_URL}/payments",
+                **request_kwargs,
+            )
+        except httpx.TransportError:
+            # One ambiguity-safe retry with exactly the same idempotence key.
+            resp = await self._http.post(
+                f"{self._API_URL}/payments",
+                **request_kwargs,
+            )
         resp.raise_for_status()
         data = resp.json()
 
