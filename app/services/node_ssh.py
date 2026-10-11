@@ -72,6 +72,8 @@ def validate_secret(auth_type: str, value: str) -> str:
         ):
             raise ValueError("Private key does not look like an OpenSSH/PEM private key")
         return stripped + "\n"
+    if "\n" in secret or "\r" in secret:
+        raise ValueError("SSH password must be a single line")
     return secret
 
 
