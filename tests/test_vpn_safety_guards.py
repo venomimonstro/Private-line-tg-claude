@@ -157,6 +157,20 @@ class ProductionVpnSafetyTests(unittest.TestCase):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertIn("validate_install_layout.sh", text)
 
+    def test_new_nodes_avoid_known_bad_microsoft_reality_target(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        inspect = (ROOT / "scripts" / "inspect_node_vless.sh").read_text(encoding="utf-8")
+        self.assertIn('REALITY_TARGET_HOST="${REALITY_TARGET_HOST:-dl.google.com}"', installer)
+        self.assertNotIn('REALITY_SNI="www.microsoft.com"', installer)
+        self.assertNotIn('openssl s_client -connect www.microsoft.com:443', inspect)
+
+    def test_reality_target_migration_preserves_credentials(self):
+        text = (ROOT / "scripts" / "migrate_reality_target.sh").read_text(encoding="utf-8")
+        self.assertIn("preserving credentials", text)
+        self.assertNotIn("x25519", text)
+        self.assertIn('r.get("privateKey")', text)
+        self.assertIn('r.get("shortIds")', text)
+
     def test_marzban_node_installer_migrates_env_admin_to_db(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         self.assertIn("marzban-cli admin import-from-env -y", installer)
