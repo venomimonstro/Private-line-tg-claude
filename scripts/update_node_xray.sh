@@ -17,31 +17,74 @@ VERSION=26.6.27
 XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
 CORE_DIR="/var/lib/marzban/xray-core/$VERSION"
 CORE="$CORE_DIR/xray"
-WORKDIR="$(mktemp -d /var/tmp/private-line-xray-XXXXXXXX)"
-
-# Fast idempotent path: do not recreate Marzban when the exact compatibility
-# core is already configured, running, and accepts the current production config.
-CURRENT_EXEC="$(grep -E '^[[:space:]]*(export[[:space:]]+)?XRAY_EXECUTABLE_PATH=' .env 2>/dev/null | tail -n1 | sed -E 's/^[^=]+=//' | tr -d '\r' || true)"
-if [[ "$CURRENT_EXEC" == "$CORE" && -x "$CORE" ]]; then
-    VERSION_OK=false
-    RUNNING_OK=false
-    CONFIG_OK=false
-    PORT_OK=false
-    "$CORE" version 2>/dev/null | head -n1 | grep -F "Xray $VERSION " >/dev/null && VERSION_OK=true
-    for pid_dir in /proc/[0-9]*; do
-        [[ -e "$pid_dir/exe" ]] || continue
-        [[ "$(readlink "$pid_dir/exe" 2>/dev/null || true)" == "$CORE" ]] && { RUNNING_OK=true; break; }
+# Inspect the installed executable before pulling another copy. It is important
+# on 512 MiB nodes that a temporary version-probe failure does not trigger a
+# needless Docker pull and Marzban restart.
+version_matches() {
+    local binary="$1" output="" rc=0 first=""
+    local attempt
+    for attempt in 1 2 3; do
+        rc=0
+        output="$(timeout 20 "$binary" version 2>&1)" || rc=$?
+        first="${output%%$'\n'*}"
+        if [[ "$rc" -eq 0 && "$first" =~ ^Xray[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]|$) ]]; then
+            if [[ "${BASH_REMATCH[1]}" == "$VERSION" ]]; then
+                return 0
+            fi
+            echo "FAIL: expected Xray $VERSION but executable reports: $first" >&2
+            return 1
+        fi
+        if [[ "$attempt" -lt 3 ]]; then sleep 1; fi
     done
-    "$CORE" run -test -config /var/lib/marzban/xray_config.json >/dev/null 2>&1 && CONFIG_OK=true
-    ss -lnt 2>/dev/null | grep -qE '[:.]443[[:space:]]' && PORT_OK=true
-    if [[ "$VERSION_OK" == true && "$RUNNING_OK" == true && "$CONFIG_OK" == true && "$PORT_OK" == true ]]; then
-        echo "[1/4] PASS: Xray $VERSION already active and config valid; no restart required"
-        echo "[2/4] PASS: current REALITY config accepted by compatibility core"
-        echo "[3/4] PASS: live Xray process already uses $CORE"
-        echo "[4/4] PASS: listener :443 is ready"
-        exit 0
+    echo "FAIL: unable to verify Xray $VERSION (exit=$rc; first line: ${first:0:160})" >&2
+    return 1
+}
+
+# Use the container's /proc namespace for process verification. The host may
+# resolve a container executable to an overlayfs path, not $CORE.
+CURRENT_EXEC="$(grep -E '^[[:space:]]*(export[[:space:]]+)?XRAY_EXECUTABLE_PATH=' .env 2>/dev/null | tail -n1 | sed -E 's/^[^=]+=//' | tr -d '\r' || true)"
+CURRENT_EXEC="${CURRENT_EXEC%\"}"
+CURRENT_EXEC="${CURRENT_EXEC#\"}"
+CURRENT_EXEC="${CURRENT_EXEC%\'}"
+CURRENT_EXEC="${CURRENT_EXEC#\'}"
+if [[ "$CURRENT_EXEC" == "$CORE" && -x "$CORE" ]]; then
+    if version_matches "$CORE" && docker compose exec -T marzban python - "$CORE" <<'PY'
+import os, pathlib, socket, sys, urllib.request
+
+expected = sys.argv[1]
+config = pathlib.Path("/var/lib/marzban/xray_config.json")
+if not config.is_file():
+    raise SystemExit(1)
+running = False
+for item in pathlib.Path("/proc").iterdir():
+    if not item.name.isdigit():
+        continue
+    try:
+        if os.readlink(item / "exe") == expected:
+            running = True
+            break
+    except OSError:
+        continue
+if not running:
+    raise SystemExit(1)
+with socket.create_connection(("127.0.0.1", 443), timeout=3):
+    pass
+with urllib.request.urlopen("http://127.0.0.1:8000/openapi.json", timeout=4) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+PY
+    then
+        if docker compose exec -T marzban "$CORE" run -test -config /var/lib/marzban/xray_config.json </dev/null >/dev/null 2>&1; then
+            echo "[1/4] PASS: verified installed Xray $VERSION; no pull required"
+            echo "[2/4] PASS: REALITY config accepted by the running core"
+            echo "[3/4] PASS: live Marzban process and API are ready"
+            echo "[4/4] PASS: Xray :443; no restart required"
+            exit 0
+        fi
     fi
 fi
+
+WORKDIR="$(mktemp -d /var/tmp/private-line-xray-XXXXXXXX)"
 BACKUP_DIR="/var/lib/marzban/backups/core-switch-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 CHANGED=false
 SUCCESS=false
@@ -75,8 +118,8 @@ docker cp "$TMP_CONTAINER:/usr/local/bin/xray" "$WORKDIR/xray"
 docker rm "$TMP_CONTAINER" >/dev/null
 TMP_CONTAINER=""
 chmod 755 "$WORKDIR/xray"
-"$WORKDIR/xray" version | head -n 1 | grep -F "Xray $VERSION " >/dev/null || {
-    echo "FAIL: unexpected Xray binary version" >&2
+version_matches "$WORKDIR/xray" || {
+    echo "FAIL: unexpected Xray binary version; active Marzban has not been changed" >&2
     exit 2
 }
 mkdir -p "$CORE_DIR"
