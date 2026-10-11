@@ -112,6 +112,12 @@ with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
     assert "SETUP-WINDOWS.cmd" in archive.namelist()
     assert json.loads(archive.read("extension/manifest.json"))["manifest_version"] == 3
 print("PASS: Chrome client ZIP is packaged and available inside admin/bot image")
+from app.windows_bundle import build_windows_client
+with zipfile.ZipFile(io.BytesIO(build_windows_client())) as win_archive:
+    assert win_archive.testzip() is None
+    assert "INSTALL-WINDOWS.cmd" in win_archive.namelist()
+    assert "PrivateLine.ps1" in win_archive.namelist()
+print("PASS: Windows installer ZIP packaged in admin/bot runtime")
 PY
 
 echo "[7/8] Bot..."
