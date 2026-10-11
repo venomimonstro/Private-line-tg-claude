@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from html import escape
-import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -11,7 +10,6 @@ from app.models.user import User
 from app.services.vpn_key import get_client_access_url
 from bot.handlers.access import _get_active_subscription
 
-logger = logging.getLogger(__name__)
 router = Router(name="mykey")
 
 
@@ -26,88 +24,6 @@ def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=f"📨 Переслать {label}", callback_data=f"resend_key:{key.id}")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-async def _personal_windows_kit(user_id: int) -> bytes:
-    from app.database import async_session_maker
-    from app.windows_bundle import build_windows_client
-    from app.windows_enrollment import create_enrollment
-
-    async with async_session_maker() as session:
-        base, code = await create_enrollment(session, user_id)
-    return build_windows_client(base_url=base, pairing_code=code)
-
-
-_WINDOWS_CAPTION = (
-    "🖥 <b>Private Line для Windows</b>\n\n"
-    "Персональный установщик уже привязан к вашей активной VPN-подписке. "
-    "IP, VLESS-ключ и токен диагностики вводить не потребуется.\n\n"
-    "1. Распакуйте ZIP. 2. Запустите INSTALL-WINDOWS.cmd. "
-    "3. Нажмите «Подключить».\n\n"
-    "Код установки одноразовый, действует 24 часа. "
-    "Диагностические коды ошибок отправляются автоматически, "
-    "если разрешена диагностика в приложении. "
-    "Не передавайте ZIP третьим лицам."
-)
-
-
-@router.message(Command("windows"))
-async def send_windows_installer(message: Message, db_user: User) -> None:
-    try:
-        data = await _personal_windows_kit(db_user.id)
-    except ValueError:
-        await message.answer(
-            "Не могу выдать автоматический Windows-клиент: отсутствует активная "
-            "VPN-подписка либо на основном сервере не указан HTTPS-адрес "
-            "CONTROL_PLANE_PUBLIC_URL. Проверьте подписку и настройки сервера."
-        )
-        return
-    except Exception:
-        logger.exception("Personal Windows kit generation failed")
-        await message.answer("Ошибка подготовки Windows-клиента. Основной бот продолжает работать; попробуйте позднее.")
-        return
-    await message.answer_document(
-        BufferedInputFile(data, filename="private-line-windows-personal.zip"),
-        caption=_WINDOWS_CAPTION, parse_mode="HTML",
-        protect_content=True,
-    )
-
-
-@router.callback_query(F.data == "windows_download")
-async def send_windows_installer_callback(callback: CallbackQuery, db_user: User) -> None:
-    await callback.answer("Готовлю персональную установку Windows")
-    try:
-        data = await _personal_windows_kit(db_user.id)
-    except ValueError:
-        await callback.message.answer(
-            "Автоматическая установка недоступна: проверьте активную подписку "
-            "и HTTPS-адрес основного сервера."
-        )
-        return
-    except Exception:
-        logger.exception("Personal Windows callback kit generation failed")
-        await callback.message.answer("Ошибка подготовки Windows-клиента. Основной бот продолжает работать; попробуйте позднее.")
-        return
-    await callback.message.answer_document(
-        BufferedInputFile(data, filename="private-line-windows-personal.zip"),
-        caption=_WINDOWS_CAPTION, parse_mode="HTML",
-        protect_content=True,
-    )
-
-
-@router.message(Command("chrome_extension"))
-async def send_chrome_extension_only(message: Message) -> None:
-    from app.chrome_bundle import build_chrome_extension_zip
-
-    await message.answer_document(
-        BufferedInputFile(build_chrome_extension_zip(), filename="private-line-extension.zip"),
-        caption=(
-            "🌐 Расширение Private Line для Google Chrome. Распакуйте архив, "
-            "откройте chrome://extensions, включите режим разработчика и нажмите "
-            "«Загрузить распакованное». Для подключения VLESS Reality нужен "
-            "отдельный локальный Xray из комплекта /chrome."
-        ),
-    )
 
 
 @router.message(Command("chrome"))
@@ -169,8 +85,7 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📄 Получить файл VLESS", callback_data=f"vless_file:{key.id}")],
                 [InlineKeyboardButton(text="📷 QR-код ключа", callback_data="get_key_qr")],
-                [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP + Xray)", callback_data="chrome_download")],
-                [InlineKeyboardButton(text="🖥 Windows клиент", callback_data="windows_download")],
+                [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP)", callback_data="chrome_download")],
             ]),
         )
     else:
