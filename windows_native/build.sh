@@ -12,7 +12,7 @@ if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
   apt-get install -y -qq --no-install-recommends curl unzip ca-certificates >/dev/null
 fi
 
-dotnet publish "$WORK/PrivateLine.Client/PrivateLine.Client.csproj" -c Release -r win-x64 --self-contained true -o "$WORK/out-client" -p:PublishSingleFile=true
+dotnet publish "$WORK/PrivateLine.Client/PrivateLine.Client.csproj" -c Release -r win-x64 --self-contained false -o "$WORK/out-client" -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false
 cp "$WORK/out-client/PrivateLine.exe" "$PAYLOAD/PrivateLine.exe"
 
 TMP="$(mktemp -d)"
@@ -25,7 +25,7 @@ XRAY_BIN="$(find "$TMP/xray" -type f -iname 'xray.exe' | head -1)"
 [[ -n "$XRAY_BIN" && -s "$XRAY_BIN" ]] || { echo "FAIL: xray.exe missing from XTLS archive" >&2; exit 2; }
 cp "$XRAY_BIN" "$PAYLOAD/xray.exe"
 
-dotnet publish "$WORK/PrivateLine.Installer/PrivateLine.Installer.csproj" -c Release -r win-x64 --self-contained true -o "$WORK/out-installer" -p:PublishSingleFile=true
+dotnet publish "$WORK/PrivateLine.Installer/PrivateLine.Installer.csproj" -c Release -r win-x64 --self-contained true -o "$WORK/out-installer" -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false
 cp "$WORK/out-installer/PrivateLineSetup.exe" "$OUT/PrivateLineSetup.exe"
 test -s "$OUT/PrivateLineSetup.exe"
 [[ "$(head -c2 "$OUT/PrivateLineSetup.exe")" == "MZ" ]] || { echo "FAIL: installer is not a Windows PE file" >&2; exit 2; }
