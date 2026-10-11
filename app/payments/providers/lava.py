@@ -17,10 +17,11 @@ class LavaProvider(PaymentProviderBase):
 
     _API_URL = "https://api.lava.ru/business/invoice/create"
 
-    def __init__(self, project_id: str, secret_key: str) -> None:
-        self._project_id = project_id
-        self._secret = secret_key
-        self._http = httpx.AsyncClient(timeout=15.0)
+    def __init__(self, project_id: str, secret_key: str, webhook_secret: str) -> None:
+        self._project_id = project_id.strip()
+        self._secret = secret_key.strip()
+        self._webhook_secret = webhook_secret.strip()
+        self._http = httpx.AsyncClient(timeout=15.0, trust_env=False)
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -56,14 +57,41 @@ class LavaProvider(PaymentProviderBase):
         inv_url = data["data"]["url"]
         return PaymentResult(provider_payment_id=inv_id, payment_url=inv_url)
 
+    async def get_invoice_status_by_order_id(self, order_id: str) -> dict:
+        """Query the exact merchant order using the API-signing secret."""
+        payload = {
+            "shopId": self._project_id,
+            "orderId": str(order_id),
+        }
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        signature = hmac.new(
+            self._secret.encode(), body.encode(), hashlib.sha256
+        ).hexdigest()
+        response = await self._http.post(
+            "https://api.lava.ru/business/invoice/status",
+            content=body.encode(),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Signature": signature,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("status_check") is not True or not isinstance(data.get("data"), dict):
+            raise RuntimeError("LAVA invoice status response is not successful")
+        return data["data"]
+
     async def verify_webhook(
         self,
         body: bytes,
         headers: dict[str, str],
     ) -> IncomingPayment | None:
         try:
-            sig = headers.get("x-api-signature") or headers.get("X-Api-Signature", "")
-            expected = hmac.new(self._secret.encode(), body, hashlib.sha256).hexdigest()
+            sig = headers.get("signature") or headers.get("x-api-signature") or ""
+            expected = hmac.new(
+                self._webhook_secret.encode(), body, hashlib.sha256
+            ).hexdigest()
             if not hmac.compare_digest(expected, sig):
                 return None
             data = json.loads(body)
