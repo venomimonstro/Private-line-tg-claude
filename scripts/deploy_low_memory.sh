@@ -49,7 +49,7 @@ for key in BOT_TOKEN ADMIN_CHAT_ID ENCRYPTION_KEY SECRET_KEY; do
   grep -qE "^${key}=.+" .env || fail "${key} is missing in .env"
 done
 
-echo "[1/7] Static checks..."
+echo "[1/8] Static checks..."
 python3 - <<'PY'
 import ast
 from pathlib import Path
@@ -63,12 +63,12 @@ print("PASS: Python syntax")
 PY
 docker compose config -q
 
-echo "[2/7] Free RAM and optional monitoring..."
+echo "[2/8] Free RAM and optional monitoring..."
 docker stop private-line-grafana-1 private-line-prometheus-1   private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 140000 )) || fail "less than ~137 MiB available RAM"
 
-echo "[3/7] Database..."
+echo "[3/8] Database..."
 start_existing_or_create db
 for _ in $(seq 1 45); do
   if docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1; then
@@ -78,23 +78,28 @@ for _ in $(seq 1 45); do
 done
 docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1   || fail "PostgreSQL is not ready"
 
-echo "[4/7] Admin..."
+echo "[4/8] Build immutable application runtime..."
+# Application source is baked into private-line-app:runtime; it is no longer
+# bind-mounted. A force-recreate without a build would silently keep old code.
+docker compose build admin || fail "application runtime image build failed"
+
+echo "[5/8] Admin..."
 # Recreate only the stateless application container. DB remains untouched.
 docker compose up -d --no-deps --force-recreate admin
 wait_http http://127.0.0.1:8000/_health 45 || fail "FastAPI admin did not become healthy"
 
-echo "[5/7] Database migrations..."
+echo "[6/8] Database migrations..."
 docker compose exec -T admin python -m alembic upgrade head
 wait_http http://127.0.0.1:8000/_health 10 || fail "admin unhealthy after migration"
 
-echo "[6/7] Bot..."
+echo "[7/8] Bot..."
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 100000 )) || fail "RAM too low before bot recreation"
 docker compose up -d --no-deps --force-recreate bot
 sleep 4
 docker compose ps --status running -q bot | grep -q . || fail "bot is not running"
 
-echo "[7/7] Nginx and public admin..."
+echo "[8/8] Nginx and public admin..."
 start_existing_or_create nginx
 docker compose exec -T nginx nginx -t >/dev/null 2>&1 || fail "nginx config is invalid"
 docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || {
