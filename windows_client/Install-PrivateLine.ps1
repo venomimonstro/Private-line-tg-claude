@@ -88,6 +88,17 @@ try {
 
     Install-Xray
 
+    Write-Host "[2a/5] Linking this installation to your Telegram VPN subscription..." -ForegroundColor Cyan
+    $pairScript = Join-Path $PSScriptRoot "Pair-PrivateLine.ps1"
+    if (-not (Test-Path -LiteralPath $pairScript -PathType Leaf)) {
+        throw "PAIRING_MODULE_MISSING: download a new PERSONAL Windows ZIP from Telegram /windows."
+    }
+    & $pairScript -InstallDir $InstallDir
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $InstallDir "device.json"))) {
+        throw "PAIRING_FAILED: download a fresh personalized Windows ZIP."
+    }
+    Milestone "DEVICE_PAIRED" "VPN profile and reporting access configured automatically."
+
     Write-Host "[3/5] Creating launcher and desktop shortcut..." -ForegroundColor Cyan
     $launcher = Join-Path $InstallDir "PrivateLine.cmd"
     $launcherLines = @(
