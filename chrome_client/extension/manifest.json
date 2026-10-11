@@ -6,7 +6,8 @@
   "permissions": [
     "proxy",
     "storage",
-    "nativeMessaging"
+    "nativeMessaging",
+    "privacy"
   ],
   "action": {
     "default_title": "Private Line VPN",
