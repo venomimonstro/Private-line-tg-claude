@@ -119,7 +119,9 @@ with zipfile.ZipFile(io.BytesIO(build_windows_client())) as win_archive:
     assert "CHECK-INSTALL.cmd" in win_archive.namelist()
     assert "Check-Install.ps1" in win_archive.namelist()
     assert "PrivateLine.ps1" in win_archive.namelist()
-print("PASS: Windows installer ZIP packaged in admin/bot runtime")
+    for powershell_file in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1"):
+        assert win_archive.read(powershell_file).startswith(bytes((0xEF,0xBB,0xBF)))
+print("PASS: Windows installer ZIP packaged with UTF-8 PowerShell scripts and verification launcher")
 PY
 
 echo "[7/8] Bot..."
