@@ -15,7 +15,8 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Payload\PrivateLine.exe" LogicalName="PrivateLine.exe" />
+    <EmbeddedResource Include="Payload/xray.exe" LogicalName="xray.exe" />
+    <Compile Include="../PrivateLine.Client/MainForm.cs" Link="MainForm.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
