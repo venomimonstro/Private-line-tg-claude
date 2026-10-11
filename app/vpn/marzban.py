@@ -649,34 +649,97 @@ class MarzbanClient:
         # Revocation must reach the live Xray process, not only the Marzban DB.
         await self.restart_core_with_db_users(reason=f"disable {username}")
 
+    async def user_absent(self, username: str, *, attempts: int = 8) -> bool:
+        """Confirm deletion with a fresh HTTP session.
+
+        Marzban 0.8.x may close a DELETE response after committing the database
+        change. A fresh authenticated session avoids reusing a stale keep-alive
+        connection and lets callers distinguish "transport broke" from
+        "user still exists".
+        """
+        delay = 0.35
+        for attempt in range(max(1, attempts)):
+            try:
+                async with httpx.AsyncClient(timeout=8.0, trust_env=False) as probe:
+                    auth = await probe.post(
+                        f"{self._base}/api/admin/token",
+                        data={"username": self._username, "password": self._password},
+                    )
+                    if auth.status_code != 200:
+                        raise MarzbanConfigError(
+                            f"Marzban authentication failed while verifying deletion "
+                            f"(HTTP {auth.status_code})"
+                        )
+                    token = auth.json().get("access_token")
+                    if not token:
+                        raise MarzbanConfigError(
+                            "Marzban returned no access token while verifying deletion"
+                        )
+                    verify = await probe.get(
+                        f"{self._base}/api/user/{username}",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    if verify.status_code == 404:
+                        return True
+                    if verify.status_code == 200:
+                        return False
+                    if verify.status_code not in (502, 503, 504):
+                        verify.raise_for_status()
+            except (httpx.TransportError, httpx.TimeoutException):
+                pass
+            if attempt + 1 < max(1, attempts):
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.7, 2.0)
+        return False
+
     async def delete_key(self, username: str) -> None:
         headers = await self._headers()
-        resp = await self._client.delete(
-            f"{self._base}/api/user/{username}", headers=headers
-        )
-        deleted = resp.status_code == 404
-        # Marzban 0.8.4 can delete successfully and then return HTTP 500 while
-        # serializing an env-created sudo admin (Admin.model_validate(None)).
-        # Accept that response only after an independent GET confirms 404.
-        if not deleted and resp.status_code >= 500:
-            verify = await self._client.get(
+        resp = None
+        transport_error: Exception | None = None
+        try:
+            resp = await self._client.delete(
                 f"{self._base}/api/user/{username}", headers=headers
             )
-            if verify.status_code == 404:
-                logger.warning(
-                    "Marzban DELETE /api/user/%s returned HTTP %s, but GET confirmed deletion",
-                    username, resp.status_code,
-                )
-                deleted = True
-        if not deleted:
-            resp.raise_for_status()
-            deleted = True
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            # Older Marzban can commit the delete and then tear down the HTTP
+            # response. Never retry DELETE blindly before checking authoritative
+            # state, otherwise cleanup becomes ambiguous.
+            transport_error = exc
 
-        if deleted:
-            # The DELETE endpoint also schedules removal from Xray in background.
-            # A core resync guarantees a deleted test/revoked user is gone from
-            # the live runtime even if Marzban's background Xray API call failed.
-            await self.restart_core_with_db_users(reason=f"delete {username}")
+        deleted = bool(resp is not None and resp.status_code == 404)
+
+        if resp is not None and resp.is_success:
+            deleted = True
+        elif resp is None or (resp is not None and resp.status_code >= 500):
+            # Known Marzban 0.8.x behaviour: deletion may be committed even when
+            # the endpoint returns 500 or the connection closes. Confirm through
+            # a fresh authenticated session before accepting success.
+            if await self.user_absent(username):
+                if resp is None:
+                    logger.warning(
+                        "Marzban DELETE /api/user/%s lost its HTTP response, "
+                        "but fresh GET confirmed deletion",
+                        username,
+                    )
+                else:
+                    logger.warning(
+                        "Marzban DELETE /api/user/%s returned HTTP %s, "
+                        "but fresh GET confirmed deletion",
+                        username, resp.status_code,
+                    )
+                deleted = True
+
+        if not deleted:
+            if resp is not None:
+                resp.raise_for_status()
+            raise MarzbanConfigError(
+                f"Marzban user deletion could not be confirmed for {username}"
+            ) from transport_error
+
+        # The DELETE endpoint also schedules removal from Xray in background.
+        # A core resync guarantees a deleted test/revoked user is gone from
+        # the live runtime even if Marzban's background Xray API call failed.
+        await self.restart_core_with_db_users(reason=f"delete {username}")
 
     async def get_users(self) -> dict[str, dict]:
         """Read every page; never mistake a truncated list for deleted users."""
