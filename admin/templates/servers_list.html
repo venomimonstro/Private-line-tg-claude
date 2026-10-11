@@ -97,7 +97,7 @@
           <div class="col-md-5">
             <label class="form-label small mb-1">SSH host / IP</label>
             <input type="text" name="ssh_host" class="form-control form-control-sm"
-                   value="{{ server.ssh_host or '' }}" placeholder="185.236.25.152" required autocomplete="off">
+                   value="{{ server.ssh_host or ssh_defaults.get(server.id, '') }}" placeholder="185.236.25.152" required autocomplete="off">
           </div>
           <div class="col-md-2">
             <label class="form-label small mb-1">Порт</label>
