@@ -82,8 +82,8 @@ class FreeKassaProvider(PaymentProviderBase):
 
         url = "https://pay.freekassa.ru/?" + urllib.parse.urlencode(params)
         logger.info(
-            "FreeKassa form URL: merchant=%s amount=%s currency=%s order=%s sign=%s",
-            self._merchant_id, amount_str, self._CURRENCY, order_id, sign,
+            "FreeKassa payment created: merchant=%s amount=%s currency=%s order=%s",
+            self._merchant_id, amount_str, self._CURRENCY, order_id,
         )
         return PaymentResult(
             provider_payment_id=order_id,
@@ -114,9 +114,7 @@ class FreeKassaProvider(PaymentProviderBase):
             sign_expected = self._sign_notify(amount, order_id)
             if not hmac.compare_digest(sign_expected, sign_got):
                 logger.error(
-                    "FreeKassa notify signature mismatch: expected=%s got=%s "
-                    "merchant=%s amount=%s order=%s",
-                    sign_expected, sign_got,
+                    "FreeKassa notify signature mismatch: merchant=%s amount=%s order=%s",
                     self._merchant_id, amount, order_id,
                 )
                 return None
