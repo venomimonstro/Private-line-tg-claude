@@ -134,6 +134,7 @@ function Verify-Socks {
 }
 function Connect-Client {
     $script:Stage.Clear()
+    Add-Stage "install" "ok" "GUI_STARTED"
     try {
         Check-Xray
         $text=$ProfileInput.Text.Trim()
@@ -193,7 +194,7 @@ function Send-Diagnostics {
     try {
         $os=[Environment]::OSVersion.Version
         $body=@{
-            version="1.0";windows=([string]$os.Major+"."+[string]$os.Minor)
+            version=$ClientVersion;windows=([string]$os.Major+"."+[string]$os.Minor)
             consent=$true;stages=@($script:Stage.ToArray())
         }| ConvertTo-Json -Depth 8 -Compress
         $response=Invoke-RestMethod -Uri ($endpoint+"/api/windows-diagnostics") -Method Post -ContentType "application/json" -Headers @{"x-private-line-diagnostics-token"=$Token.Text.Trim()} -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 20
@@ -231,6 +232,7 @@ $verify.Add_Click({
         Check-Xray
         $shortcut=Join-Path ([Environment]::GetFolderPath("DesktopDirectory")) "Private Line.lnk"
         if(-not (Test-Path -LiteralPath $shortcut)) { Show-Info "Xray установлен, но ярлык отсутствует. Повторите INSTALL-WINDOWS.cmd для восстановления.";return }
+        Add-Stage "install" "ok" "FILES_AND_XRAY_VERIFIED"
         Show-Info "УСТАНОВЛЕНО: приложение и Xray 26.6.27. Ярлык на рабочем столе. VPN подключится после нажатия «Подключить»."
     } catch {
         Show-Info "УСТАНОВКА НЕПОЛНАЯ: проверьте INSTALL-WINDOWS.cmd. Xray 26.6.27 отсутствует или повреждён."
@@ -245,6 +247,7 @@ $form.Add_FormClosed({
     Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
     Stop-Client
 })
+Add-Stage "install" "ok" "GUI_STARTED"
 $settings=Load-Settings
 if($settings){$Endpoint.Text=$settings.endpoint;$Token.Text=$settings.token}
 $connect.Add_Click({Connect-Client})
