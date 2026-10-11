@@ -70,6 +70,14 @@ def _accept_rules_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+@router.message(Command("menu"))
+async def cmd_menu(message: Message, db_user: User) -> None:
+    await message.answer(
+        "Главное меню:",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, db_user: User) -> None:
     if db_user.rules_accepted_at is None:
