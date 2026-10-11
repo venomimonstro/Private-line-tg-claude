@@ -550,7 +550,19 @@ class MarzbanClient:
         if final.hostname != expected_host or final.port != expected_port:
             raise MarzbanConfigError("Generated VLESS endpoint differs from published Marzban host")
 
-        # Marzban adds/updates Xray users in a background task and may swallow\n        # runtime API connection errors. Do not return a paid credential until\n        # the live core has been rebuilt from the authoritative Marzban DB.\n        await self.restart_core_with_db_users(reason=f"provision {safe_name}")\n\n        logger.info("Key ready for %s (credentials omitted)", safe_name)\n        return MarzbanKey(id=data["username"], name=name, access_url=access_url, port=None)\n
+        # Marzban adds/updates Xray users in a background task and may swallow
+        # runtime API connection errors. Do not return a paid credential until
+        # the live core has been rebuilt from the authoritative Marzban DB.
+        await self.restart_core_with_db_users(reason=f"provision {safe_name}")
+
+        logger.info("Key ready for %s (credentials omitted)", safe_name)
+        return MarzbanKey(
+            id=data["username"],
+            name=name,
+            access_url=access_url,
+            port=None,
+        )
+
     # ─── Repair ────────────────────────────────────────────────────────────────
 
     async def repair_all_users_inbounds(self) -> tuple[int, int]:
