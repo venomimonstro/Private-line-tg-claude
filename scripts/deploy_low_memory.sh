@@ -67,10 +67,16 @@ print("PASS: Python syntax and Chrome extension manifest")
 PY
 docker compose config -q
 
-echo "[2/8] Free RAM and optional monitoring..."
-docker stop private-line-grafana-1 private-line-prometheus-1   private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
+echo "[2/8] Free RAM, disk and optional monitoring..."
+docker stop private-line-grafana-1 private-line-prometheus-1 private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
+rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
+docker builder prune -af >/dev/null 2>&1 || true
+docker image prune -f >/dev/null 2>&1 || true
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 140000 )) || fail "less than ~137 MiB available RAM"
+FREE_MB="$(df -Pm . | awk 'NR==2 {print $4}')"
+echo "Free disk before build: ${FREE_MB} MiB"
+(( FREE_MB >= 1200 )) || fail "less than 1200 MiB free disk after safe build-cache cleanup"
 
 echo "[3/8] Database..."
 start_existing_or_create db
