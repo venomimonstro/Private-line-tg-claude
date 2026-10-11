@@ -45,8 +45,9 @@ echo "=== CONTROL PLANE ==="
 if [[ "$CODE_CHANGED" == "1" ]]; then
     bash scripts/deploy_low_memory.sh
 else
-    if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1        && docker compose ps --status running -q db admin bot nginx | grep -q .; then
-        echo "PASS: no new control-plane commit; services already healthy"
+    RUNNING_COUNT="$(docker compose ps --status running -q db admin bot nginx | sed '/^$/d' | wc -l)"
+    if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1 && [[ "$RUNNING_COUNT" -eq 4 ]]; then
+        echo "PASS: no new control-plane commit; all four core services are healthy"
     else
         echo "Control plane is not fully healthy; running recovery deploy."
         bash scripts/deploy_low_memory.sh
