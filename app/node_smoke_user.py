@@ -40,12 +40,8 @@ async def run(action: str, server_id: int, name: str) -> int:
                 return 0
             if action == "delete":
                 await client.delete_key(name)
-                verify = await client._client.get(
-                    f"{client._base}/api/user/{name}",
-                    headers=await client._headers(),
-                )
-                if verify.status_code != 404:
-                    print(f"FAIL: temporary user still exists (HTTP {verify.status_code})")
+                if not await client.user_absent(name):
+                    print("FAIL: temporary user still exists after cleanup verification")
                     return 2
                 print("PASS: disposable test user removed")
                 return 0
