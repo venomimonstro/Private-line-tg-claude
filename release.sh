@@ -23,7 +23,7 @@
 set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
-HEALTH_URL="http://localhost/_health"
+HEALTH_URL="http://127.0.0.1:8000/_health"
 HEALTH_RETRIES=10
 HEALTH_WAIT=4
 RELEASE_ID=""
