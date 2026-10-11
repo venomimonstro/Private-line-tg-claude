@@ -127,9 +127,25 @@ PY
 echo "[7/8] Bot..."
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 100000 )) || fail "RAM too low before bot recreation"
+
+docker compose run --rm --no-deps bot python - <<'PY' || fail "bot import preflight failed; existing bot left untouched"
+import bot.main
+from bot.handlers import access, geo_switch, help, mykey, my_payments, payment, plans, referral, refund, rules, start, support, tickets
+from bot.handlers import onboarding, payment_status, portal_link, qr_key, referral_withdraw, speed_test, stars_payment
+print("PASS: bot imports")
+PY
+
 docker compose up -d --no-deps --force-recreate bot
-sleep 4
-docker compose ps --status running -q bot | grep -q . || fail "bot is not running"
+sleep 10
+BOT_CID="$(docker compose ps -q bot)"
+[[ -n "$BOT_CID" ]] || fail "bot container missing"
+BOT_RUNNING="$(docker inspect -f '{{.State.Running}}' "$BOT_CID" 2>/dev/null || true)"
+BOT_RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$BOT_CID" 2>/dev/null || echo 999)"
+[[ "$BOT_RUNNING" == "true" ]] || fail "bot is not running"
+[[ "$BOT_RESTARTS" == "0" ]] || fail "bot entered restart loop ($BOT_RESTARTS restarts)"
+docker compose logs --since=15s bot 2>&1 | grep -q "Starting Private Line bot" \
+  || fail "bot process started but polling startup marker was not observed"
+echo "PASS: Telegram bot process stable after 10s, restart_count=$BOT_RESTARTS"
 
 echo "[8/8] Nginx and public admin..."
 start_existing_or_create nginx
