@@ -59,10 +59,14 @@ async def get_enabled_providers(session: AsyncSession) -> list[str]:
     result = await session.execute(
         select(AppSetting).where(AppSetting.key.in_(all_keys))
     )
+    from app.services.secret_settings import decode_setting_value
+
     db_vals = {row.key: (row.value or "") for row in result.scalars().all()}
 
     def get_val(key: str) -> str:
-        return db_vals.get(key) or getattr(settings, key, "")
+        if key in db_vals and db_vals[key]:
+            return decode_setting_value(key, db_vals[key])
+        return getattr(settings, key, "")
 
     def has_credentials(provider: str) -> bool:
         if not all(get_val(k).strip() for k in _PROVIDER_CRED_KEYS.get(provider, [])):
