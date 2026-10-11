@@ -79,6 +79,17 @@ class YooKassaProvider(PaymentProviderBase):
         confirm_url = data["confirmation"]["confirmation_url"]
         return PaymentResult(provider_payment_id=pay_id, payment_url=confirm_url)
 
+    async def get_payment(self, payment_id: str) -> dict:
+        response = await self._http.get(
+            f"{self._API_URL}/payments/{payment_id}",
+            auth=(self._shop_id, self._secret),
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("id") != payment_id:
+            raise RuntimeError("YooKassa returned an invalid payment object")
+        return data
+
     async def verify_webhook(
         self,
         body: bytes,
@@ -95,12 +106,7 @@ class YooKassaProvider(PaymentProviderBase):
             # requesting the object from its API. Treat the webhook body only
             # as a trigger/payment-id carrier; all authorization fields below
             # come from the authenticated API response.
-            resp2 = await self._http.get(
-                f"{self._API_URL}/payments/{pay_id}",
-                auth=(self._shop_id, self._secret),
-            )
-            resp2.raise_for_status()
-            verified = resp2.json()
+            verified = await self.get_payment(pay_id)
             if (
                 verified.get("id") != pay_id
                 or verified.get("status") != "succeeded"
