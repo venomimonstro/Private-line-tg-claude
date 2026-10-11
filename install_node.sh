@@ -139,8 +139,12 @@ VPN_PORT=443
 PROXY_PORT=2096
 MARZBAN_USER="admin"
 MARZBAN_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-REALITY_SNI="www.microsoft.com"
-REALITY_DEST="www.microsoft.com:443"
+# Default target follows XTLS REALITY guidance: TLS 1.3 + H2 and stable
+# handshake shape. www.microsoft.com is intentionally avoided because its
+# certificate record has triggered REALITY >8192-byte handshake failures.
+REALITY_TARGET_HOST="${REALITY_TARGET_HOST:-dl.google.com}"
+REALITY_SNI="$REALITY_TARGET_HOST"
+REALITY_DEST="${REALITY_TARGET_HOST}:443"
 
 mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
