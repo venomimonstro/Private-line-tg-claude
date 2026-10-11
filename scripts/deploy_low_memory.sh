@@ -144,8 +144,8 @@ BOT_RUNNING="$(docker inspect -f '{{.State.Running}}' "$BOT_CID" 2>/dev/null || 
 BOT_RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$BOT_CID" 2>/dev/null || echo 999)"
 [[ "$BOT_RUNNING" == "true" ]] || fail "bot is not running"
 [[ "$BOT_RESTARTS" == "0" ]] || fail "bot entered restart loop ($BOT_RESTARTS restarts)"
-docker compose logs --since=15s bot 2>&1 | grep -q "Starting Private Line bot" \
-  || fail "bot process started but polling startup marker was not observed"
+docker compose logs --since=15s bot 2>&1 | grep -q "Starting Telegram polling" \
+  || fail "bot process started but Telegram polling startup marker was not observed"
 echo "PASS: Telegram bot process stable after 10s, restart_count=$BOT_RESTARTS"
 
 echo "[8/8] Nginx and public admin..."
