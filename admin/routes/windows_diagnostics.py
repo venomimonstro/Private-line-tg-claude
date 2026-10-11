@@ -72,6 +72,17 @@ async def _token(db: AsyncSession) -> str:
     return setting.value
 
 
+@router.get("/admin/windows-client/download")
+async def download_windows_client(admin: User = Depends(require_super_admin)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.windows_bundle import build_windows_client
+
+    return StreamingResponse(BytesIO(build_windows_client()), media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="private-line-windows.zip"',
+                 "Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"})
+
+
 @router.get("/admin/windows-diagnostics", response_class=HTMLResponse)
 async def diagnostics_page(request: Request, db: AsyncSession = Depends(get_async_session),
                            admin: User = Depends(require_super_admin)):
