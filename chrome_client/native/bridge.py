@@ -147,6 +147,7 @@ def process_running(pid: int) -> bool:
             return False
         try:
             exit_code = ctypes.c_ulong()
+            kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
             if not kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
                 return False
             return exit_code.value == 259
