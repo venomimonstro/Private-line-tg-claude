@@ -138,7 +138,7 @@ function Connect-Client {
         } catch {Add-Stage "tcp" "failed" "NODE_UNREACHABLE";throw "NODE_UNREACHABLE"}
         finally{$tcp.Dispose()}
         Stop-Client
-        $p=Start-Process -FilePath $Xray -ArgumentList @("run","-config",$ConfigFile) -WorkingDirectory $Base -WindowStyle Hidden -PassThru
+        $p=Start-Process -FilePath $Xray -ArgumentList ("run -config `""+$ConfigFile+"`"") -WorkingDirectory $Base -WindowStyle Hidden -PassThru
         @{pid=$p.Id} | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
         $ok=$false
         for($i=0;$i -lt 30;$i++){Start-Sleep -Milliseconds 300;if(Verify-Socks){$ok=$true;break}}
