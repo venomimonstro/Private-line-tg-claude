@@ -41,6 +41,15 @@ class MarzbanClient:
         self._inbounds_cache: dict[str, list[str]] | None = None
         self._reality_cache: tuple[str, str, str] | None = None  # (pubkey, short_id, sni)
 
+    async def _reset_http_client(self) -> None:
+        old = self._client
+        self._client = httpx.AsyncClient(timeout=15.0, trust_env=False)
+        self._token = None
+        try:
+            await old.aclose()
+        except Exception:
+            pass
+
     async def _auth(self) -> str:
         resp = await self._client.post(
             f"{self._base}/api/admin/token",
@@ -63,12 +72,30 @@ class MarzbanClient:
         not prove the live Xray process accepted the user. POST /api/core/restart
         uses include_db_users() upstream, making the DB and runtime converge.
         """
-        headers = await self._headers()
-        response = await self._client.post(
-            f"{self._base}/api/core/restart",
-            headers=headers,
-            timeout=60.0,
-        )
+        response = None
+        last_transport_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                headers = await self._headers()
+                response = await self._client.post(
+                    f"{self._base}/api/core/restart",
+                    headers=headers,
+                    timeout=60.0,
+                )
+                break
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_transport_error = exc
+                if attempt == 0:
+                    await self._reset_http_client()
+                    continue
+                raise MarzbanConfigError(
+                    "Marzban Xray runtime resync transport failed"
+                ) from exc
+
+        if response is None:
+            raise MarzbanConfigError(
+                "Marzban Xray runtime resync produced no response"
+            ) from last_transport_error
         if response.status_code not in (200, 204):
             raise MarzbanConfigError(
                 f"Marzban Xray runtime resync failed HTTP {response.status_code}"
@@ -76,6 +103,7 @@ class MarzbanClient:
 
         for _ in range(30):
             try:
+                headers = await self._headers()
                 status = await self._client.get(
                     f"{self._base}/api/core",
                     headers=headers,
@@ -87,7 +115,7 @@ class MarzbanClient:
                         f" ({reason})" if reason else "",
                     )
                     return
-            except Exception:
+            except (httpx.TransportError, httpx.TimeoutException):
                 pass
             await asyncio.sleep(1)
 
