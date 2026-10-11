@@ -81,14 +81,13 @@ async def main() -> None:
         scheduler.start()
         logger.info("Scheduler started")
     except Exception as exc:
-        logger.critical(
-            "Scheduler startup failed; refusing to run bot without recovery/expiry/backup jobs: %s",
-            exc,
-            exc_info=True,
-        )
-        await shutdown(bot)
-        raise
+        # User-facing Telegram must stay available even if a background
+        # maintenance job fails to initialize. Recovery/expiry jobs are
+        # monitored separately and must never take menus, keys or payments down.
+        logger.error("Scheduler startup failed; continuing Telegram polling: %s", exc, exc_info=True)
+        scheduler = None
 
+    logger.info("Starting Telegram polling...")
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
