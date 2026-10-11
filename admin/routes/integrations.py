@@ -37,7 +37,8 @@ _SETTINGS_META: list[dict] = [
     # LAVA
     {"section": "LAVA",            "key": "LAVA_ENABLED",                   "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "LAVA",            "key": "LAVA_PROJECT_ID",                "label": "ID проекта",                "type": "text",     "placeholder": ""},
-    {"section": "LAVA",            "key": "LAVA_SECRET_KEY",                "label": "Секретный ключ",            "type": "password", "placeholder": ""},
+    {"section": "LAVA",            "key": "LAVA_SECRET_KEY",                "label": "API секретный ключ",        "type": "password", "placeholder": ""},
+    {"section": "LAVA",            "key": "LAVA_WEBHOOK_SECRET",             "label": "Доп. ключ webhook",         "type": "password", "placeholder": ""},
     # Robokassa
     {"section": "Robokassa",       "key": "ROBOKASSA_ENABLED",              "label": "Включён",                   "type": "toggle",   "placeholder": ""},
     {"section": "Robokassa",       "key": "ROBOKASSA_MERCHANT_LOGIN",       "label": "Логин магазина",            "type": "text",     "placeholder": "MyShop"},
