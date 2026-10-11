@@ -184,8 +184,13 @@ async def list_servers(
     servers = result.scalars().all()
     token = await _get_or_create_token(session)
     return templates.TemplateResponse("servers_list.html", {
-        "request": request, "admin": admin, "servers": servers, "page_title": "VPN-серверы",
+        "request": request,
+        "admin": admin,
+        "servers": servers,
+        "page_title": "VPN-серверы",
         "node_register_token": token,
+        "control_plane_public_url": settings.CONTROL_PLANE_PUBLIC_URL.rstrip("/"),
+        "control_plane_tls_pin": settings.CONTROL_PLANE_TLS_PIN,
     })
 
 
@@ -661,6 +666,11 @@ async def register_node(
     from app.vpn.marzban import MarzbanClient
 
     client_ip = request.client.host if request.client else ""
+    if request.url.scheme != "https":
+        raise HTTPException(
+            status_code=426,
+            detail="VPN node registration requires HTTPS",
+        )
     if not _check_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests")
     stored_token = await _get_or_create_token(session)
