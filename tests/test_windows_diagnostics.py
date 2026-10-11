@@ -50,6 +50,13 @@ class WindowsDiagnosticsTests(unittest.TestCase):
         text=(ROOT/"nginx/nginx.conf").read_text()
         self.assertIn("location = /api/windows-diagnostics {",text)
 
+    def test_admin_routes_match_nginx_prefix_rewrite(self):
+        source=(ROOT/"admin/routes/windows_diagnostics.py").read_text()
+        self.assertIn('@router.get("/windows-diagnostics"',source)
+        self.assertIn('@router.get("/windows-client/download"',source)
+        self.assertNotIn('@router.get("/admin/windows-diagnostics"',source)
+        self.assertNotIn('@router.get("/admin/windows-client/download"',source)
+
     def test_windows_script_does_not_auto_send(self):
         source=(ROOT/"windows_client/PrivateLine.ps1").read_text()
         self.assertIn("$send.Add_Click({Send-Diagnostics})",source)
