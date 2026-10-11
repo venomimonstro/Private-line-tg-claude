@@ -18,6 +18,27 @@ cd /opt/marzban
 CONFIG=/var/lib/marzban/xray_config.json
 [ -f "$CONFIG" ] || { echo "FAIL: $CONFIG missing" >&2; exit 2; }
 
+if python3 - "$CONFIG" "$TARGET_HOST" <<'PY'
+import json, sys
+cfg=json.load(open(sys.argv[1]))
+target=sys.argv[2]
+rows=[]
+for inbound in cfg.get("inbounds", []):
+    stream=inbound.get("streamSettings", {})
+    if inbound.get("protocol")=="vless" and stream.get("security")=="reality":
+        rows.append(stream.get("realitySettings", {}))
+if len(rows) != 1:
+    raise SystemExit(1)
+r=rows[0]
+current=(r.get("target") or r.get("dest") or "")
+names=r.get("serverNames") or []
+raise SystemExit(0 if current == target + ":443" and names == [target] else 1)
+PY
+then
+  echo "PASS: REALITY target already $TARGET_HOST; no restart required."
+  exit 0
+fi
+
 echo "[1/5] Validating candidate REALITY target $TARGET_HOST..."
 TLS_LOG="$(mktemp)"
 if ! timeout 15 openssl s_client -connect "$TARGET_HOST:443"     -servername "$TARGET_HOST" -tls1_3 -alpn h2 </dev/null     >"$TLS_LOG" 2>&1; then
