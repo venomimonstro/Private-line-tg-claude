@@ -82,7 +82,18 @@ for _ in $(seq 1 45); do
 done
 docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>&1   || fail "PostgreSQL is not ready"
 
-echo "[4/8] Build immutable application runtime..."
+echo "[4/8] Build native Windows installer + immutable application runtime..."
+WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
+if ! docker image inspect "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1; then
+  docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
+fi
+rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe
+mkdir -p data/windows_dist
+docker run --rm -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" bash windows_native/build.sh || fail "native Windows installer build failed"
+[[ -s data/windows_dist/PrivateLineSetup.exe ]] || fail "PrivateLineSetup.exe was not produced"
+[[ "$(head -c2 data/windows_dist/PrivateLineSetup.exe)" == "MZ" ]] || fail "PrivateLineSetup.exe is not a PE executable"
+echo "PASS: native Windows PrivateLineSetup.exe built"
+
 # Application source is baked into private-line-app:runtime; it is no longer
 # bind-mounted. A force-recreate without a build would silently keep old code.
 docker compose build admin || fail "application runtime image build failed"
@@ -112,17 +123,11 @@ with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
     assert "SETUP-WINDOWS.cmd" in archive.namelist()
     assert json.loads(archive.read("extension/manifest.json"))["manifest_version"] == 3
 print("PASS: Chrome client ZIP is packaged and available inside admin/bot image")
-from app.windows_bundle import build_windows_client
-with zipfile.ZipFile(io.BytesIO(build_windows_client())) as win_archive:
-    assert win_archive.testzip() is None
-    assert "INSTALL-WINDOWS.cmd" in win_archive.namelist()
-    assert "CHECK-INSTALL.cmd" in win_archive.namelist()
-    assert "Check-Install.ps1" in win_archive.namelist()
-    assert "Pair-PrivateLine.ps1" in win_archive.namelist()
-    assert "PrivateLine.ps1" in win_archive.namelist()
-    for powershell_file in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1"):
-        assert win_archive.read(powershell_file).startswith(bytes((0xEF,0xBB,0xBF)))
-print("PASS: Windows installer ZIP packaged with UTF-8 PowerShell scripts and verification launcher")
+from pathlib import Path
+native = Path("/app/data/windows_dist/PrivateLineSetup.exe")
+assert native.is_file() and native.stat().st_size > 100_000
+assert native.read_bytes()[:2] == b"MZ"
+print("PASS: native Windows EXE is mounted and available to admin runtime")
 PY
 
 echo "[7/8] Bot..."
