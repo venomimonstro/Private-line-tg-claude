@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent / "windows_client"
-FILES = ("INSTALL-WINDOWS.cmd","Install-PrivateLine.ps1","PrivateLine.ps1","README_RU.md")
+FILES = ("INSTALL-WINDOWS.cmd", "Install-PrivateLine.ps1", "PrivateLine.ps1", "CHECK-INSTALL.cmd", "Check-Install.ps1", "README_RU.md")
 
 
 def build_windows_client() -> bytes:
