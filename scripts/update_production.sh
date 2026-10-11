@@ -34,6 +34,8 @@ fail() {
 }
 [[ -d .git ]] || fail "git checkout is missing"
 [[ -f .env ]] || fail ".env is missing"
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
 
 exec 9>/var/lock/private-line-production-update.lock
 flock -n 9 || fail "another production update is already running"
