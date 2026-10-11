@@ -112,15 +112,6 @@ try {
     if (-not (Test-Path -LiteralPath $InstalledClient) -or -not (Check-Xray $XrayExe)) {
         throw "INSTALL_FILE_VERIFICATION_FAILED"
     }
-    $record = @{
-        version = $Build
-        xray_version = "26.6.27"
-        installed_at = (Get-Date).ToString("o")
-        desktop_shortcut = $shortcutFile
-        status = "installed"
-    } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $InstallDir "install-status.json"),
-                           $record, (New-Object System.Text.UTF8Encoding($false)))
     Milestone "INSTALL_VERIFIED" "Files, Xray, and desktop shortcut verified."
 
     Write-Host "[5/5] Opening Private Line..." -ForegroundColor Cyan
@@ -146,6 +137,16 @@ try {
     }
     if (-not $opened) { throw "WINDOW_NOT_CONFIRMED: application did not signal that its window opened." }
     Milestone "GUI_VERIFIED" "Private Line window launched successfully."
+    $record = @{
+        version = $Build
+        xray_version = "26.6.27"
+        installed_at = (Get-Date).ToString("o")
+        desktop_shortcut = $shortcutFile
+        status = "installed"
+        gui_confirmed = $true
+    } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText((Join-Path $InstallDir "install-status.json"),
+                           $record, (New-Object System.Text.UTF8Encoding($false)))
 
     Write-Host ""
     Write-Host "==============================================" -ForegroundColor Green
