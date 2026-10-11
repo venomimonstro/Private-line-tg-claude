@@ -51,8 +51,6 @@ async def handle_renew(message: Message, db_user: User) -> None:
         payment, payment_result = await create_payment(db_user.id, tariff.slug, session)
         await session.commit()
 
-    from app.payments.registry import get_provider
-    provider = get_provider()
 
     expires_str = current_sub.expires_at.strftime("%d.%m.%Y") if current_sub.expires_at else "—"
 
