@@ -94,14 +94,38 @@ code="$(curl -q -6 -sS -o /dev/null -w '%{http_code}' \
 echo "cloudflare IPv6: exit=$? http=$code"
 
 echo "=== TLS TARGET HANDSHAKE ==="
-if command -v openssl >/dev/null 2>&1; then
-    if timeout 12 openssl s_client -connect www.microsoft.com:443 \
-        -servername www.microsoft.com -tls1_3 </dev/null \
-        >/dev/null 2>&1; then
-        echo "www.microsoft.com:443 TLS1.3 handshake: OK"
+TARGET_HOST="$(python3 - <<'PY'
+import json
+from pathlib import Path
+try:
+    cfg = json.loads(Path("/var/lib/marzban/xray_config.json").read_text())
+    for inbound in cfg.get("inbounds", []):
+        reality = inbound.get("streamSettings", {}).get("realitySettings", {})
+        target = reality.get("target") or reality.get("dest") or ""
+        if target:
+            print(str(target).rsplit(":", 1)[0].strip("[]"))
+            break
+except Exception:
+    pass
+PY
+)"
+if command -v openssl >/dev/null 2>&1 && [[ -n "$TARGET_HOST" ]]; then
+    TLS_LOG="$(mktemp)"
+    if timeout 12 openssl s_client -connect "$TARGET_HOST:443" \
+        -servername "$TARGET_HOST" -tls1_3 -alpn h2 </dev/null \
+        >"$TLS_LOG" 2>&1; then
+        echo "$TARGET_HOST:443 TLS1.3 handshake: OK"
+        if grep -q 'ALPN protocol: h2' "$TLS_LOG"; then
+            echo "$TARGET_HOST:443 ALPN h2: OK"
+        else
+            echo "$TARGET_HOST:443 ALPN h2: WARN/not negotiated"
+        fi
     else
-        echo "www.microsoft.com:443 TLS1.3 handshake: FAIL"
+        echo "$TARGET_HOST:443 TLS1.3 handshake: FAIL"
     fi
+    rm -f "$TLS_LOG"
+else
+    echo "openssl/Reality target unavailable"
 fi
 
 echo "=== RECENT MARZBAN/XRAY ERRORS (REDACTED) ==="
