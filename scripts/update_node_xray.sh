@@ -18,6 +18,30 @@ XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997
 CORE_DIR="/var/lib/marzban/xray-core/$VERSION"
 CORE="$CORE_DIR/xray"
 WORKDIR="$(mktemp -d /var/tmp/private-line-xray-XXXXXXXX)"
+
+# Fast idempotent path: do not recreate Marzban when the exact compatibility
+# core is already configured, running, and accepts the current production config.
+CURRENT_EXEC="$(grep -E '^[[:space:]]*(export[[:space:]]+)?XRAY_EXECUTABLE_PATH=' .env 2>/dev/null | tail -n1 | sed -E 's/^[^=]+=//' | tr -d '\r' || true)"
+if [[ "$CURRENT_EXEC" == "$CORE" && -x "$CORE" ]]; then
+    VERSION_OK=false
+    RUNNING_OK=false
+    CONFIG_OK=false
+    PORT_OK=false
+    "$CORE" version 2>/dev/null | head -n1 | grep -F "Xray $VERSION " >/dev/null && VERSION_OK=true
+    for pid_dir in /proc/[0-9]*; do
+        [[ -e "$pid_dir/exe" ]] || continue
+        [[ "$(readlink "$pid_dir/exe" 2>/dev/null || true)" == "$CORE" ]] && { RUNNING_OK=true; break; }
+    done
+    "$CORE" run -test -config /var/lib/marzban/xray_config.json >/dev/null 2>&1 && CONFIG_OK=true
+    ss -lnt 2>/dev/null | grep -qE '[:.]443[[:space:]]' && PORT_OK=true
+    if [[ "$VERSION_OK" == true && "$RUNNING_OK" == true && "$CONFIG_OK" == true && "$PORT_OK" == true ]]; then
+        echo "[1/4] PASS: Xray $VERSION already active and config valid; no restart required"
+        echo "[2/4] PASS: current REALITY config accepted by compatibility core"
+        echo "[3/4] PASS: live Xray process already uses $CORE"
+        echo "[4/4] PASS: listener :443 is ready"
+        exit 0
+    fi
+fi
 BACKUP_DIR="/var/lib/marzban/backups/core-switch-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 CHANGED=false
 SUCCESS=false
