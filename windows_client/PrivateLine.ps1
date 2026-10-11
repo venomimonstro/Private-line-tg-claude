@@ -270,27 +270,43 @@ function Flush-PendingReports {
 
 $form=New-Object Windows.Forms.Form
 $form.Text="Private Line | Windows (1.1.0)"
-$form.Size=New-Object Drawing.Size(570,705)
+$form.Size=New-Object Drawing.Size(570,620)
 $form.StartPosition="CenterScreen"
 $form.BackColor=[Drawing.Color]::FromArgb(243,248,246)
 $form.Font=New-Object Drawing.Font("Segoe UI",10)
 function Label($text,$y){$l=New-Object Windows.Forms.Label;$l.Text=$text;$l.Location=New-Object Drawing.Point(20,$y);$l.Size=New-Object Drawing.Size(515,25);$form.Controls.Add($l)}
 Label "PRIVATE LINE  •  Windows клиент" 18
-Label "Вставьте VLESS Reality ключ из Telegram-бота:" 65
-$ProfileInput=New-Object Windows.Forms.TextBox;$ProfileInput.Multiline=$true;$ProfileInput.ScrollBars="Vertical";$ProfileInput.Location=New-Object Drawing.Point(20,98);$ProfileInput.Size=New-Object Drawing.Size(510,95);$form.Controls.Add($ProfileInput)
-$connect=New-Object Windows.Forms.Button;$connect.Text="Подключить";$connect.Location=New-Object Drawing.Point(20,205);$connect.Size=New-Object Drawing.Size(248,40);$form.Controls.Add($connect)
-$disconnect=New-Object Windows.Forms.Button;$disconnect.Text="Отключить";$disconnect.Location=New-Object Drawing.Point(283,205);$disconnect.Size=New-Object Drawing.Size(247,40);$form.Controls.Add($disconnect)
-$Status=New-Object Windows.Forms.Label;$Status.Text="Клиент установлен. VPN пока отключён. Вставьте ключ и нажмите «Подключить».";$Status.Location=New-Object Drawing.Point(20,258);$Status.Size=New-Object Drawing.Size(510,60);$form.Controls.Add($Status)
-Label "Диагностика • отправляется только по вашему согласию" 320
-Label "Адрес основного сервера (https://...)" 351
-$Endpoint=New-Object Windows.Forms.TextBox;$Endpoint.Location=New-Object Drawing.Point(20,378);$Endpoint.Size=New-Object Drawing.Size(510,26);$form.Controls.Add($Endpoint)
-Label "Токен диагностики из админки" 410
-$Token=New-Object Windows.Forms.TextBox;$Token.Location=New-Object Drawing.Point(20,437);$Token.Size=New-Object Drawing.Size(510,26);$Token.UseSystemPasswordChar=$true;$form.Controls.Add($Token)
-$Consent=New-Object Windows.Forms.CheckBox;$Consent.Location=New-Object Drawing.Point(20,475);$Consent.Size=New-Object Drawing.Size(515,50);$Consent.Text="Согласен отправить только результаты этапов подключения. Без UUID, VPN-ключей, IP и сырых журналов.";$form.Controls.Add($Consent)
-$send=New-Object Windows.Forms.Button;$send.Text="Отправить диагностику на сервер";$send.Location=New-Object Drawing.Point(20,531);$send.Size=New-Object Drawing.Size(510,37);$form.Controls.Add($send)
+Label "VPN-профиль загружается из вашей Telegram-подписки автоматически." 65
+Label "Вводить IP, ключ или токен диагностики не нужно." 98
+$connect=New-Object Windows.Forms.Button
+$connect.Text="Подключить VPN"
+$connect.Location=New-Object Drawing.Point(20,145)
+$connect.Size=New-Object Drawing.Size(248,43)
+$form.Controls.Add($connect)
+$disconnect=New-Object Windows.Forms.Button
+$disconnect.Text="Отключить"
+$disconnect.Location=New-Object Drawing.Point(283,145)
+$disconnect.Size=New-Object Drawing.Size(247,43)
+$form.Controls.Add($disconnect)
+$Status=New-Object Windows.Forms.Label
+$Status.Text="Не подключено. Нажмите «Подключить»."
+$Status.Location=New-Object Drawing.Point(20,215)
+$Status.Size=New-Object Drawing.Size(510,83)
+$form.Controls.Add($Status)
+$Consent=New-Object Windows.Forms.CheckBox
+$Consent.Location=New-Object Drawing.Point(20,321)
+$Consent.Size=New-Object Drawing.Size(510,82)
+$Consent.Text="Автоматически отправлять коды ошибок на сервер без VPN-ключей, UUID, IP и сырых логов."
+$Consent.Checked=$true
+$form.Controls.Add($Consent)
+$send=New-Object Windows.Forms.Button
+$send.Text="Отправить диагностику сейчас"
+$send.Location=New-Object Drawing.Point(20,426)
+$send.Size=New-Object Drawing.Size(510,42)
+$form.Controls.Add($send)
 $verify=New-Object Windows.Forms.Button
 $verify.Text="Проверить установку"
-$verify.Location=New-Object Drawing.Point(20,576)
+$verify.Location=New-Object Drawing.Point(20,485)
 $verify.Size=New-Object Drawing.Size(510,36)
 $form.Controls.Add($verify)
 $verify.Add_Click({
@@ -314,9 +330,16 @@ $form.Add_FormClosed({
     Stop-Client
 })
 Add-Stage "install" "ok" "GUI_STARTED"
-$settings=Load-Settings
-if($settings){$Endpoint.Text=$settings.endpoint;$Token.Text=$settings.token}
+try {
+    $pair=Get-PairedDevice
+    Show-Info "Клиент привязан к вашей VPN-подписке. Нажмите «Подключить»."
+} catch {
+    Show-Info "Привязка не найдена. Скачайте персональный установщик через Telegram /windows."
+}
+if(Test-Path -LiteralPath (Join-Path $Base "pending-reports.json")) {
+    Flush-PendingReports
+}
 $connect.Add_Click({Connect-Client})
 $disconnect.Add_Click({Stop-Client;Add-Stage "disconnect" "ok" "USER_DISCONNECTED";Show-Info "Отключено. Предыдущие настройки прокси восстановлены."})
-$send.Add_Click({Send-Diagnostics})
+$send.Add_Click({Show-Info (Send-Diagnostics)})
 [void]$form.ShowDialog()
