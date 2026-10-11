@@ -15,6 +15,10 @@ def build_windows_client() -> bytes:
         for relative in FILES:
             path=ROOT / relative
             payload=path.read_bytes()
+            # Windows PowerShell 5.1 reads BOM-less .ps1 as a legacy code page.
+            # Include UTF-8 BOM in the ZIP to preserve Russian UI messages.
+            if relative.lower().endswith(".ps1") and not payload.startswith(bytes((0xEF, 0xBB, 0xBF))):
+                payload=bytes((0xEF, 0xBB, 0xBF))+payload
             if len(payload)>512_000:
                 raise ValueError("Client installation source too large")
             archive.writestr(relative,payload)
