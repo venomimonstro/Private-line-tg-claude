@@ -154,16 +154,17 @@ while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
         fail "SSH access is not configured for node $SERVER_ID. Open Admin -> VPN-серверы -> SSH-доступ and save it once."
     fi
 
-    mapfile -t SSH_FIELDS < <(printf '%s' "$SSH_JSON" | python3 - <<'PY'
-import json, sys
-data=json.load(sys.stdin)
+    mapfile -t SSH_FIELDS < <(
+        SSH_JSON_VALUE="$SSH_JSON" python3 -c '
+import json, os
+data=json.loads(os.environ["SSH_JSON_VALUE"])
 for key in ("host","port","username","auth_type","secret_b64"):
     value=data.get(key)
     if value in (None, ""):
         raise SystemExit(2)
     print(value)
-PY
-)
+'
+    )
     [[ "${#SSH_FIELDS[@]}" -eq 5 ]] || fail "invalid stored SSH access for node $SERVER_ID"
     SSH_HOST="${SSH_FIELDS[0]}"
     SSH_PORT="${SSH_FIELDS[1]}"
