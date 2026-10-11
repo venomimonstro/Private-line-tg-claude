@@ -26,15 +26,19 @@ async def main() -> None:
     )
     set_bot(bot)
 
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Главное меню"),
-        BotCommand(command="menu", description="Показать меню"),
-        BotCommand(command="my_access", description="Мой доступ"),
-        BotCommand(command="mykey", description="Мой VPN-ключ"),
-        BotCommand(command="windows", description="Windows клиент"),
-        BotCommand(command="help", description="Помощь"),
-    ])
-    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="menu", description="Показать меню"),
+            BotCommand(command="my_access", description="Мой доступ"),
+            BotCommand(command="mykey", description="Мой VPN-ключ"),
+            BotCommand(command="help", description="Помощь"),
+        ])
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception as exc:
+        # Telegram command metadata is convenience UI only. It must never stop
+        # polling or payments when Telegram temporarily rejects this request.
+        logger.warning("Could not refresh Telegram command menu: %s", exc)
 
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
