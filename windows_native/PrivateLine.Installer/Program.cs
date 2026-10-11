@@ -16,21 +16,26 @@ internal static class Program
     const string Marker="PRIVATE_LINE_BOOTSTRAP_V1:";
 
     [STAThread]
-    static async Task Main()
+    static async Task Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PrivateLine");
+        Directory.CreateDirectory(dir);
+
+        if(args.Any(a=>string.Equals(a,"--client",StringComparison.OrdinalIgnoreCase))) {
+            Application.Run(new PrivateLine.MainForm());
+            return;
+        }
+
         Bootstrap? boot=null;
         try {
             boot=ReadBootstrap();
-            var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PrivateLine");
-            Directory.CreateDirectory(dir);
             var app=Path.Combine(dir,"PrivateLine.exe");
-            ExtractResource("PrivateLine.exe",app);
-            await EnsureDesktopRuntime();
+            File.Copy(Environment.ProcessPath!,app,true);
             InstallEmbeddedXray(dir);
             await Pair(boot,dir);
             CreateShortcuts(app,dir);
-            Process.Start(new ProcessStartInfo(app){UseShellExecute=true,WorkingDirectory=dir});
+            Process.Start(new ProcessStartInfo(app,"--client"){UseShellExecute=true,WorkingDirectory=dir});
             MessageBox.Show("Private Line установлен.\n\nКлиент запущен и уже привязан к вашей VPN-подписке. Ничего вводить не нужно.","Private Line",MessageBoxButtons.OK,MessageBoxIcon.Information);
         } catch(Exception ex) {
             var code=SafeCode(ex.Message);
@@ -90,34 +95,6 @@ internal static class Program
         var asm=typeof(Program).Assembly;
         using var s=asm.GetManifestResourceStream(name)??throw new InvalidOperationException("CLIENT_PAYLOAD_MISSING");
         using var f=File.Create(path);s.CopyTo(f);
-    }
-
-    static async Task EnsureDesktopRuntime()
-    {
-        // The setup itself is self-contained; the installed GUI is much
-        // smaller and uses the Microsoft .NET Desktop Runtime.
-        var dotnet=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"dotnet","dotnet.exe");
-        try {
-            if(File.Exists(dotnet)) {
-                var p=Process.Start(new ProcessStartInfo(dotnet,"--list-runtimes"){UseShellExecute=false,RedirectStandardOutput=true,CreateNoWindow=true});
-                if(p is not null) {
-                    var output=await p.StandardOutput.ReadToEndAsync(); await p.WaitForExitAsync();
-                    if(output.Contains("Microsoft.WindowsDesktop.App 8.",StringComparison.Ordinal)) return;
-                }
-            }
-        } catch {}
-        var installer=Path.Combine(Path.GetTempPath(),"windowsdesktop-runtime-8.exe");
-        try {
-            using var http=new HttpClient(){Timeout=TimeSpan.FromMinutes(3)};
-            using var response=await http.GetAsync("https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.20/windowsdesktop-runtime-8.0.20-win-x64.exe",HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            await using(var output=File.Create(installer)) await response.Content.CopyToAsync(output);
-            if(new FileInfo(installer).Length<20_000_000) throw new InvalidOperationException("DOTNET_RUNTIME_DOWNLOAD_INCOMPLETE");
-            var p=Process.Start(new ProcessStartInfo(installer,"/install /quiet /norestart"){UseShellExecute=true})
-                ?? throw new InvalidOperationException("DOTNET_RUNTIME_START_FAILED");
-            await p.WaitForExitAsync();
-            if(p.ExitCode!=0 && p.ExitCode!=3010) throw new InvalidOperationException("DOTNET_RUNTIME_INSTALL_FAILED");
-        } finally { try{File.Delete(installer);}catch{} }
     }
 
     static void InstallEmbeddedXray(string dir)
