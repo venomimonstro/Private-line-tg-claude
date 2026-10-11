@@ -98,6 +98,22 @@ async def audit() -> int:
             if op.operation_type == PendingOperationType.disable_key.value
             and op.vpn_key_id is not None
         }
+
+        # One live create operation per subscription/node. Application-level
+        # deduplication is not enough under concurrent workers; migration 018
+        # installs the same invariant as a partial unique index.
+        create_pairs = Counter(
+            (op.subscription_id, op.server_id)
+            for op in ops
+            if op.operation_type == PendingOperationType.create_key.value
+            and op.subscription_id is not None
+            and op.server_id is not None
+        )
+        for pair, count in create_pairs.items():
+            if count > 1:
+                failures.append(
+                    f"duplicate pending create_key sub/server={pair}: {count}"
+                )
         for key in keys:
             if key.status == VpnKeyStatus.error and key.id not in pending_disable_ids:
                 failures.append(
