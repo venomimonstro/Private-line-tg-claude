@@ -45,7 +45,7 @@ async function sendStatus() {
   const host = await nativeMessage({ action: "status" });
   const proxy = await proxyEnabled();
   return {
-    ok: true, installed: host.ok, running: host.ok && Boolean(host.running) && Boolean(host.verified),
+    ok: true, installed: host.ok, running: host.ok && Boolean(host.running), verified: host.ok && Boolean(host.verified),
     connected: host.ok && Boolean(host.running) && Boolean(host.verified) && proxy,
     proxy, hasProfile: host.ok && Boolean(host.has_profile),
     error: host.ok ? "" : host.error
@@ -112,9 +112,9 @@ chrome.runtime.onStartup.addListener(async () => {
   try {
     if (await proxyEnabled()) {
       const st = await nativeMessage({action:"status"});
-      if (st.ok && st.running) {
+      if (st.ok && st.running && st.verified) {
         await protectWebRTC(true);
-      await chrome.action.setBadgeText({text:"ON"});
+        await chrome.action.setBadgeText({text:"ON"});
         await chrome.action.setBadgeBackgroundColor({color:"#178b67"});
       } else {
         // Fail closed: don't silently downgrade traffic to DIRECT if the
