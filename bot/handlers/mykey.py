@@ -34,8 +34,9 @@ async def send_windows_installer(message: Message) -> None:
         BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
         caption=(
             "🖥 <b>Private Line для Windows</b>\n\n"
-            "Распакуйте ZIP и запустите INSTALL-WINDOWS.cmd. "
-            "Будет установлен Xray и создан ярлык на рабочем столе. "
+            "Скачивание ZIP ещё не означает установку. Выберите «Извлечь все», "
+            "запустите INSTALL-WINDOWS.cmd и дождитесь зелёного подтверждения. "
+            "Затем запустите CHECK-INSTALL.cmd — он проверит Xray и ярлык на рабочем столе. "
             "Вставьте ключ из /mykey. Для отправки диагностики используйте "
             "отдельную кнопку в приложении; VPN-ключ не отправляется."
         ),
@@ -50,7 +51,7 @@ async def send_windows_installer_callback(callback: CallbackQuery) -> None:
     await callback.answer("Отправляю Windows-клиент")
     await callback.message.answer_document(
         BufferedInputFile(build_windows_client(), filename="private-line-windows.zip"),
-        caption="🖥 Распакуйте ZIP, запустите INSTALL-WINDOWS.cmd. Введите свой ключ VLESS Reality.",
+        caption="🖥 Извлеките весь ZIP, запустите INSTALL-WINDOWS.cmd, затем CHECK-INSTALL.cmd. После подтверждения установки вставьте VLESS Reality ключ в Private Line.",
     )
 
 
