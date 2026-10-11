@@ -22,6 +22,8 @@ class WindowsDiagnosticsTests(unittest.TestCase):
                 "CHECK-INSTALL.cmd", "Check-Install.ps1",
             })
             self.assertIsNone(archive.testzip())
+            for source in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1"):
+                self.assertTrue(archive.read(source).startswith(bytes((0xEF,0xBB,0xBF))))
             self.assertNotIn("profile.json", archive.namelist())
             self.assertNotIn("xray.exe", archive.namelist())
 
