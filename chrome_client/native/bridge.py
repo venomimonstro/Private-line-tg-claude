@@ -139,6 +139,9 @@ def process_running(pid: int) -> bool:
     if os.name == "nt":
         import ctypes
         kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
         handle = kernel.OpenProcess(0x1000, False, pid)
         if not handle:
             return False
@@ -162,12 +165,19 @@ def same_xray_executable(pid: int, xray: pathlib.Path) -> bool:
     if os.name == "nt":
         import ctypes
         kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
         handle = kernel.OpenProcess(0x1000, False, pid)
         if not handle:
             return False
         try:
             buf = ctypes.create_unicode_buffer(32768)
             length = ctypes.c_ulong(len(buf))
+            kernel.QueryFullProcessImageNameW.argtypes = [
+                ctypes.c_void_p, ctypes.c_ulong,
+                ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong),
+            ]
             if not kernel.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(length)):
                 return False
             return os.path.normcase(os.path.abspath(buf.value)) == os.path.normcase(os.path.abspath(str(xray)))
@@ -237,8 +247,6 @@ def real_https_egress() -> str:
                 if not chunk:
                     break
                 response += chunk
-                if b"\r\n\r\n" in response and len(response.split(b"\r\n\r\n", 1)[1]) >= 7:
-                    break
     if not response.startswith(b"HTTP/1.1 200") and not response.startswith(b"HTTP/1.0 200"):
         raise ValueError("VLESS работает, но HTTPS-проверка не прошла")
     body = response.split(b"\r\n\r\n", 1)[1].strip()
@@ -263,6 +271,10 @@ def stop_existing() -> None:
         if os.name == "nt":
             import ctypes
             kernel = ctypes.windll.kernel32
+            kernel.OpenProcess.restype = ctypes.c_void_p
+            kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
             handle = kernel.OpenProcess(0x1001, False, pid)
             if handle:
                 try:
