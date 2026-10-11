@@ -15,7 +15,7 @@ BASE_INSTALLER = Path("/app/data/windows_dist/PrivateLineSetup.exe")
 MAX_BASE_SIZE = 250 * 1024 * 1024
 
 
-def build_personal_windows_exe(*, base_url: str, pairing_code: str) -> bytes:
+def build_personal_windows_exe(*, base_url: str, pairing_code: str, tls_pin: str) -> bytes:
     if not BASE_INSTALLER.is_file():
         raise FileNotFoundError("Native Windows installer has not been built")
     raw = BASE_INSTALLER.read_bytes()
@@ -24,7 +24,7 @@ def build_personal_windows_exe(*, base_url: str, pairing_code: str) -> bytes:
     if MARKER in raw[-64 * 1024:]:
         raise ValueError("Base installer unexpectedly contains personalization overlay")
     payload = json.dumps(
-        {"api_base": base_url, "pair_code": pairing_code},
+        {"api_base": base_url, "pair_code": pairing_code, "tls_pin": tls_pin},
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
