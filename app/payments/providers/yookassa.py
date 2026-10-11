@@ -71,19 +71,37 @@ class YooKassaProvider(PaymentProviderBase):
                 return None
             obj = data["object"]
             pay_id = obj["id"]
-            order_id = int(obj.get("metadata", {}).get("order_id", 0))
-            if not order_id:
-                return None
-            # Re-verify with YooKassa API
+
+            # YooKassa recommends verifying notification authenticity by
+            # requesting the object from its API. Treat the webhook body only
+            # as a trigger/payment-id carrier; all authorization fields below
+            # come from the authenticated API response.
             resp2 = await self._http.get(
                 f"{self._API_URL}/payments/{pay_id}",
                 auth=(self._shop_id, self._secret),
             )
             resp2.raise_for_status()
             verified = resp2.json()
-            if verified.get("status") != "succeeded":
+            if (
+                verified.get("id") != pay_id
+                or verified.get("status") != "succeeded"
+                or verified.get("paid") is not True
+            ):
                 return None
-            amount_val = float(verified["amount"]["value"])
+
+            metadata = verified.get("metadata") or {}
+            try:
+                order_id = int(metadata.get("order_id", 0))
+            except (TypeError, ValueError):
+                return None
+            if order_id <= 0:
+                return None
+
+            amount_obj = verified.get("amount") or {}
+            if amount_obj.get("currency") != "RUB":
+                return None
+            amount_val = float(amount_obj["value"])
+
             return IncomingPayment(
                 our_payment_id=order_id,
                 provider_payment_id=pay_id,
