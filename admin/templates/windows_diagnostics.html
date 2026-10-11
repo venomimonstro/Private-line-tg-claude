@@ -2,7 +2,7 @@
 {% block content %}
 <div class="card p-3 mb-3">
   <h6>Windows-клиент и отчёты</h6>
-  <p class="text-muted small">Отправка только после нажатия пользователем «Отправить диагностику». Не принимаем VLESS-ссылки, UUID, пароли, сырые логи или IP.</p>
+  <p class="text-muted small">Нативный Windows-клиент автоматически отправляет только структурированные коды ошибок, если диагностика включена. VLESS-ссылки, UUID, пароли, сырые логи и IP не принимаются.</p>
   <p class="small"><strong>Персональная автоматическая установка:</strong> выберите пользователя с активной подпиской. IP, VLESS-ключ и диагностический токен в программе вводить не нужно.</p>
   <form method="get" action="/admin/windows-client/personal" class="d-flex gap-2 mb-3">
     <select name="user_id" class="form-select" required aria-label="Пользователь">
