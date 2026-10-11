@@ -33,10 +33,14 @@ async def get_provider_db(name: str, session) -> PaymentProviderBase:
     result = await session.execute(
         select(AppSetting).where(AppSetting.key.in_(cred_keys))
     )
+    from app.services.secret_settings import decode_setting_value
+
     db_vals = {row.key: (row.value or "") for row in result.scalars().all()}
 
     def g(key: str) -> str:
-        return db_vals.get(key) or getattr(settings, key, "")
+        if key in db_vals and db_vals[key]:
+            return decode_setting_value(key, db_vals[key])
+        return getattr(settings, key, "")
 
     return _build_with_creds(name, g)
 
