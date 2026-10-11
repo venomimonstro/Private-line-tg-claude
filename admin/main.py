@@ -42,6 +42,7 @@ from admin.routes import (
     withdrawals,
 )
 from app.database import get_async_session, async_session_maker
+from app.config import settings
 from app.models.user import User
 from app.payments.webhook import router as webhook_router
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -165,8 +166,10 @@ async def login(
         value=token,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set True when HTTPS is configured
-        max_age=3600 * 24,
+        # Uvicorn trusts proxy headers only from the internal nginx path; nginx
+        # overwrites X-Forwarded-Proto, so this cannot be client-spoofed.
+        secure=request.url.scheme == "https",
+        max_age=settings.SESSION_TIMEOUT_MINUTES * 60,
     )
     return response
 
