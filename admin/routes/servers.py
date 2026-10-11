@@ -185,13 +185,19 @@ async def list_servers(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(get_current_admin),
 ) -> HTMLResponse:
+    from urllib.parse import urlsplit as _urlsplit
     result = await session.execute(select(VpnServer).order_by(VpnServer.id))
     servers = result.scalars().all()
+    ssh_defaults = {
+        server.id: (_urlsplit(server.api_url).hostname or "")
+        for server in servers
+    }
     token = await _get_or_create_token(session)
     return templates.TemplateResponse("servers_list.html", {
         "request": request,
         "admin": admin,
         "servers": servers,
+        "ssh_defaults": ssh_defaults,
         "page_title": "VPN-серверы",
         "node_register_token": token,
         "control_plane_public_url": settings.CONTROL_PLANE_PUBLIC_URL.rstrip("/"),
