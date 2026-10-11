@@ -187,13 +187,10 @@ async def download_personal_windows_client(user_id: int | None = None,
 
 @router.get("/windows-client/download")
 async def download_windows_client(admin: User = Depends(require_super_admin)):
-    from io import BytesIO
-    from fastapi.responses import StreamingResponse
-    from app.windows_bundle import build_windows_client
-
-    return StreamingResponse(BytesIO(build_windows_client()), media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="private-line-windows.zip"',
-                 "Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"})
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy ZIP installer retired. Use /admin/windows-diagnostics and download PrivateLineSetup.exe.",
+    )
 
 
 @router.get("/windows-diagnostics", response_class=HTMLResponse)
