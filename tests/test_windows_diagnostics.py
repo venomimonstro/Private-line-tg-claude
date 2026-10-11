@@ -19,10 +19,28 @@ class WindowsDiagnosticsTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {
                 "INSTALL-WINDOWS.cmd", "Install-PrivateLine.ps1",
                 "PrivateLine.ps1", "README_RU.md",
+                "CHECK-INSTALL.cmd", "Check-Install.ps1",
             })
             self.assertIsNone(archive.testzip())
             self.assertNotIn("profile.json", archive.namelist())
             self.assertNotIn("xray.exe", archive.namelist())
+
+    def test_installer_success_requires_verified_app_window(self):
+        installer = (ROOT/"windows_client/Install-PrivateLine.ps1").read_text()
+        self.assertIn("gui-ready.json", installer)
+        self.assertIn("CLIENT_SCRIPT_SYNTAX", installer)
+        self.assertIn("WINDOW_NOT_CONFIRMED", installer)
+        self.assertIn("gui_confirmed = $true", installer)
+        status_check = (ROOT/"windows_client/Check-Install.ps1").read_text()
+        self.assertIn("INSTALL_NOT_CONFIRMED", status_check)
+        self.assertIn("XRAY_VERSION_INVALID", status_check)
+
+    def test_windows_proxy_updates_notify_running_apps(self):
+        client = (ROOT/"windows_client/PrivateLine.ps1").read_text()
+        self.assertIn("InternetSetOption", client)
+        self.assertIn("Refresh-WindowsProxy", client)
+        self.assertIn("gui-ready.json", client)
+        self.assertIn("Проверить установку", client)
 
     def test_consented_allowlisted_diagnostics(self):
         report=DiagnosticReport(
