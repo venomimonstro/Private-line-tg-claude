@@ -85,6 +85,7 @@ async def check_payment_status_yoomoney(
     label = p.provider_payment_id
     if not label:
         return False
+    provider = None
     try:
         provider = await get_provider_db("yoomoney", session)
         op_id = await provider.check_payment_by_label(label, float(p.amount))  # type: ignore[attr-defined]
@@ -96,6 +97,9 @@ async def check_payment_status_yoomoney(
             )
     except Exception as exc:
         logger.error("YooMoney status check failed for payment %d: %s", p.id, exc)
+    finally:
+        if provider is not None:
+            await provider.aclose()
     return False
 
 
