@@ -293,8 +293,15 @@ def stop_existing() -> None:
                 finally:
                     kernel.CloseHandle(handle)
         else:
-            os.kill(pid, signal.SIGTERM)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
     (home() / "state.json").unlink(missing_ok=True)
+    for _ in range(20):
+        if not socks_ready():
+            break
+        time.sleep(0.1)
 
 
 def start_saved() -> dict:
