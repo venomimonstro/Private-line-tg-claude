@@ -16,12 +16,12 @@ from app.enums import PaymentStatus
 logger = logging.getLogger(__name__)
 
 _MIN_AGE_MINUTES = 15
-_MAX_AGE_HOURS = 24
+_MAX_AGE_HOURS = 168
 _BATCH_LIMIT = 100
 
 
 async def verify_pending_payments(session: AsyncSession) -> None:
-    """Poll payment providers for pending payments older than 15 min."""
+    """Poll recent pending payments; only explicit provider terminal states may fail them."""
     from app.models.payment import Payment
 
     now = datetime.utcnow()
@@ -56,11 +56,12 @@ async def verify_pending_payments(session: AsyncSession) -> None:
             else:
                 continue
 
+            # Never infer a failed payment from age or a polling error.
+            # Provider-specific checks mark only explicit terminal states
+            # (canceled/fail/expired). Webhooks may arrive late and provider APIs
+            # can be transiently unavailable.
             if not confirmed:
-                if payment.created_at < now - timedelta(hours=_MAX_AGE_HOURS - 1):
-                    payment.status = PaymentStatus.failed
-                    payment.updated_at = now
-                    logger.info("Marked payment %d as failed (timeout)", payment.id)
+                logger.debug("Payment %d remains pending", payment.id)
         except Exception as exc:
             logger.error("Error verifying payment %d: %s", payment.id, exc)
 
