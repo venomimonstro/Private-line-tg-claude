@@ -184,22 +184,90 @@ function Connect-Client {
         Show-Info ("VPN не подключён: " + $code + ". " + $report)
     }
 }
-function Send-Diagnostics {
-    if(-not $Consent.Checked){Show-Info "Отметьте согласие на отправку диагностических кодов.";return}
-    $endpoint=$Endpoint.Text.Trim().TrimEnd('/')
-    if(-not $endpoint.StartsWith('https://')){Show-Info "Введите HTTPS-адрес основного сервера.";return}
-    if(-not $Token.Text.Trim()){Show-Info "Введите диагностический токен из админки.";return}
+function Get-PairedDevice {
+    $file=Join-Path $Base "device.json"
+    if(-not (Test-Path -LiteralPath $file -PathType Leaf)) {throw "DEVICE_NOT_PAIRED"}
     try {
-        $os=[Environment]::OSVersion.Version
-        $body=@{
-            version=$ClientVersion;windows=([string]$os.Major+"."+[string]$os.Minor)
-            consent=$true;stages=@($script:Stage.ToArray())
-        }| ConvertTo-Json -Depth 8 -Compress
-        $response=Invoke-RestMethod -Uri ($endpoint+"/api/windows-diagnostics") -Method Post -ContentType "application/json" -Headers @{"x-private-line-diagnostics-token"=$Token.Text.Trim()} -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 20
-        Save-Settings
-        Show-Info ("Отчёт принят сервером. ID: " + $response.report_id)
-    }catch{Show-Info ("Отправка не удалась. HTTP/сеть/токен: " + $_.Exception.GetType().Name)}
+        $obj=Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+        $uri=[Uri]([string]$obj.api_base)
+        if($uri.Scheme -ne "https" -or -not $uri.Host -or $uri.AbsolutePath -ne "/" -or $uri.UserInfo) {
+            throw "INVALID_SERVER_ORIGIN"
+        }
+        $encrypted=[Convert]::FromBase64String([string]$obj.token_dpapi)
+        $plain=[Security.Cryptography.ProtectedData]::Unprotect(
+            $encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+        $token=[Text.Encoding]::UTF8.GetString($plain)
+        if($token.Length -lt 45) {throw "DEVICE_TOKEN_INVALID"}
+        return @{base=[string]$obj.api_base; token=$token}
+    } catch {throw "DEVICE_NOT_PAIRED"}
 }
+function Fetch-VpnProfile {
+    $pair=Get-PairedDevice
+    [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+    try {
+        $data=Invoke-RestMethod -Uri ($pair.base+"/api/windows/profile") -Method Get -Headers @{Authorization=("Bearer "+$pair.token)} -TimeoutSec 20
+        if($data.ok -ne $true -or [string]$data.vless_url -notmatch '^vless://') {throw "BAD_PROFILE"}
+        return [string]$data.vless_url
+    } catch {throw "PROFILE_FETCH_FAILED"}
+}
+function Save-PendingReport([object]$item) {
+    $file=Join-Path $Base "pending-reports.json"
+    $existing=@()
+    if(Test-Path -LiteralPath $file) {
+        try {$existing=@(Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json)}catch{}
+    }
+    $pending=@($existing)+@($item)
+    if($pending.Count -gt 10){$pending=@($pending | Select-Object -Last 10)}
+    [IO.File]::WriteAllText($file,(ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress),
+        (New-Object Text.UTF8Encoding($false)))
+}
+function Send-Diagnostics([switch]$Automatic) {
+    if(-not $Consent.Checked) {return "Отправка диагностики отключена."}
+    $items=@($script:Stage.ToArray())
+    if($items.Count -eq 0){$items=@(@{stage="install";result="ok";code="GUI_STARTED"})}
+    $report=@{
+        version=$ClientVersion
+        windows=([string]([Environment]::OSVersion.Version.Major)+"."+[string]([Environment]::OSVersion.Version.Minor))
+        consent=$true
+        stages=$items
+    }
+    try {
+        $pair=Get-PairedDevice
+        [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+        $body=ConvertTo-Json -InputObject $report -Depth 12 -Compress
+        $response=Invoke-RestMethod -Method Post -Uri ($pair.base+"/api/windows/report") -Headers @{Authorization=("Bearer "+$pair.token)} -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType "application/json" -TimeoutSec 15
+        if($response.ok -ne $true){throw "UPLOAD_NOT_CONFIRMED"}
+        Flush-PendingReports
+        return ("Отчёт "+$response.report_id+" принят сервером.")
+    } catch {
+        Save-PendingReport $report
+        return "Отчёт сохранён в очереди до восстановления доступа к серверу."
+    }
+}
+function Flush-PendingReports {
+    if(-not $Consent.Checked){return}
+    $path=Join-Path $Base "pending-reports.json"
+    if(-not (Test-Path -LiteralPath $path)){return}
+    try {
+        $pair=Get-PairedDevice
+        $headers=@{Authorization=("Bearer "+$pair.token)}
+        $reports=@(Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json)
+        $remaining=@()
+        foreach($report in $reports) {
+            try {
+                $body=ConvertTo-Json -InputObject $report -Depth 12 -Compress
+                $resp=Invoke-RestMethod -Method Post -Uri ($pair.base+"/api/windows/report") -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType "application/json" -TimeoutSec 10
+                if($resp.ok -ne $true){throw "UPLOAD_FAILED"}
+            } catch {$remaining+=,$report}
+        }
+        if($remaining.Count -eq 0){Remove-Item $path -Force -ErrorAction SilentlyContinue}
+        else {
+            [IO.File]::WriteAllText($path,(ConvertTo-Json -InputObject @($remaining) -Depth 12 -Compress),
+                (New-Object Text.UTF8Encoding($false)))
+        }
+    } catch {}
+}
+
 $form=New-Object Windows.Forms.Form
 $form.Text="Private Line | Windows (1.1.0)"
 $form.Size=New-Object Drawing.Size(570,705)
