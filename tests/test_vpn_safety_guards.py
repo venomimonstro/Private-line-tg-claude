@@ -176,6 +176,21 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("marzban-cli admin import-from-env -y", installer)
         self.assertIn("SUDO_USERNAME/SUDO_PASSWORD", installer)
 
+    def test_one_command_updater_rolls_nodes_from_control_plane(self):
+        top = (ROOT / "update.sh").read_text(encoding="utf-8")
+        orchestrator = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts" / "deploy_low_memory.sh").read_text(encoding="utf-8")
+        self.assertIn("git pull --ff-only", top)
+        self.assertIn("update_production.sh", top)
+        self.assertIn(".node_deploy_commit", orchestrator)
+        self.assertIn("root@$NODE_HOST", orchestrator)
+        self.assertIn("migrate_marzban_env_admin.sh", orchestrator)
+        self.assertIn("update_node_xray.sh", orchestrator)
+        self.assertIn("migrate_reality_target.sh", orchestrator)
+        self.assertIn("smoke_vpn_node.sh", orchestrator)
+        self.assertIn("probe_vless_e2e.sh", orchestrator)
+        self.assertIn("docker compose build admin", deploy)
+
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
         self.assertIn("retired", text.lower())
