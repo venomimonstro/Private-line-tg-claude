@@ -166,7 +166,7 @@ async def windows_device_report(request: Request, report: DiagnosticReport,
 
 
 @router.get("/windows-client/personal")
-async def download_personal_windows_client(user_id: int | None = None,
+async def download_personal_windows_client(request: Request, user_id: int | None = None,
                                            admin: User = Depends(require_super_admin),
                                            db: AsyncSession = Depends(get_async_session)):
     from io import BytesIO
@@ -174,7 +174,8 @@ async def download_personal_windows_client(user_id: int | None = None,
     from app.windows_enrollment import create_enrollment
     from app.windows_native_installer import build_personal_windows_exe
     try:
-        base, code, pin = await create_enrollment(db, user_id if user_id is not None else admin.id)
+        request_base = str(request.base_url).rstrip("/")
+        base, code, pin = await create_enrollment(db, user_id if user_id is not None else admin.id, base_url=request_base)
         payload = build_personal_windows_exe(base_url=base, pairing_code=code, tls_pin=pin)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="Native Windows installer is not built on this server") from exc
