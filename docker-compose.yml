@@ -305,7 +305,9 @@ services:
     image: nginx:1.25-alpine
     ports:
       - "80:80"
-      - "29148:29148"
+      - "443:443"
+      # Legacy plain-HTTP admin port is localhost-only. Use public HTTPS :443.
+      - "127.0.0.1:29148:29148"
     volumes:
       - type: bind
         source: ./nginx/nginx.conf
