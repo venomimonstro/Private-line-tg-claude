@@ -150,7 +150,17 @@ mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
 # Reproducible runtime: pin the Marzban image pulled during installation and
 # always run the tested Xray build instead of whichever core the panel bundles.
-MARZBAN_IMAGE="gozargah/marzban:latest"
+case "$(uname -m)" in
+    x86_64)
+        MARZBAN_IMAGE="ghcr.io/gozargah/marzban:v0.8.4@sha256:953700b0b91b35dcd5165072fc7029fc3c5bd6ed10d644f80d7cb9a84a9a27f1"
+        ;;
+    aarch64|arm64)
+        MARZBAN_IMAGE="ghcr.io/gozargah/marzban:v0.8.4@sha256:886f11d701005a80d381d4e4d659ae376d2fff55470578f115b518687d86453e"
+        ;;
+    *)
+        die "Неподдерживаемая архитектура Marzban: $(uname -m)"
+        ;;
+esac
 XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
 XRAY_DIR="$MARZBAN_DATA/xray-core/26.6.27"
 XRAY_BIN="$XRAY_DIR/xray"
@@ -158,8 +168,8 @@ XRAY_BIN="$XRAY_DIR/xray"
 info "Загружаю зафиксированные runtime images..."
 docker pull "$MARZBAN_IMAGE" >/dev/null
 docker pull "$XRAY_IMAGE" >/dev/null
-MARZBAN_PIN="$(docker image inspect "$MARZBAN_IMAGE" --format '{{index .RepoDigests 0}}')"
-[[ "$MARZBAN_PIN" == *@sha256:* ]] || die "Не удалось зафиксировать digest Marzban."
+MARZBAN_PIN="$MARZBAN_IMAGE"
+docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1     || die "Digest-pinned Marzban image не загружен."
 
 mkdir -p "$XRAY_DIR"
 TMP_XRAY_CONTAINER="$(docker create "$XRAY_IMAGE")"
