@@ -31,4 +31,5 @@ else
     echo "Code updated: ${BEFORE:0:8} -> ${AFTER:0:8}"
 fi
 
+bash -n scripts/update_production.sh
 exec bash scripts/update_production.sh "$@"
