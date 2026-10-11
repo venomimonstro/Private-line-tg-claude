@@ -346,7 +346,18 @@ def dispatch(message: dict) -> dict:
             running = isinstance(current.get("pid"), int) and same_xray_executable(current["pid"], binary) and socks_ready()
         except ValueError:
             running = False
-        return {"ok": True, "running": running, "has_profile": (home() / "client.json").is_file()}
+        verified = False
+        exit_ip = ""
+        if running:
+            try:
+                exit_ip = real_https_egress()
+                verified = True
+            except (OSError, ValueError, ssl.SSLError):
+                # Keep the browser's SOCKS config fail-closed. Report the real
+                # tunnel as unhealthy instead of advertising a false connection.
+                pass
+        return {"ok": True, "running": running, "verified": verified,
+                "ip": exit_ip, "has_profile": (home() / "client.json").is_file()}
     if action == "disconnect":
         stop_existing()
         return {"ok": True}
