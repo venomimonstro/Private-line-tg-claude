@@ -66,8 +66,11 @@ async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
     return None
 
 
-async def create_enrollment(session: AsyncSession, user_id: int) -> tuple[str, str]:
+async def create_enrollment(session: AsyncSession, user_id: int) -> tuple[str, str, str]:
     base = public_base_url()
+    pin = (settings.CONTROL_PLANE_TLS_PIN or "").strip()
+    if not pin.startswith("sha256//") or len(pin) < 50:
+        raise ValueError("CONTROL_PLANE_TLS_PIN is not configured for Windows enrollment")
     if not await active_user_link(session, user_id):
         raise ValueError("No active Windows-compatible VPN subscription")
     code = secrets.token_urlsafe(32)
@@ -75,7 +78,7 @@ async def create_enrollment(session: AsyncSession, user_id: int) -> tuple[str, s
     session.add(AppSetting(key=PAIR_PREFIX + digest(code), value=json.dumps(record),
                            description="Single-use Windows enrollment code"))
     await session.commit()
-    return base, code
+    return base, code, pin
 
 
 async def redeem_enrollment(session: AsyncSession, code: str) -> str | None:
