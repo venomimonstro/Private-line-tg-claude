@@ -59,7 +59,11 @@ for root in ("app","admin","bot","scheduler","health_monitor"):
         continue
     for p in base.rglob("*.py"):
         ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
-print("PASS: Python syntax")
+for p in Path("chrome_client/native").rglob("*.py"):
+    ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+import json
+json.loads(Path("chrome_client/extension/manifest.json").read_text(encoding="utf-8"))
+print("PASS: Python syntax and Chrome extension manifest")
 PY
 docker compose config -q
 
@@ -91,6 +95,19 @@ wait_http http://127.0.0.1:8000/_health 45 || fail "FastAPI admin did not become
 echo "[6/8] Database migrations..."
 docker compose exec -T admin python -m alembic upgrade head
 wait_http http://127.0.0.1:8000/_health 10 || fail "admin unhealthy after migration"
+docker compose exec -T admin python - <<'PY'
+import io
+import json
+import zipfile
+from app.chrome_bundle import build_chrome_bundle
+bundle = build_chrome_bundle()
+with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+    assert archive.testzip() is None
+    assert "native/bridge.py" in archive.namelist()
+    assert "SETUP-WINDOWS.cmd" in archive.namelist()
+    assert json.loads(archive.read("extension/manifest.json"))["manifest_version"] == 3
+print("PASS: Chrome client ZIP is packaged and available inside admin/bot image")
+PY
 
 echo "[7/8] Bot..."
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
