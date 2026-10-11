@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, MenuButtonCommands
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot_instance import set_bot
@@ -24,6 +25,16 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     set_bot(bot)
+
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="menu", description="Показать меню"),
+        BotCommand(command="my_access", description="Мой доступ"),
+        BotCommand(command="mykey", description="Мой VPN-ключ"),
+        BotCommand(command="windows", description="Windows клиент"),
+        BotCommand(command="help", description="Помощь"),
+    ])
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
