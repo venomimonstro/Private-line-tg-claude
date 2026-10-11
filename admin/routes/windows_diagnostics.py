@@ -175,7 +175,8 @@ async def download_personal_windows_client(request: Request, user_id: int | None
     from app.windows_native_installer import build_personal_windows_exe
     try:
         request_base = str(request.base_url).rstrip("/")
-        base, code, pin = await create_enrollment(db, user_id if user_id is not None else admin.id, base_url=request_base)
+        base_override = request_base if request_base.startswith("https://") else None
+        base, code, pin = await create_enrollment(db, user_id if user_id is not None else admin.id, base_url=base_override)
         payload = build_personal_windows_exe(base_url=base, pairing_code=code, tls_pin=pin)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="Native Windows installer is not built on this server") from exc
