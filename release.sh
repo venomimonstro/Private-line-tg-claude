@@ -208,10 +208,19 @@ RELEASE_ID=$(py_cli create \
 
 # ── Auto-rollback function ────────────────────────────────────────────────────
 # Keep an independent restore helper because git rollback may change/remove it.
-ROLLBACK_RESTORE_HELPER="/tmp/private-line-db-rollback-$$.sh"
+ROLLBACK_RESTORE_HELPER="/tmp/private-line-db-rollback-$.sh"
 cp -p scripts/restore_postgres_backup.sh "$ROLLBACK_RESTORE_HELPER"
 chmod 700 "$ROLLBACK_RESTORE_HELPER"
 MIGRATION_TOUCHED=0
+REBUILD_REQUIRED=0
+
+# Remember the exact service images before any optional rebuild. Git/DB rollback
+# is insufficient if a failed release left Compose's image tags pointing at a
+# newly built image.
+OLD_ADMIN_IMAGE_REF="$(docker inspect -f '{{.Config.Image}}' private-line-admin-1 2>/dev/null || true)"
+OLD_ADMIN_IMAGE_ID="$(docker inspect -f '{{.Image}}' private-line-admin-1 2>/dev/null || true)"
+OLD_BOT_IMAGE_REF="$(docker inspect -f '{{.Config.Image}}' private-line-bot-1 2>/dev/null || true)"
+OLD_BOT_IMAGE_ID="$(docker inspect -f '{{.Image}}' private-line-bot-1 2>/dev/null || true)"
 
 auto_rollback() {
     local reason="$1"
@@ -227,6 +236,18 @@ auto_rollback() {
         err "FATAL: Git rollback failed"
         exit 2
     }
+
+    if [[ "$REBUILD_REQUIRED" -eq 1 ]]; then
+        warn "Restoring pre-release application image tags..."
+        if [[ -n "$OLD_ADMIN_IMAGE_REF" && -n "$OLD_ADMIN_IMAGE_ID" ]]; then
+            docker image tag "$OLD_ADMIN_IMAGE_ID" "$OLD_ADMIN_IMAGE_REF" \
+                || { err "FATAL: cannot restore admin image tag"; exit 2; }
+        fi
+        if [[ -n "$OLD_BOT_IMAGE_REF" && -n "$OLD_BOT_IMAGE_ID" ]]; then
+            docker image tag "$OLD_BOT_IMAGE_ID" "$OLD_BOT_IMAGE_REF" \
+                || { err "FATAL: cannot restore bot image tag"; exit 2; }
+        fi
+    fi
 
     if [[ "$MIGRATION_TOUCHED" -eq 1 ]]; then
         warn "Database migration was attempted; restoring pre-release dump..."
@@ -272,7 +293,6 @@ ok "New code valid: $CHECKED files, 0 errors"
 
 # Rebuild application images when runtime dependencies or the base image changed.
 # A plain docker restart never applies Dockerfile/requirements changes.
-REBUILD_REQUIRED=0
 if git diff --name-only "$PREV_COMMIT" "$NEW_COMMIT" -- Dockerfile requirements.txt \
     | grep -q .; then
     REBUILD_REQUIRED=1
