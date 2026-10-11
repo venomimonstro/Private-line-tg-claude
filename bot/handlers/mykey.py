@@ -26,6 +26,37 @@ def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@router.message(Command("chrome"))
+async def send_chrome_extension(message: Message) -> None:
+    """Send the generic, credential-free Chrome client installation kit."""
+    from app.chrome_bundle import build_chrome_bundle
+
+    data = build_chrome_bundle()
+    await message.answer_document(
+        BufferedInputFile(data, filename="private-line-chrome.zip"),
+        caption=(
+            "🌐 <b>Private Line для Google Chrome</b>\n\n"
+            "Архив содержит расширение и установщик локального Xray. "
+            "Сначала прочтите README_RU.md. Для подключения вставьте "
+            "свой VLESS Reality ключ из /mykey.\n\n"
+            "⚠️ Chrome без локального Xray не умеет самостоятельно "
+            "устанавливать VLESS Reality соединение."
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "chrome_download")
+async def chrome_extension_callback(callback: CallbackQuery) -> None:
+    from app.chrome_bundle import build_chrome_bundle
+
+    await callback.answer("Отправляю расширение Chrome")
+    await callback.message.answer_document(
+        BufferedInputFile(build_chrome_bundle(), filename="private-line-chrome.zip"),
+        caption="🌐 Распакуйте архив, прочитайте README_RU.md, установите расширение и локальный Xray.",
+    )
+
+
 @router.message(Command("mykey"))
 @router.message(F.text == "🔑 Мой ключ")
 async def cmd_mykey(message: Message, db_user: User) -> None:
@@ -54,6 +85,7 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📄 Получить файл VLESS", callback_data=f"vless_file:{key.id}")],
                 [InlineKeyboardButton(text="📷 QR-код ключа", callback_data="get_key_qr")],
+                [InlineKeyboardButton(text="🌐 Chrome VPN (ZIP)", callback_data="chrome_download")],
             ]),
         )
     else:
