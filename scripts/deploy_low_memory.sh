@@ -72,10 +72,25 @@ docker stop private-line-grafana-1 private-line-prometheus-1 private-line-alertm
 rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
 docker builder prune -af >/dev/null 2>&1 || true
 docker image prune -af >/dev/null 2>&1 || true
+# Reclaim only bounded, regenerable host caches. Never prune Docker volumes,
+# delete PostgreSQL data, or truncate live Docker container logs.
+if command -v journalctl >/dev/null 2>&1; then
+  journalctl --vacuum-size=80M >/dev/null 2>&1 || true
+fi
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get clean >/dev/null 2>&1 || true
+fi
+# Previous failed Windows builds can leave large NuGet and SDK intermediate
+# files. The published installer in data/windows_dist is deliberately kept.
+rm -rf windows_native/PrivateLine.Client/.vs \
+       windows_native/PrivateLine.Installer/.vs \
+       windows_native/obj windows_native/bin >/dev/null 2>&1 || true
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 140000 )) || fail "less than ~137 MiB available RAM"
 FREE_MB="$(df -Pm . | awk 'NR==2 {print $4}')"
 echo "Free disk before build: ${FREE_MB} MiB"
+# Building the .NET SDK image on a 416 MiB disk would jeopardize
+# PostgreSQL and VPN services. Fail safely before touching running apps.
 if (( FREE_MB < 1200 )); then
   echo "Disk capacity diagnostics (no volumes or running containers removed):" >&2
   df -h . /var/lib/docker 2>/dev/null >&2 || true
