@@ -125,11 +125,11 @@ MARZBAN_IMAGE="$MARZBAN_IMAGE" MARZBAN_DIR="/opt/marzban" MARZBAN_DATA="/var/lib
     bash "$SCRIPT_DIR/prepare_marzban_runtime.sh" \
     || { echo "FAIL: runtime preparation failed" >&2; exit 2; }
 
-"$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION" || {
+[[ "$("$CORE" version 2>/dev/null || true)" == "Xray $XRAY_VERSION"* ]] || {
     echo "FAIL: pinned Xray $XRAY_VERSION is unavailable" >&2
     exit 2
 }
-echo "Pinned runtime: $("$CORE" version 2>/dev/null | head -n1)"
+echo "Pinned runtime: $("$CORE" version 2>/dev/null | sed -n '1p')"
 
 echo "[3/7] Converge one canonical VLESS TCP REALITY inbound"
 BACKUP_DIR="/var/lib/marzban/backups/golden-node-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -378,7 +378,7 @@ done
 }
 
 echo "[7/7] Verify running Xray $XRAY_VERSION, patched hot-add path and canonical config"
-RUNNING_XRAY_VERSION="$(docker compose exec -T marzban "$CORE" version 2>/dev/null | head -n1 || true)"
+RUNNING_XRAY_VERSION="$(docker compose exec -T marzban "$CORE" version 2>/dev/null | sed -n '1p' || true)"
 [[ "$RUNNING_XRAY_VERSION" == Xray\ $XRAY_VERSION* ]] || {
     echo "FAIL: running Xray is not the pinned $XRAY_VERSION runtime" >&2
     echo "running=$RUNNING_XRAY_VERSION" >&2

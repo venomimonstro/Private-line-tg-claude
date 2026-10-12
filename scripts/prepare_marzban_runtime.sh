@@ -46,7 +46,7 @@ docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 || docker pull "$MARZBAN_I
 docker image inspect "$XRAY_IMAGE" >/dev/null 2>&1 || docker pull "$XRAY_IMAGE" >/dev/null
 
 echo "[runtime 1/5] Ensure pinned Xray $XRAY_VERSION"
-if [[ ! -x "$CORE" ]] || ! "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION"; then
+if [[ ! -x "$CORE" ]] || [[ "$("$CORE" version 2>/dev/null || true)" != "Xray $XRAY_VERSION"* ]]; then
     tmp_container="$(docker create "$XRAY_IMAGE")"
     tmp_bin="$(mktemp)"
     cleanup_core() {
@@ -59,7 +59,7 @@ if [[ ! -x "$CORE" ]] || ! "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xr
     cleanup_core
     trap - EXIT
 fi
-"$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION" || {
+[[ "$("$CORE" version 2>/dev/null || true)" == "Xray $XRAY_VERSION"* ]] || {
     echo "FAIL: pinned Xray installation verification failed" >&2
     exit 2
 }
@@ -241,9 +241,31 @@ else
 fi
 
 echo "[runtime 5/5] Verify exact runtime artifacts"
-docker compose -f "$MARZBAN_DIR/docker-compose.yml" -f "$COMPOSE_OVERRIDE" config -q
-grep -q "$PATCH_MARKER" "$OPERATIONS_OVERRIDE"
-grep -q "$PATCH_MARKER" "$USER_ROUTER_OVERRIDE"
-"$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION"
+if ! docker compose -f "$MARZBAN_DIR/docker-compose.yml" -f "$COMPOSE_OVERRIDE" config -q; then
+    echo "FAIL: merged Marzban Compose configuration is invalid; live container was not restarted" >&2
+    exit 2
+fi
+echo "PASS: merged Marzban Compose configuration"
+if ! grep -Fq "$PATCH_MARKER" "$OPERATIONS_OVERRIDE"; then
+    echo "FAIL: Xray operations override is missing its verified mutation marker" >&2
+    exit 2
+fi
+echo "PASS: Xray operations override"
+if ! grep -Fq "$PATCH_MARKER" "$USER_ROUTER_OVERRIDE"; then
+    echo "FAIL: Marzban user router override is missing its verified mutation marker" >&2
+    exit 2
+fi
+echo "PASS: Marzban user router override"
+# Xray prints more than one version line. Do not pipe into head/grep under
+# pipefail: the producer can receive SIGPIPE even when the first line matches.
+CORE_VERSION="$("$CORE" version 2>/dev/null)" || {
+    echo "FAIL: pinned Xray binary cannot report its version" >&2
+    exit 2
+}
+[[ "$CORE_VERSION" == "Xray $XRAY_VERSION"* ]] || {
+    echo "FAIL: pinned Xray binary version differs from $XRAY_VERSION" >&2
+    exit 2
+}
+echo "PASS: pinned Xray $XRAY_VERSION binary"
 
 echo "PRIVATE LINE RUNTIME PASS: Marzban v0.8.4 + Xray $XRAY_VERSION + synchronous verified user mutations"
