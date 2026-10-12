@@ -141,8 +141,44 @@ def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
 
 alter = '''@threaded_function
 def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
-    _remove_user_from_inbound(api, inbound_tag, account.email)
-    _add_user_to_inbound(api, inbound_tag, account)
+    delays = (0.10, 0.30, 0.80, 1.50)
+    removed = False
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            api.remove_inbound_user(
+                tag=inbound_tag, email=account.email, timeout=30
+            )
+            removed = True
+            break
+        except xray.exc.EmailNotFoundError:
+            removed = True
+            break
+        except xray.exc.ConnectionError as exc:
+            if attempt == len(delays):
+                logger.error(
+                    "Xray hot-alter remove failed after %d attempts for inbound %s: %s",
+                    attempt, inbound_tag, type(exc).__name__,
+                )
+                return
+            sleep(delay)
+
+    if not removed:
+        return
+
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
+            return
+        except xray.exc.EmailExistsError:
+            return
+        except xray.exc.ConnectionError as exc:
+            if attempt == len(delays):
+                logger.error(
+                    "Xray hot-alter add failed after %d attempts for inbound %s: %s",
+                    attempt, inbound_tag, type(exc).__name__,
+                )
+                return
+            sleep(delay)
 '''
 
 src = replace_function(src, "_add_user_to_inbound", add)
