@@ -12,7 +12,10 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 
 from app.database import async_session_maker
-from app.enums import VpnKeyStatus
+from datetime import datetime
+
+from app.enums import SubscriptionStatus, VpnKeyStatus
+from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _server_protocol
@@ -38,11 +41,19 @@ async def run(node: str, probe_only: bool = False) -> int:
         if probe_only:
             sub_id = await db.scalar(
                 select(VpnKey.subscription_id)
+                .join(Subscription, Subscription.id == VpnKey.subscription_id)
                 .where(
                     VpnKey.server_id == server.id,
                     VpnKey.status == VpnKeyStatus.active,
+                    Subscription.status.in_([
+                        SubscriptionStatus.active,
+                        SubscriptionStatus.expires_soon,
+                    ]),
+                    Subscription.expires_at > datetime.utcnow(),
                 )
-                .order_by(VpnKey.subscription_id.asc())
+                # Probe the newest live subscription rather than a historical
+                # active-key row left behind by an expired subscription.
+                .order_by(Subscription.id.desc(), VpnKey.id.desc())
                 .limit(1)
             )
             if not sub_id:
