@@ -194,7 +194,10 @@ public sealed class MainForm : Form
             || q.GetValueOrDefault("security")!="reality"
             || q.GetValueOrDefault("flow")!="xtls-rprx-vision"
             || q.GetValueOrDefault("encryption","none")!="none"
-            || q.GetValueOrDefault("type","tcp") is not ("tcp" or "raw")
+            || (
+                q.GetValueOrDefault("type","tcp")!="tcp"
+                && q.GetValueOrDefault("type","tcp")!="raw"
+            )
             || q.GetValueOrDefault("fp","chrome")!="chrome"
             || !Regex.IsMatch(pbk,@"^[A-Za-z0-9_-]{43,44}$")
             || !Regex.IsMatch(sid,@"^(?:[0-9A-Fa-f]{2}){1,8}$")
@@ -404,11 +407,33 @@ public sealed class MainForm : Form
         }
     }
 
+    async Task<bool> XrayOkAsync(CancellationToken token)
+    {
+        if(!File.Exists(XrayPath))return false;
+        try {
+            using var cts=CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            using var p=Process.Start(new ProcessStartInfo(XrayPath,"version") {
+                UseShellExecute=false,
+                RedirectStandardOutput=true,
+                RedirectStandardError=true,
+                CreateNoWindow=true
+            });
+            if(p is null)return false;
+            var line=await p.StandardOutput.ReadLineAsync(cts.Token);
+            await p.WaitForExitAsync(cts.Token);
+            return p.ExitCode==0
+                && line?.StartsWith("Xray 26.6.27",StringComparison.Ordinal)==true;
+        } catch {return false;}
+    }
+
     async Task ConnectAsync()
     {
         if(!await connectionGate.WaitAsync(0))return;
         connect.Enabled=false;
-        connectCts?.Cancel();
+
+        // Stop/cancel the previous session before creating the new token.
+        DisconnectCore(false);
         connectCts?.Dispose();
         connectCts=new CancellationTokenSource();
         var token=connectCts.Token;
@@ -416,10 +441,9 @@ public sealed class MainForm : Form
         stages.Add(new("install","ok","CLIENT_STARTED"));
 
         try {
-            DisconnectCore(false);
             token.ThrowIfCancellationRequested();
-            if(!File.Exists(XrayPath))
-                throw new InvalidOperationException("XRAY_NOT_INSTALLED");
+            if(!await XrayOkAsync(token))
+                throw new InvalidOperationException("XRAY_VERSION_INVALID");
 
             socksPort=AllocateSocksPort();
             status.Text="Получаем актуальный VPN-профиль...";
@@ -547,7 +571,9 @@ public sealed class MainForm : Form
                 await File.ReadAllTextAsync(PendingPath)
             )??[];
             var remaining=new List<JsonElement>();
-            foreach(var item in items.Take(5)) {
+            var batch=items.Take(5).ToList();
+            for(var i=0;i<batch.Count;i++) {
+                var item=batch[i];
                 try {
                     using var req=new HttpRequestMessage(
                         HttpMethod.Post,d.BaseUrl+"/api/windows/report"
@@ -560,8 +586,7 @@ public sealed class MainForm : Form
                     using var res=await http.SendAsync(req);
                     if(!res.IsSuccessStatusCode)remaining.Add(item);
                 } catch {
-                    remaining.Add(item);
-                    remaining.AddRange(items.Skip(remaining.Count));
+                    remaining.AddRange(batch.Skip(i));
                     break;
                 }
             }
