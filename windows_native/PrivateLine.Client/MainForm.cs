@@ -31,6 +31,7 @@ public sealed class MainForm : Form
     readonly CheckBox diagnostics = new();
     readonly List<Stage> stages = new();
     readonly SemaphoreSlim connectionGate = new(1,1);
+    readonly System.Windows.Forms.Timer tunnelWatchdog = new() { Interval=2000 };
 
     Process? xray;
     CancellationTokenSource? connectCts;
@@ -82,11 +83,25 @@ public sealed class MainForm : Form
         connect.Click += async (_,_) => await ConnectAsync();
         disconnect.Click += (_,_) => Disconnect();
         send.Click += async (_,_) => status.Text = await SendReportAsync();
-        FormClosing += (_,_) => DisconnectCore(false);
+        FormClosing += (_,_) => {
+            tunnelWatchdog.Stop();
+            DisconnectCore(false);
+        };
 
         Directory.CreateDirectory(BaseDir);
         CleanupOrphanXray();
         RecoverStaleProxy();
+
+        tunnelWatchdog.Tick += (_,_) => {
+            try {
+                if(File.Exists(StatePath) && (xray is null || xray.HasExited)) {
+                    RestoreProxy();
+                    StopXrayOnly();
+                    status.Text="VPN-процесс остановился. Интернет восстановлен, нажмите «Подключить VPN» снова.";
+                }
+            } catch {}
+        };
+        tunnelWatchdog.Start();
 
         status.Text = File.Exists(DevicePath)
             ? "Установка привязана к подписке. Нажмите «Подключить VPN»."
@@ -330,20 +345,16 @@ public sealed class MainForm : Form
 
     async Task<string> CheckEgressAsync(CancellationToken token)
     {
-        var success=0;
-        var exitIp="";
-        var first=await CurlProbeAsync("https://api.ipify.org",true,token);
-        if(first.Ok){success++;exitIp=first.Body;}
-        var second=await CurlProbeAsync(
-            "https://www.cloudflare.com/cdn-cgi/trace",false,token
+        var probes=await Task.WhenAll(
+            CurlProbeAsync("https://api.ipify.org",true,token),
+            CurlProbeAsync("https://www.cloudflare.com/cdn-cgi/trace",false,token),
+            CurlProbeAsync("https://www.google.com/generate_204",false,token)
         );
-        if(second.Ok)success++;
-        var third=await CurlProbeAsync(
-            "https://www.google.com/generate_204",false,token
-        );
-        if(third.Ok)success++;
+        var success=probes.Count(x=>x.Ok);
         if(success<2)throw new InvalidOperationException("VPN_EGRESS_FAILED");
-        return string.IsNullOrWhiteSpace(exitIp)?"проверен":exitIp;
+        return probes[0].Ok&&!string.IsNullOrWhiteSpace(probes[0].Body)
+            ?probes[0].Body
+            :"проверен";
     }
 
     static void AtomicWrite(string path,string text)
