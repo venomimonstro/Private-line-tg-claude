@@ -75,6 +75,10 @@ else
     fi
 fi
 
+# Install/refresh the host-level real data-plane watchdog. The current
+# production-update lock prevents it from racing this rollout.
+bash scripts/install_vpn_health_timer.sh
+
 # Node-side revision state is intentionally runtime data, not git-tracked state.
 STATE_FILE="$ROOT/data/.node_deploy_commit"
 mkdir -p "$ROOT/data"
