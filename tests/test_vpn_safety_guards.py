@@ -276,6 +276,27 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/4]')]
         self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
 
+    def test_subscription_activation_uses_tariff_multi_node_redundancy(self):
+        source = (ROOT / "app" / "services" / "subscription.py").read_text(encoding="utf-8")
+        start = source.index("async def activate_subscription")
+        end = source.index("async def expire_subscriptions", start)
+        block = source[start:end]
+        self.assertIn("desired_keys", block)
+        self.assertIn("tariff.max_keys", block)
+        self.assertIn("len(created_keys) >= desired_keys", block)
+        self.assertIn("Основной", block)
+        self.assertIn("Резерв", block)
+        self.assertNotIn("created_keys.append(key)\n            break", block)
+
+    def test_vpn_health_watch_is_real_e2e_and_non_mutating_after_probe_exists(self):
+        watch = (ROOT / "scripts" / "vpn_health_watch.sh").read_text(encoding="utf-8")
+        timer = (ROOT / "scripts" / "install_vpn_health_timer.sh").read_text(encoding="utf-8")
+        self.assertIn("smoke_vpn_node.sh", watch)
+        self.assertIn("app.node_probe_state", watch)
+        self.assertNotIn("stabilize_vpn_fleet", watch)
+        self.assertNotIn("restart_core", watch)
+        self.assertIn("OnUnitActiveSec=5min", timer)
+
     def test_paid_provisioning_has_no_per-user_xray_restart(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
         self.assertIn("restart_core=False", source)
