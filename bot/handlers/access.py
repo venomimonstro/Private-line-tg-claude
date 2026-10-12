@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import get_client_access_url, _server_protocol
+from app.services.sub_token import make_subscription_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
 
@@ -135,6 +136,23 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer()
         return
 
+    subscription_url = ""
+    if db_user.telegram_id:
+        try:
+            subscription_url = make_subscription_url(db_user.telegram_id)
+        except Exception as exc:
+            logger.warning(
+                "Cannot build VPN subscription URL for user %d: %s",
+                db_user.id, type(exc).__name__,
+            )
+    subscription_block = (
+        "🔄 <b>Рекомендуется: подписка с автообновлением</b>\n"
+        f"<code>{escape(subscription_url)}</code>\n"
+        "Добавьте этот URL в приложении как Subscription/Подписку.\n\n"
+        if subscription_url
+        else ""
+    )
+
     if len(active_keys) == 1:
         key = active_keys[0]
         try:
@@ -144,7 +162,9 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
             return
         label_part = f" ({key.label})" if key.label else ""
         await callback.message.answer(  # type: ignore[union-attr]
-            f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
+            "✅ <b>Ваш VPN-доступ</b>\n\n"
+            f"{subscription_block}"
+            f"🔑 <b>Ручной ключ{label_part}:</b>\n\n"
             f"<code>{escape(access_url)}</code>\n\n"
             f"📱 Приложения:\n"
             f"• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -155,7 +175,10 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
             parse_mode="HTML",
         )
     else:
-        lines = ["🔑 <b>Ваши ключи доступа (выберите любой):</b>\n"]
+        lines = ["✅ <b>Ваш VPN-доступ</b>\n"]
+        if subscription_block:
+            lines.append(subscription_block)
+        lines.append("🔑 <b>Ручные ключи (резервный способ):</b>\n")
         for key in active_keys:
             try:
                 url = get_client_access_url(key)
