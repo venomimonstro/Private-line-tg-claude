@@ -8,29 +8,48 @@ cd "$(dirname "$0")/.."
 SERVER_ID="${1:-}"
 MODE="${2:-}"
 [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Usage: bash scripts/smoke_vpn_node.sh SERVER_ID [--publish]" >&2
+    echo "Usage: bash scripts/smoke_vpn_node.sh SERVER_ID [--publish|--hot-add]" >&2
     exit 2
 }
-[[ -z "$MODE" || "$MODE" == "--publish" ]] || {
+[[ -z "$MODE" || "$MODE" == "--publish" || "$MODE" == "--hot-add" ]] || {
     echo "Invalid mode: $MODE" >&2
     exit 2
 }
 
 WORK="$(mktemp -d -t private-line-node-smoke-XXXXXXXX)"
-NAME="plprobe_s${SERVER_ID}"
+HOT_ADD=0
+HOT_CREATED=0
+if [[ "$MODE" == "--hot-add" ]]; then
+    HOT_ADD=1
+    NAME="$(python3 -c 'import secrets; print("plhot_"+secrets.token_hex(8))')"
+else
+    NAME="plprobe_s${SERVER_ID}"
+fi
 PORT=19582
-CONTAINER="private-line-node-smoke-$$"
+CONTAINER="private-line-node-smoke-$"
 
 cleanup() {
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    if [[ "$HOT_CREATED" == 1 ]]; then
+        docker compose exec -T admin python -m app.node_smoke_user delete-live \
+            --server "$SERVER_ID" --name "$NAME" >/dev/null 2>&1 || \
+            echo "WARNING: hot-add canary DB cleanup could not be confirmed" >&2
+    fi
     rm -f "$WORK/profile.txt" "$WORK/client.json" "$WORK/egress.txt" "$WORK/curl.log"
     rmdir "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "[1/5] Ensuring persistent synthetic Marzban probe user on node $SERVER_ID..."
-docker compose exec -T admin python -m app.node_smoke_user ensure \
-    --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
+if [[ "$HOT_ADD" == 1 ]]; then
+    echo "[1/5] Creating fresh Marzban hot-add canary WITHOUT Xray restart..."
+    docker compose exec -T admin python -m app.node_smoke_user create-live \
+        --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
+    HOT_CREATED=1
+else
+    echo "[1/5] Reading persistent synthetic Marzban probe user (create once if missing)..."
+    docker compose exec -T admin python -m app.node_smoke_user ensure \
+        --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
+fi
 
 echo "[2/5] Validating exact client share URI..."
 docker compose exec -T admin python -m app.vless_e2e_probe_config     --stdin-url --socks-port "$PORT" < "$WORK/profile.txt" > "$WORK/client.json"
@@ -82,7 +101,7 @@ done
     exit 2
 }
 
-echo "[5/5] Requesting multiple HTTPS destinations through disposable VLESS Reality credentials..."
+echo "[5/5] Requesting multiple HTTPS destinations through VLESS Reality credentials..."
 SUCCESS=0
 probe() {
     local label="$1" url="$2"
@@ -104,7 +123,7 @@ try:
     value=pathlib.Path(sys.argv[1]).read_text().strip()
     ip=ipaddress.ip_address(value)
     if ip.is_global:
-        print("Disposable VPN egress IPv4:", ip)
+        print("VPN egress IPv4:", ip)
 except Exception:
     pass
 PY
@@ -127,10 +146,14 @@ if (( SUCCESS < 2 )); then
           -e 's/[A-Za-z0-9_-]{43,100}/[REDACTED_LONG_STRING]/g'
     exit 1
 fi
-echo "PASS: disposable VLESS Reality tunnel has internet egress ($SUCCESS/3 HTTPS destinations)."
+echo "PASS: VLESS Reality tunnel has internet egress ($SUCCESS/3 HTTPS destinations)."
 
-echo "PASS: synthetic VPN probe user is retained for future read-only E2E checks."
-echo "PASS: dedicated VPN node works end-to-end without per-check credential churn"
+if [[ "$HOT_ADD" == 1 ]]; then
+    echo "PASS: fresh user hot-add works end-to-end WITHOUT Xray restart."
+else
+    echo "PASS: synthetic VPN probe user is retained for future read-only E2E checks."
+    echo "PASS: dedicated VPN node works end-to-end without per-check credential churn"
+fi
 if [[ "$MODE" == "--publish" ]]; then
     echo "[publish] Final read-only integrity check and customer publication..."
     docker compose exec -T admin python -m app.promote_vpn_node --server "$SERVER_ID"
