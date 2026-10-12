@@ -150,6 +150,48 @@ echo "PASS: VLESS Reality tunnel has internet egress ($SUCCESS/3 HTTPS destinati
 
 if [[ "$HOT_ADD" == 1 ]]; then
     echo "PASS: fresh user hot-add works end-to-end WITHOUT Xray restart."
+
+    echo "[cleanup] Deleting hot-add canary WITHOUT Xray restart..."
+    docker compose exec -T admin python -m app.node_smoke_user delete-live \
+        --server "$SERVER_ID" --name "$NAME"
+    HOT_CREATED=0
+
+    # Prove the live Xray runtime removed the credential as well. Restart the
+    # ephemeral client so no pre-existing transport can mask a stale live user.
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker run -d --name "$CONTAINER" --network host --user 0:0 --read-only \
+        --cap-drop ALL --security-opt no-new-privileges \
+        -v "$WORK/client.json:/tmp/client.json:ro" \
+        "$XRAY_IMAGE" run -c /tmp/client.json >/dev/null
+
+    READY=0
+    for _ in $(seq 1 20); do
+        if python3 - "$PORT" <<'PY' >/dev/null 2>&1
+import socket, sys
+with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1) as s:
+    s.sendall(b"\x05\x01\x00")
+    assert s.recv(2) == b"\x05\x00"
+PY
+        then
+            READY=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "$READY" == 1 ]] || {
+        echo "FAIL: temporary client did not restart for hot-remove verification"
+        exit 2
+    }
+
+    if curl -q -4 -fsS --noproxy '' \
+        --proxy "socks5h://127.0.0.1:$PORT" \
+        --connect-timeout 5 --max-time 10 \
+        https://www.google.com/generate_204 -o /dev/null 2>/dev/null; then
+        echo "FAIL: deleted hot-add canary still passes traffic in live Xray." >&2
+        echo "Marzban DB and Xray HandlerService are out of sync; node cannot be production-selectable." >&2
+        exit 1
+    fi
+    echo "PASS: hot-remove reached live Xray WITHOUT restart."
 else
     echo "PASS: synthetic VPN probe user is retained for future read-only E2E checks."
     echo "PASS: dedicated VPN node works end-to-end without per-check credential churn"
