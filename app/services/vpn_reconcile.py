@@ -16,7 +16,7 @@ import asyncio
 import ipaddress
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
@@ -379,14 +379,22 @@ async def reconcile_marzban_server(
                 result.errors += 1
 
         if apply and remote_changed:
-            # Restart only when reconciliation actually changed a Marzban user.
-            # Host/link-only repairs do not require an Xray restart. Avoiding
-            # unconditional restarts is essential for production availability;
-            # the external synthetic/paid E2E gate proves the unchanged runtime.
-            await client.restart_core_with_db_users(
-                reason=f"reconcile changed user state on server {server.id}"
+            # On a recently accepted node, Marzban POST/PUT is synchronously
+            # bound to Xray HandlerService by the node runtime patch and the
+            # zero-restart hot-add/hot-remove canary proves that path. Do not
+            # create avoidable customer downtime with a node-wide restart.
+            mutation_path_proven = bool(
+                server.last_hot_add_success_at
+                and server.last_hot_add_success_at
+                >= datetime.utcnow() - timedelta(minutes=45)
             )
-            result.core_restarted = True
+            if not mutation_path_proven:
+                # Operator repair of an old/unproven node keeps one conservative
+                # fallback so DB/live drift cannot be reported as repaired.
+                await client.restart_core_with_db_users(
+                    reason=f"reconcile unproven user mutation on server {server.id}"
+                )
+                result.core_restarted = True
 
         # Reconciliation proves only control-plane/config coherence.
         # It must never publish or heal node admission state. Only an external
