@@ -299,7 +299,15 @@ class MarzbanClient:
                 priv_b64 = reality.get("privateKey", "")
                 short_ids = reality.get("shortIds", [])
                 server_names = reality.get("serverNames", [])
-                if not priv_b64 or not short_ids:
+                if (
+                    not priv_b64
+                    or not isinstance(short_ids, list)
+                    or not any(isinstance(item, str) and item for item in short_ids)
+                    or not isinstance(server_names, list)
+                    or len(server_names) != 1
+                    or not isinstance(server_names[0], str)
+                    or not server_names[0].strip()
+                ):
                     continue
 
                 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -310,12 +318,24 @@ class MarzbanClient:
                 pub_bytes = priv_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
                 public_key = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
 
-                short_id = next((s for s in short_ids if s), "")
-                raw_sni = server_names[0] if server_names else "www.microsoft.com"
+                short_id = next((s for s in short_ids if isinstance(s, str) and s), "")
+                raw_sni = server_names[0]
                 sni = self._clean_sni(raw_sni)
+                if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", sni):
+                    raise MarzbanConfigError("Reality serverName/SNI is invalid")
+                if not re.fullmatch(r"(?:[a-fA-F0-9]{2}){1,8}", short_id):
+                    raise MarzbanConfigError("Reality shortId is invalid")
+
+                configured_public = reality.get("publicKey")
+                if configured_public and configured_public != public_key:
+                    raise MarzbanConfigError(
+                        "Reality publicKey metadata does not match privateKey"
+                    )
 
                 self._reality_cache = (public_key, short_id, sni)
                 return self._reality_cache
+        except MarzbanConfigError:
+            raise
         except Exception as exc:
             logger.warning("Could not parse Reality params from config: %s", exc)
         return None
