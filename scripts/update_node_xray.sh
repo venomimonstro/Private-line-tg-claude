@@ -12,6 +12,29 @@ cd /opt/marzban
 exec 9>/var/lock/private-line-xray-update.lock
 flock -n 9 || { echo 'Another Xray update is running'; exit 1; }
 
+ensure_vpn_firewall() {
+    # Existing nodes created by older installers may have a healthy local
+    # Xray listener while UFW still drops public TCP/443. That produces the
+    # exact failure mode "key is generated but no client can connect".
+    if ! command -v ufw >/dev/null 2>&1; then
+        return 0
+    fi
+    local status
+    status="$(ufw status 2>/dev/null | head -n1 || true)"
+    if [[ "$status" != "Status: active" ]]; then
+        return 0
+    fi
+    if ! ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW'; then
+        ufw allow 443/tcp comment "VLESS Reality VPN" >/dev/null \
+            || { echo "FAIL: unable to allow public VLESS TCP/443 in UFW" >&2; return 1; }
+    fi
+    ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW' \
+        || { echo "FAIL: UFW still does not allow public TCP/443" >&2; return 1; }
+    echo "PASS: host firewall allows public VLESS TCP/443"
+}
+
+ensure_vpn_firewall
+
 VERSION=26.6.27
 # GitHub Container Registry tagged-package digest for v26.6.27.
 XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
@@ -128,7 +151,8 @@ PY
             echo "[1/4] PASS: verified installed Xray $VERSION; no pull required"
             echo "[2/4] PASS: canonical REALITY metadata and keypair verified"
             echo "[3/4] PASS: live Marzban process and API are ready"
-            echo "[4/4] PASS: Xray :443; no restart required"
+            ensure_vpn_firewall
+            echo "[4/4] PASS: Xray :443; firewall verified; no restart required"
             exit 0
         fi
     fi
@@ -326,6 +350,7 @@ if [ "$SUCCESS" != true ]; then
     exit 1
 fi
 
+ensure_vpn_firewall
 echo "[4/4] PASS: Xray $VERSION is running on :443; Marzban API is ready"
 echo "Rollback backup: $BACKUP_DIR"
 echo 'Preserved: Marzban DB, client UUIDs, Reality private key, short IDs, SNI.'
