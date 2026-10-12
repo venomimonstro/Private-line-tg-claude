@@ -37,7 +37,8 @@ PY
     echo "FAIL: could not allocate local SOCKS probe port" >&2
     exit 2
 }
-CONTAINER="private-line-node-smoke-${SERVER_ID}-$"
+RUN_ID="$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
+CONTAINER="private-line-node-smoke-${SERVER_ID}-${RUN_ID}"
 
 cleanup() {
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
