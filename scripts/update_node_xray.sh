@@ -49,12 +49,61 @@ CURRENT_EXEC="${CURRENT_EXEC%\'}"
 CURRENT_EXEC="${CURRENT_EXEC#\'}"
 if [[ "$CURRENT_EXEC" == "$CORE" && -x "$CORE" ]]; then
     if version_matches "$CORE" && docker compose exec -T marzban python - "$CORE" <<'PY'
-import os, pathlib, socket, sys, urllib.request
+import base64, json, os, pathlib, re, socket, subprocess, sys, urllib.request
 
 expected = sys.argv[1]
-config = pathlib.Path("/var/lib/marzban/xray_config.json")
-if not config.is_file():
+config_path = pathlib.Path("/var/lib/marzban/xray_config.json")
+if not config_path.is_file():
     raise SystemExit(1)
+cfg = json.loads(config_path.read_text())
+rows = []
+for inbound in cfg.get("inbounds", []):
+    stream = inbound.get("streamSettings", {})
+    if inbound.get("protocol") == "vless" and stream.get("security") == "reality":
+        rows.append((inbound, stream.get("realitySettings", {})))
+if len(rows) != 1:
+    raise SystemExit(1)
+inbound, reality = rows[0]
+if inbound.get("port") != 443:
+    raise SystemExit(1)
+if stream.get("network") not in ("tcp", "raw"):
+    raise SystemExit(1)
+if inbound.get("settings", {}).get("decryption") != "none":
+    raise SystemExit(1)
+private_key = reality.get("privateKey")
+public_key = reality.get("publicKey")
+short_ids = reality.get("shortIds")
+server_names = reality.get("serverNames")
+if (
+    not isinstance(private_key, str)
+    or not private_key
+    or not isinstance(public_key, str)
+    or not re.fullmatch(r"[A-Za-z0-9_-]{43,44}", public_key)
+    or not isinstance(short_ids, list)
+    or not any(isinstance(x, str) and re.fullmatch(r"(?:[0-9a-f]{2}){1,8}", x) for x in short_ids)
+    or not isinstance(server_names, list)
+    or len(server_names) != 1
+):
+    # The static config may still be accepted by Xray while lacking metadata
+    # required by Marzban 0.8.x. Fall through to the repair path.
+    raise SystemExit(1)
+
+result = subprocess.run(
+    [expected, "x25519", "-i", private_key],
+    capture_output=True, text=True, timeout=10,
+)
+if result.returncode:
+    raise SystemExit(1)
+derived = None
+for line in result.stdout.splitlines():
+    label, sep, value = line.partition(":")
+    label = re.sub(r"\s+", "", label).lower()
+    if sep and label in ("publickey", "password", "password(publickey)"):
+        derived = value.strip()
+        break
+if derived != public_key:
+    raise SystemExit(1)
+
 running = False
 for item in pathlib.Path("/proc").iterdir():
     if not item.name.isdigit():
@@ -76,7 +125,7 @@ PY
     then
         if docker compose exec -T marzban "$CORE" run -test -config /var/lib/marzban/xray_config.json </dev/null >/dev/null 2>&1; then
             echo "[1/4] PASS: verified installed Xray $VERSION; no pull required"
-            echo "[2/4] PASS: REALITY config accepted by the running core"
+            echo "[2/4] PASS: canonical REALITY metadata and keypair verified"
             echo "[3/4] PASS: live Marzban process and API are ready"
             echo "[4/4] PASS: Xray :443; no restart required"
             exit 0
@@ -190,8 +239,19 @@ for inbound in config.get('inbounds', []):
     ):
         raise SystemExit('FAIL: unable to derive Reality public key; no changes applied')
 
-    # Metadata only; private key / short IDs / UUIDs are untouched.
+    # Repair compatibility metadata without rotating any credential.
+    # Marzban 0.8.x can derive a REALITY public key only from older xray x25519
+    # output labels, while Xray 26.x prints Password (PublicKey). Persisting the
+    # derived value avoids that cross-version parser dependency.
     reality['publicKey'] = public_key
+    reality['show'] = False
+    reality['minClientVer'] = ""
+    reality['maxClientVer'] = ""
+    reality['maxTimeDiff'] = 0
+    inbound.setdefault('settings', {})['decryption'] = 'none'
+    stream = inbound.setdefault('streamSettings', {})
+    if stream.get('network') not in ('tcp', 'raw'):
+        raise SystemExit('FAIL: VLESS Reality transport must be TCP/RAW')
     count += 1
 
 if count != 1:
