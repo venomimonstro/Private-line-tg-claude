@@ -77,6 +77,12 @@ for server_id in "${NODE_IDS[@]}"; do
             >/dev/null 2>&1 || true
         fail "Disposable tunnel failed on server $server_id"
     fi
+    # A node with no paid key still needs a deterministic publication path.
+    # If a paid-key probe exists later in this gate it can quarantine the same
+    # node again on failure; disposable success is the minimum admission proof.
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$server_id" --success \
+        || fail "Could not publish node $server_id after disposable E2E success"
 done
 
 CURRENT_STEP="8/11 node integrity"; echo "=== 8/11 Deep read-only node audit after publication ==="
