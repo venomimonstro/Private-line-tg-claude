@@ -34,14 +34,15 @@ case "$TARGET_HOST" in
     ""|*[!A-Za-z0-9.-]*) echo "FAIL: invalid REALITY target hostname" >&2; exit 2 ;;
 esac
 
-CONTROL_IP="$CONTROL_IP" python3 - <<'PY' >/dev/null || {
+if ! CONTROL_IP="$CONTROL_IP" python3 - <<'PY' >/dev/null
 import ipaddress, os
 ip=ipaddress.ip_address(os.environ["CONTROL_IP"])
 assert ip.version == 4 and ip.is_global
 PY
+then
     echo "FAIL: cannot determine public control-plane IPv4 from MAIN_SERVER_IP/SSH_CONNECTION" >&2
     exit 2
-}
+fi
 
 echo "=== PRIVATE LINE GOLDEN NODE CONVERGENCE ==="
 echo "Control plane: $CONTROL_IP; Marzban API: TCP/$API_PORT (firewall-restricted)"
@@ -73,6 +74,7 @@ version_ok() {
 
 echo "[2/7] Verify pinned Xray $XRAY_VERSION"
 CORE_CHANGED=0
+RUNTIME_CHANGED=0
 if ! version_ok; then
     echo "Installing tested Xray core $XRAY_VERSION..."
     docker pull "$XRAY_IMAGE" >/dev/null
@@ -91,6 +93,25 @@ if ! version_ok; then
     trap - EXIT
 fi
 version_ok || { echo "FAIL: Xray version pin failed" >&2; exit 2; }
+
+# The binary on disk can be correct while the running Marzban child still uses
+# an older executable. Detect the actual /proc executable and force one restart.
+if ! docker compose exec -T marzban python - "$CORE" <<'PY' >/dev/null 2>&1
+import os, pathlib, sys
+expected=sys.argv[1]
+for p in pathlib.Path("/proc").iterdir():
+    if not p.name.isdigit():
+        continue
+    try:
+        if os.readlink(p / "exe") == expected:
+            raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
+PY
+then
+    RUNTIME_CHANGED=1
+fi
 
 echo "[3/7] Converge one canonical VLESS TCP REALITY inbound"
 BACKUP_DIR="/var/lib/marzban/backups/golden-node-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -285,8 +306,8 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^marzban-proxy.service'; the
 fi
 
 echo "[5/7] Restart only when the canonical runtime changed"
-if [[ "$CHANGED" -eq 1 || "$CORE_CHANGED" -eq 1 || "$ENV_CHANGED" -eq 1 ]]; then
-    echo "Runtime change detected: config=$CHANGED core=$CORE_CHANGED env=$ENV_CHANGED"
+if [[ "$CHANGED" -eq 1 || "$CORE_CHANGED" -eq 1 || "$ENV_CHANGED" -eq 1 || "$RUNTIME_CHANGED" -eq 1 ]]; then
+    echo "Runtime change detected: config=$CHANGED core=$CORE_CHANGED env=$ENV_CHANGED process=$RUNTIME_CHANGED"
     docker compose up -d --no-deps --force-recreate marzban </dev/null
 else
     echo "PASS: canonical Xray runtime already current; no core restart"
