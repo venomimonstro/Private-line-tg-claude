@@ -97,12 +97,7 @@ else
 fi
 
 if [[ "$NODE_UPDATE" != true ]]; then
-    printf '%s
-' "$HEAD" > "$STATE_FILE"
-    chmod 600 "$STATE_FILE"
-    echo "PASS: no node-side rollout required."
-    echo "PRODUCTION UPDATE PASS"
-    exit 0
+    echo "PASS: no node-side code rollout required; runtime/E2E validation is still mandatory."
 fi
 
 echo
@@ -146,12 +141,18 @@ PY
 printf '%s
 ' "$NODE_ROWS" | sed 's/^/  /'
 
-REMOTE_ARCHIVE="$(mktemp)"
+REMOTE_ARCHIVE=""
 CRED_ROOT="$(mktemp -d)"
 chmod 700 "$CRED_ROOT"
-trap 'rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"' EXIT
+trap '[[ -n "$REMOTE_ARCHIVE" ]] && rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"' EXIT
 
-tar -czf "$REMOTE_ARCHIVE"     scripts/update_node_xray.sh     scripts/migrate_reality_target.sh
+if [[ "$NODE_UPDATE" == true ]]; then
+    REMOTE_ARCHIVE="$(mktemp)"
+    tar -czf "$REMOTE_ARCHIVE" \
+        scripts/update_node_xray.sh \
+        scripts/migrate_reality_target.sh \
+        scripts/inspect_node_vless.sh
+fi
 
 while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
     [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || fail "invalid server id: $SERVER_ID"
@@ -160,17 +161,18 @@ while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
     echo
     echo "=== NODE $SERVER_ID / $NODE_HOST ==="
 
-    SSH_JSON=""
-    set +e
-    SSH_JSON="$(docker compose exec -T admin python -m app.node_ssh_access --server "$SERVER_ID" 2>/dev/null)"
-    SSH_RC=$?
-    set -e
-    if [[ "$SSH_RC" -ne 0 ]]; then
-        fail "SSH access is not configured for node $SERVER_ID. Open Admin -> VPN-серверы -> SSH-доступ and save it once."
-    fi
+    if [[ "$NODE_UPDATE" == true ]]; then
+        SSH_JSON=""
+        set +e
+        SSH_JSON="$(docker compose exec -T admin python -m app.node_ssh_access --server "$SERVER_ID" 2>/dev/null)"
+        SSH_RC=$?
+        set -e
+        if [[ "$SSH_RC" -ne 0 ]]; then
+            fail "SSH access is not configured for node $SERVER_ID. Open Admin -> VPN-серверы -> SSH-доступ and save it once."
+        fi
 
-    mapfile -t SSH_FIELDS < <(
-        SSH_JSON_VALUE="$SSH_JSON" python3 -c '
+        mapfile -t SSH_FIELDS < <(
+            SSH_JSON_VALUE="$SSH_JSON" python3 -c '
 import json, os
 data=json.loads(os.environ["SSH_JSON_VALUE"])
 for key in ("host","port","username","auth_type","secret_b64"):
@@ -179,57 +181,75 @@ for key in ("host","port","username","auth_type","secret_b64"):
         raise SystemExit(2)
     print(value)
 '
-    )
-    [[ "${#SSH_FIELDS[@]}" -eq 5 ]] || fail "invalid stored SSH access for node $SERVER_ID"
-    SSH_HOST="${SSH_FIELDS[0]}"
-    SSH_PORT="${SSH_FIELDS[1]}"
-    SSH_USER="${SSH_FIELDS[2]}"
-    SSH_AUTH="${SSH_FIELDS[3]}"
-    SSH_SECRET_B64="${SSH_FIELDS[4]}"
-    unset SSH_FIELDS SSH_JSON
+        )
+        [[ "${#SSH_FIELDS[@]}" -eq 5 ]] || fail "invalid stored SSH access for node $SERVER_ID"
+        SSH_HOST="${SSH_FIELDS[0]}"
+        SSH_PORT="${SSH_FIELDS[1]}"
+        SSH_USER="${SSH_FIELDS[2]}"
+        SSH_AUTH="${SSH_FIELDS[3]}"
+        SSH_SECRET_B64="${SSH_FIELDS[4]}"
+        unset SSH_FIELDS SSH_JSON
 
-    [[ "$SSH_PORT" =~ ^[1-9][0-9]*$ && "$SSH_PORT" -le 65535 ]]         || fail "invalid SSH port stored for node $SERVER_ID"
+        [[ "$SSH_PORT" =~ ^[1-9][0-9]*$ && "$SSH_PORT" -le 65535 ]] \
+            || fail "invalid SSH port stored for node $SERVER_ID"
 
-    NODE_CRED_DIR="$CRED_ROOT/node-$SERVER_ID"
-    mkdir -m 700 "$NODE_CRED_DIR"
-    SECRET_FILE="$NODE_CRED_DIR/secret"
-    printf '%s' "$SSH_SECRET_B64" | base64 -d > "$SECRET_FILE"         || fail "cannot decode stored SSH secret for node $SERVER_ID"
-    unset SSH_SECRET_B64
-    chmod 600 "$SECRET_FILE"
+        NODE_CRED_DIR="$CRED_ROOT/node-$SERVER_ID"
+        mkdir -m 700 "$NODE_CRED_DIR"
+        SECRET_FILE="$NODE_CRED_DIR/secret"
+        printf '%s' "$SSH_SECRET_B64" | base64 -d > "$SECRET_FILE" \
+            || fail "cannot decode stored SSH secret for node $SERVER_ID"
+        unset SSH_SECRET_B64
+        chmod 600 "$SECRET_FILE"
 
-    SSH_COMMON=(
-        -p "$SSH_PORT"
-        -o ConnectTimeout=10
-        -o ServerAliveInterval=15
-        -o ServerAliveCountMax=3
-        -o StrictHostKeyChecking=accept-new
-        -o NumberOfPasswordPrompts=1
-    )
-    REMOTE_COMMAND='set -Eeuo pipefail
-         tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
-         trap '"'"'rm -rf "$tmp"'"'"' EXIT
-         tar -xzf - -C "$tmp"
-         bash "$tmp/scripts/update_node_xray.sh"
-         bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com
-         echo "REMOTE NODE PASS"'
+        SSH_COMMON=(
+            -p "$SSH_PORT"
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+            -o StrictHostKeyChecking=accept-new
+            -o NumberOfPasswordPrompts=1
+        )
+        REMOTE_COMMAND='set -Eeuo pipefail
+             tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
+             trap '"'"'rm -rf "$tmp"'"'"' EXIT
+             tar -xzf - -C "$tmp"
+             bash "$tmp/scripts/update_node_xray.sh"
+             bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com
+             echo "REMOTE NODE PASS"'
 
-    echo "[1/4] Remote node convergence (stored SSH access; no terminal prompt)"
-    if [[ "$SSH_AUTH" == "private_key" ]]; then
-        cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}"             -o BatchMode=yes             -i "$SECRET_FILE"             "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND"             || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
-    elif [[ "$SSH_AUTH" == "password" ]]; then
-        ASKPASS="$NODE_CRED_DIR/askpass"
-        cat > "$ASKPASS" <<EOF
+        echo "[1/4] Remote node convergence (stored SSH access; no terminal prompt)"
+        if [[ "$SSH_AUTH" == "private_key" ]]; then
+            cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
+                -o BatchMode=yes -i "$SECRET_FILE" \
+                "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
+                || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
+        elif [[ "$SSH_AUTH" == "password" ]]; then
+            ASKPASS="$NODE_CRED_DIR/askpass"
+            cat > "$ASKPASS" <<EOF
 #!/bin/sh
 cat "$SECRET_FILE"
 EOF
-        chmod 700 "$ASKPASS"
-        command -v setsid >/dev/null 2>&1             || fail "setsid is required for non-interactive SSH password authentication"
-        cat "$REMOTE_ARCHIVE" |             DISPLAY=:private-line             SSH_ASKPASS_REQUIRE=force             SSH_ASKPASS="$ASKPASS"             setsid -w ssh "${SSH_COMMON[@]}"                 -o BatchMode=no                 -o PreferredAuthentications=password,keyboard-interactive                 -o PubkeyAuthentication=no                 "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND"             || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
+            chmod 700 "$ASKPASS"
+            command -v setsid >/dev/null 2>&1 \
+                || fail "setsid is required for non-interactive SSH password authentication"
+            cat "$REMOTE_ARCHIVE" | \
+                DISPLAY=:private-line \
+                SSH_ASKPASS_REQUIRE=force \
+                SSH_ASKPASS="$ASKPASS" \
+                setsid -w ssh "${SSH_COMMON[@]}" \
+                    -o BatchMode=no \
+                    -o PreferredAuthentications=password,keyboard-interactive \
+                    -o PubkeyAuthentication=no \
+                    "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
+                || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
+        else
+            fail "unsupported SSH auth type for node $SERVER_ID"
+        fi
+        rm -rf "$NODE_CRED_DIR"
+        unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
     else
-        fail "unsupported SSH auth type for node $SERVER_ID"
+        echo "[1/4] Node code unchanged; skipping SSH rollout, continuing mandatory runtime validation"
     fi
-    rm -rf "$NODE_CRED_DIR"
-    unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
 
     echo "[2/4] Reconcile Marzban DB/runtime/host metadata"
     docker compose exec -T admin         python -m app.stabilize_vless --node "$NODE_HOST"         || fail "reconciliation failed for node $SERVER_ID"
