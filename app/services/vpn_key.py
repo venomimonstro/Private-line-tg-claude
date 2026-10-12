@@ -45,8 +45,8 @@ def _key_url_needs_repair(access_url: str) -> bool:
         sni = qs.get("sni", [""])[0]
         if "[" in sni or "]" in sni:
             return True  # Corrupted Markdown SNI
-        if not qs.get("pbk", [""])[0] or "sid" not in qs:
-            return True  # Empty sid is valid when allowed by the node.
+        if not qs.get("pbk", [""])[0] or not qs.get("sid", [""])[0]:
+            return True  # Private Line production nodes always require a non-empty short ID.
         if (not parsed.username or not parsed.hostname or not parsed.port
             or not sni or qs.get("security") != ["reality"]
             or qs.get("flow") != ["xtls-rprx-vision"]):
