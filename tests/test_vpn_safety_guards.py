@@ -95,7 +95,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_node_smoke_publish_mode_is_initialized(self):
         text = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
         self.assertIn('MODE="${2:-}"', text)
-        self.assertIn('[[ -z "$MODE" || "$MODE" == "--publish" ]]', text)
+        self.assertIn('"--hot-add"', text)
 
     def test_subscription_probe_joins_key_before_subscription(self):
         text = (ROOT / "app" / "subscription_probe_targets.py").read_text(encoding="utf-8")
@@ -275,6 +275,19 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/4]')]
         self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
 
+    def test_paid_provisioning_has_no_per-user_xray_restart(self):
+        source = inspect.getsource(vpn_key.create_vpn_key)
+        self.assertIn("restart_core=False", source)
+
+    def test_node_admission_requires_fresh_user_hot_add_without_restart(self):
+        updater = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
+        helper = (ROOT / "app" / "node_smoke_user.py").read_text(encoding="utf-8")
+        self.assertIn('smoke_vpn_node.sh "$SERVER_ID" --hot-add', updater)
+        self.assertIn('smoke_vpn_node.sh "$server_id" --hot-add', gate)
+        self.assertIn("create-live", helper)
+        self.assertIn("restart_core=(action == \"create\")", helper)
+
     def test_synthetic_smoke_user_is_persistent_and_read_only_after_first_create(self):
         smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
         helper = (ROOT / "app" / "node_smoke_user.py").read_text(encoding="utf-8")
@@ -327,7 +340,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_production_update_never_skips_runtime_vpn_e2e(self):
         text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
         discovery = text.index("=== DISCOVER REGISTERED MARZBAN NODES ===")
-        e2e = text.index("Disposable-user real HTTPS tunnel", discovery)
+        e2e = text.index("Fresh-user hot-add E2E WITHOUT Xray restart", discovery)
         success = text.rindex("PRODUCTION UPDATE PASS")
         early = text[:discovery]
         self.assertNotIn('echo "PRODUCTION UPDATE PASS"', early)
