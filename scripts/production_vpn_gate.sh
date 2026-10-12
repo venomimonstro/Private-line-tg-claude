@@ -63,26 +63,31 @@ docker compose exec -T admin python -m app.stabilize_vpn_fleet --apply
 CURRENT_STEP="6/11 data integrity"; echo "=== 6/11 Central data invariants ==="
 docker compose exec -T admin python -m app.audit_data_integrity
 
-CURRENT_STEP="7/11 disposable-user end-to-end"; echo "=== 7/11 Disposable-user lifecycle on every dedicated VPN node ==="
+CURRENT_STEP="7/11 fresh-user and synthetic end-to-end"; echo "=== 7/11 Zero-restart hot-add + synthetic E2E on every VPN node ==="
 NODE_RAW="$(docker compose exec -T admin python -m app.production_probe_targets)"     || fail "No dedicated VPN nodes"
 mapfile -t NODE_IDS <<<"$NODE_RAW"
 [[ "${#NODE_IDS[@]}" -gt 0 ]] || fail "No VPN node IDs returned"
 for server_id in "${NODE_IDS[@]}"; do
     [[ "$server_id" =~ ^[1-9][0-9]*$ ]] || fail "Invalid node ID from database"
-    echo "--- disposable smoke: server $server_id ---"
+    echo "--- fresh-user hot-add smoke: server $server_id ---"
+    if ! bash scripts/smoke_vpn_node.sh "$server_id" --hot-add; then
+        docker compose exec -T admin python -m app.node_probe_state \
+            --server "$server_id" --failure \
+            --reason "production gate fresh user did not hot-add into live Xray" \
+            >/dev/null 2>&1 || true
+        fail "Zero-restart fresh-user tunnel failed on server $server_id"
+    fi
+    echo "--- persistent synthetic smoke: server $server_id ---"
     if ! bash scripts/smoke_vpn_node.sh "$server_id"; then
         docker compose exec -T admin python -m app.node_probe_state \
             --server "$server_id" --failure \
-            --reason "production gate disposable VLESS Reality HTTPS probe failed" \
+            --reason "production gate synthetic VLESS Reality HTTPS probe failed" \
             >/dev/null 2>&1 || true
-        fail "Disposable tunnel failed on server $server_id"
+        fail "Synthetic tunnel failed on server $server_id"
     fi
-    # A node with no paid key still needs a deterministic publication path.
-    # If a paid-key probe exists later in this gate it can quarantine the same
-    # node again on failure; disposable success is the minimum admission proof.
     docker compose exec -T admin python -m app.node_probe_state \
         --server "$server_id" --success \
-        || fail "Could not publish node $server_id after disposable E2E success"
+        || fail "Could not publish node $server_id after zero-restart E2E success"
 done
 
 CURRENT_STEP="8/11 node integrity"; echo "=== 8/11 Deep read-only node audit after publication ==="
