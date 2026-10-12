@@ -379,7 +379,10 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
         self.assertIn("xray.operations.add_user(dbuser=dbuser)", runtime)
         self.assertIn("xray.operations.update_user(dbuser=dbuser)", runtime)
-        self.assertIn("xray.operations.remove_user(dbuser=dbuser)", runtime)
+        self.assertGreaterEqual(
+            runtime.count("xray.operations.remove_user(dbuser=dbuser)"), 2
+        )
+        self.assertIn("deletion is acknowledged only after live Xray accepted hot-remove", runtime)
         self.assertIn("delays = (0.10, 0.35, 0.80)", runtime)
         self.assertIn("timeout=3", runtime)
         self.assertNotIn("timeout=30", runtime)
