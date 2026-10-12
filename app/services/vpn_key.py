@@ -139,6 +139,20 @@ async def create_vpn_key(
     ):
         raise ValueError("VPN server is not production-selectable")
 
+    # Admission proof must be recent. A stale ACTIVE flag is not enough when
+    # the synthetic watchdog stopped or Marzban's HandlerService degraded.
+    now = datetime.utcnow()
+    if (
+        server.last_e2e_success_at is None
+        or server.last_e2e_success_at < now - timedelta(minutes=10)
+    ):
+        raise ValueError("VPN node real E2E health proof is stale")
+    if (
+        server.last_hot_add_success_at is None
+        or server.last_hot_add_success_at < now - timedelta(minutes=45)
+    ):
+        raise ValueError("VPN node fresh-user hot-add proof is stale")
+
     actual_users = await session.scalar(
         select(func.count(VpnKey.id)).where(
             VpnKey.server_id == server.id,
