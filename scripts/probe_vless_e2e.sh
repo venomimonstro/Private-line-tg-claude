@@ -19,8 +19,19 @@ fi
 cd "$(dirname "$0")/.."
 
 XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2}"
-SOCKS_PORT=19580
-PROBE_NAME="private-line-vless-probe-$$"
+SOCKS_PORT="$(python3 - <<'PY'
+import socket
+s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+[[ "$SOCKS_PORT" =~ ^[1-9][0-9]{3,4}$ ]] || {
+    echo "FAIL: could not allocate local paid-probe SOCKS port" >&2
+    exit 2
+}
+PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-$"
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
 CONFIG="$WORKDIR/xray-client.json"
 
@@ -52,6 +63,10 @@ echo "[2/5] Preparing confidential Xray config for subscription $SUB_ID..."
 if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
     --subscription "$SUB_ID" "${SERVER_ARGS[@]}" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
     echo "No active VLESS key found under subscription $SUB_ID." >&2
+    if [[ -n "$SERVER_ID" ]]; then
+        echo "ERROR: server-scoped acceptance is non-interactive and requires an existing key." >&2
+        exit 2
+    fi
     if [[ ! -e /dev/tty ]]; then
         echo "ERROR: no interactive terminal; use --stdin-url directly." >&2
         exit 2
