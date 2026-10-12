@@ -17,6 +17,23 @@ MAX_BASE_SIZE = 250 * 1024 * 1024
 STREAM_CHUNK = 1024 * 1024
 
 
+def _has_bootstrap_overlay(tail: bytes) -> bool:
+    """Distinguish a real appended JSON overlay from a PE string constant."""
+    offset = tail.rfind(MARKER)
+    if offset < 0:
+        return False
+    try:
+        data = json.loads(tail[offset + len(MARKER):].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return False
+    return (
+        isinstance(data, dict)
+        and all(isinstance(data.get(k), str) for k in (
+            "api_base", "pair_code", "tls_pin"
+        ))
+    )
+
+
 def _validate_base_installer() -> int:
     if not BASE_INSTALLER.is_file():
         raise FileNotFoundError("Native Windows installer has not been built")
@@ -28,7 +45,7 @@ def _validate_base_installer() -> int:
             raise ValueError("Invalid native Windows installer artifact")
         tail_len = min(size, 64 * 1024)
         fh.seek(size - tail_len)
-        if MARKER in fh.read(tail_len):
+        if _has_bootstrap_overlay(fh.read(tail_len)):
             raise ValueError("Base installer unexpectedly contains personalization overlay")
     return size
 
@@ -82,7 +99,7 @@ def open_personal_windows_exe(*, overlay: bytes, chunk_size: int = STREAM_CHUNK)
         if fh.read(2) != b"MZ":
             raise ValueError("Invalid native Windows installer artifact")
         fh.seek(max(0, size - 64 * 1024))
-        if MARKER in fh.read():
+        if _has_bootstrap_overlay(fh.read()):
             raise ValueError("Base installer unexpectedly contains personalization overlay")
         fh.seek(0)
     except Exception:
