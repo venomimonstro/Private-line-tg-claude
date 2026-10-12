@@ -94,7 +94,11 @@ async def ensure_subscription_vpn_key(
             )
 
     available = await _get_available_servers(session)
-    desired_keys = min(max(1, int(tariff.max_keys or 1)), len(available))
+    candidate_server_ids = verified_server_ids | {server.id for server in available}
+    desired_keys = min(
+        max(1, int(tariff.max_keys or 1)),
+        max(1, len(candidate_server_ids)),
+    )
     # Fill missing redundant keys without rotating or removing any valid
     # credential. Each backup is created on a different healthy node.
     for server in available:
