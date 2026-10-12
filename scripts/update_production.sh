@@ -263,15 +263,19 @@ EOF
         unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
     fi
 
-    echo "[2/4] Reconcile Marzban DB/runtime/host metadata"
+    echo "[2/5] Reconcile Marzban DB/runtime/host metadata"
     docker compose exec -T admin python -m app.stabilize_vless --node "$NODE_HOST" \
         || { quarantine_node "$SERVER_ID" "Marzban/runtime reconciliation failed"; fail "reconciliation failed for node $SERVER_ID"; }
 
-    echo "[3/4] Disposable-user real HTTPS tunnel"
-    bash scripts/smoke_vpn_node.sh "$SERVER_ID" \
-        || { quarantine_node "$SERVER_ID" "disposable VLESS Reality HTTPS probe failed"; fail "disposable E2E smoke failed for node $SERVER_ID"; }
+    echo "[3/5] Fresh-user hot-add E2E WITHOUT Xray restart"
+    bash scripts/smoke_vpn_node.sh "$SERVER_ID" --hot-add \
+        || { quarantine_node "$SERVER_ID" "fresh Marzban user did not hot-add into live Xray"; fail "zero-restart user provisioning failed for node $SERVER_ID"; }
 
-    echo "[4/4] Existing paid-key E2E when available"
+    echo "[4/5] Persistent synthetic real HTTPS tunnel"
+    bash scripts/smoke_vpn_node.sh "$SERVER_ID" \
+        || { quarantine_node "$SERVER_ID" "synthetic VLESS Reality HTTPS probe failed"; fail "synthetic E2E smoke failed for node $SERVER_ID"; }
+
+    echo "[5/5] Existing paid-key E2E when available"
     set +e
     SUB_ID="$(docker compose exec -T admin python -m app.stabilize_vless \
         --node "$NODE_HOST" --probe-subscription 2>/dev/null | tr -d '\r' | tail -n 1)"
