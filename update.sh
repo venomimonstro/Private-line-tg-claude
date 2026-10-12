@@ -33,6 +33,7 @@ fi
 
 for script in \
     scripts/update_production.sh \
+    scripts/converge_vpn_node.sh \
     scripts/update_node_xray.sh \
     scripts/migrate_reality_target.sh \
     scripts/inspect_node_vless.sh \
