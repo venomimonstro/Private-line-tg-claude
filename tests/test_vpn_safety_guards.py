@@ -552,7 +552,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         access = (ROOT / "bot" / "handlers" / "access.py").read_text(encoding="utf-8")
         token = (ROOT / "app" / "services" / "sub_token.py").read_text(encoding="utf-8")
         self.assertIn("make_subscription_url", notify)
-        self.assertIn("subscription_url = """, notify)
+        self.assertIn('subscription_url = ""', notify)
         self.assertIn("get_client_access_url", notify)
         self.assertIn("make_subscription_url", access)
         self.assertIn("subscription_block", access)
