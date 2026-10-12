@@ -342,6 +342,16 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn('PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-${RUN_ID}"', paid)
         self.assertIn("server-scoped acceptance is non-interactive", paid)
 
+    def test_paid_provisioning_requires_recent_one_minute_watchdog_proof(self):
+        key_service = (ROOT / "app" / "services" / "vpn_key.py").read_text(encoding="utf-8")
+        subscriptions = (ROOT / "app" / "services" / "subscription.py").read_text(encoding="utf-8")
+        promote = (ROOT / "app" / "promote_vpn_node.py").read_text(encoding="utf-8")
+        timer = (ROOT / "scripts" / "install_vpn_health_timer.sh").read_text(encoding="utf-8")
+        self.assertIn("timedelta(minutes=3)", key_service)
+        self.assertIn("timedelta(minutes=3)", subscriptions)
+        self.assertIn("timedelta(minutes=3)", promote)
+        self.assertIn("OnUnitActiveSec=1min", timer)
+
     def test_vpn_health_watch_is_real_e2e_and_non_mutating_after_probe_exists(self):
         watch = (ROOT / "scripts" / "vpn_health_watch.sh").read_text(encoding="utf-8")
         timer = (ROOT / "scripts" / "install_vpn_health_timer.sh").read_text(encoding="utf-8")
@@ -349,7 +359,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("app.node_probe_state", watch)
         self.assertNotIn("stabilize_vpn_fleet", watch)
         self.assertNotIn("restart_core", watch)
-        self.assertIn("OnUnitActiveSec=5min", timer)
+        self.assertIn("OnUnitActiveSec=1min", timer)
 
     def test_runtime_pins_marzban_and_xray_and_patches_silent_hot_add_failure(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
