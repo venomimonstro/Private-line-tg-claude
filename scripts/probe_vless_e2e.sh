@@ -31,7 +31,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/4] Checking local temporary SOCKS port..."
+echo "[1/5] Checking local temporary SOCKS port..."
 if ! python3 - "$SOCKS_PORT" <<'PY'
 import socket, sys
 port=int(sys.argv[1])
@@ -48,7 +48,7 @@ then
     exit 1
 fi
 
-echo "[2/4] Preparing confidential Xray config for subscription $SUB_ID..."
+echo "[2/5] Preparing confidential Xray config for subscription $SUB_ID..."
 if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
     --subscription "$SUB_ID" "${SERVER_ARGS[@]}" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
     echo "No active VLESS key found under subscription $SUB_ID." >&2
@@ -71,7 +71,29 @@ if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
 fi
 python3 -m json.tool "$CONFIG" >/dev/null
 
-echo "[3/4] Starting ephemeral Xray client ($XRAY_IMAGE)..."
+echo "[3/5] Checking public VPN endpoint TCP reachability..."
+if ! python3 - "$CONFIG" <<'PY'
+import json, socket, sys
+cfg=json.load(open(sys.argv[1]))
+remote=cfg["outbounds"][0]["settings"]["vnext"][0]
+host=str(remote["address"])
+port=int(remote["port"])
+try:
+    with socket.create_connection((host, port), timeout=7):
+        pass
+except OSError as exc:
+    print(
+        f"FAIL: public VPN endpoint {host}:{port} is unreachable "
+        f"({type(exc).__name__}); the VLESS key cannot work from this vantage point."
+    )
+    raise SystemExit(1)
+print(f"PASS: public VPN endpoint {host}:{port} accepts TCP")
+PY
+then
+    exit 1
+fi
+
+echo "[4/5] Starting ephemeral Xray client ($XRAY_IMAGE)..."
 if ! docker run -d \
     --name "$PROBE_NAME" \
     --network host \
@@ -100,7 +122,7 @@ if [[ "$READY" != true ]]; then
     exit 1
 fi
 
-echo "[4/4] Testing multiple destinations through the SAME VLESS tunnel..."
+echo "[5/5] Testing multiple destinations through the SAME VLESS tunnel..."
 # A single HTTP endpoint can be blocked or unavailable even when the VPN works.
 # HTTPS + HTTP and IP + domain tests isolate egress / TLS / resolver failures.
 SUCCESS=0
@@ -141,7 +163,8 @@ if (( SUCCESS >= 3 )); then
     echo "PASS: tunnel has functional internet egress on multiple destinations."
     exit 0
 fi
-echo "FAIL: insufficient internet egress through tunnel; inspect node DNS, outbound routing and firewall."
+echo "FAIL: endpoint TCP was reachable but the VLESS/REALITY tunnel did not provide sufficient internet egress."
+echo "Inspect REALITY target/SNI, UUID+flow assignment, live Xray DB-user state, node DNS/outbound routing."
 echo "Temporary Xray client logs:"
 docker logs --tail 25 "$PROBE_NAME" 2>&1 | \
     sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[UUID]/g'
