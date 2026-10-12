@@ -32,16 +32,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/5] Creating disposable Marzban user on node $SERVER_ID..."
+echo "[1/6] Creating disposable Marzban user on node $SERVER_ID..."
 CREATED=1
 docker compose exec -T admin python -m app.node_smoke_user create     --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
 
-echo "[2/5] Validating exact client share URI..."
+echo "[2/6] Validating exact client share URI..."
 docker compose exec -T admin python -m app.vless_e2e_probe_config     --stdin-url --socks-port "$PORT" < "$WORK/profile.txt" > "$WORK/client.json"
 python3 -m json.tool "$WORK/client.json" >/dev/null
 
+echo "[3/6] Checking public VPN endpoint TCP reachability from control plane..."
+if ! python3 - "$WORK/client.json" <<'PY'
+import json, socket, sys
+cfg=json.load(open(sys.argv[1]))
+remote=cfg["outbounds"][0]["settings"]["vnext"][0]
+host=str(remote["address"])
+port=int(remote["port"])
+try:
+    with socket.create_connection((host, port), timeout=7):
+        pass
+except OSError as exc:
+    print(
+        f"FAIL: public VPN endpoint {host}:{port} is unreachable from control plane "
+        f"({type(exc).__name__}). Check provider firewall/security-group, UFW and routing."
+    )
+    raise SystemExit(1)
+print(f"PASS: public VPN endpoint {host}:{port} accepts TCP")
+PY
+then
+    exit 1
+fi
+
 XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2}"
-echo "[3/5] Starting clean Xray compatibility client ($XRAY_IMAGE)..."
+echo "[4/6] Starting clean Xray compatibility client ($XRAY_IMAGE)..."
 docker run -d --name "$CONTAINER" --network host --user 0:0 --read-only     --cap-drop ALL --security-opt no-new-privileges     -v "$WORK/client.json:/tmp/client.json:ro"     "$XRAY_IMAGE" run -c /tmp/client.json >/dev/null
 
 READY=0
@@ -64,11 +86,15 @@ done
     exit 2
 }
 
-echo "[4/5] Requesting HTTPS through disposable VLESS Reality credentials..."
+echo "[5/6] Requesting HTTPS through disposable VLESS Reality credentials..."
 curl -q -4 -fsS --noproxy ''     --proxy "socks5h://127.0.0.1:$PORT"     --connect-timeout 8 --max-time 20     https://api.ipify.org -o "$WORK/egress.txt" 2>"$WORK/curl.log" || {
-        echo "FAIL: VLESS Reality egress failed"
+        echo "FAIL: TCP endpoint is reachable but VLESS Reality HTTPS egress failed."
+        echo "This isolates the failure to REALITY/VLESS credentials, target/SNI, live Xray user state, or node outbound routing."
         tail -n 5 "$WORK/curl.log"
-        docker logs --tail 25 "$CONTAINER" 2>&1
+        docker logs --tail 40 "$CONTAINER" 2>&1 | \
+            sed -E \
+              -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g' \
+              -e 's/[A-Za-z0-9_-]{43,100}/[REDACTED_LONG_STRING]/g'
         exit 1
     }
 python3 - "$WORK/egress.txt" <<'PY'
@@ -79,7 +105,7 @@ assert ip.is_global
 print("PASS: disposable user VPN egress IPv4:", ip)
 PY
 
-echo "[5/5] Deleting disposable Marzban user and verifying 404..."
+echo "[6/6] Deleting disposable Marzban user and verifying 404..."
 docker compose exec -T admin python -m app.node_smoke_user delete     --server "$SERVER_ID" --name "$NAME"
 CREATED=0
 echo "PASS: dedicated VPN node lifecycle works end-to-end"
