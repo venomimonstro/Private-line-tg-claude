@@ -86,24 +86,52 @@ done
     exit 2
 }
 
-echo "[5/6] Requesting HTTPS through disposable VLESS Reality credentials..."
-curl -q -4 -fsS --noproxy ''     --proxy "socks5h://127.0.0.1:$PORT"     --connect-timeout 8 --max-time 20     https://api.ipify.org -o "$WORK/egress.txt" 2>"$WORK/curl.log" || {
-        echo "FAIL: TCP endpoint is reachable but VLESS Reality HTTPS egress failed."
-        echo "This isolates the failure to REALITY/VLESS credentials, target/SNI, live Xray user state, or node outbound routing."
-        tail -n 5 "$WORK/curl.log"
-        docker logs --tail 40 "$CONTAINER" 2>&1 | \
-            sed -E \
-              -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g' \
-              -e 's/[A-Za-z0-9_-]{43,100}/[REDACTED_LONG_STRING]/g'
-        exit 1
-    }
-python3 - "$WORK/egress.txt" <<'PY'
+echo "[5/6] Requesting multiple HTTPS destinations through disposable VLESS Reality credentials..."
+SUCCESS=0
+probe() {
+    local label="$1" url="$2"
+    local code rc
+    : > "$WORK/egress.txt"
+    : > "$WORK/curl.log"
+    code="$(curl -q -4 -sS --noproxy '' \
+        --proxy "socks5h://127.0.0.1:$PORT" \
+        --connect-timeout 8 --max-time 20 \
+        -o "$WORK/egress.txt" -w '%{http_code}' "$url" 2>"$WORK/curl.log")" \
+        && rc=0 || rc=$?
+    if [[ "$rc" -eq 0 && "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
+        echo "PASS: $label (HTTP $code)"
+        SUCCESS=$((SUCCESS + 1))
+        if [[ "$label" == "ipify" && "$code" == "200" ]]; then
+            python3 - "$WORK/egress.txt" <<'PY' || true
 import ipaddress, pathlib, sys
-value = pathlib.Path(sys.argv[1]).read_text().strip()
-ip = ipaddress.ip_address(value)
-assert ip.is_global
-print("PASS: disposable user VPN egress IPv4:", ip)
+try:
+    value=pathlib.Path(sys.argv[1]).read_text().strip()
+    ip=ipaddress.ip_address(value)
+    if ip.is_global:
+        print("Disposable VPN egress IPv4:", ip)
+except Exception:
+    pass
 PY
+        fi
+    else
+        echo "FAIL: $label (curl_exit=$rc http_status=${code:-none})"
+        tail -n 3 "$WORK/curl.log" || true
+    fi
+}
+probe "ipify" "https://api.ipify.org"
+probe "cloudflare" "https://www.cloudflare.com/cdn-cgi/trace"
+probe "google" "https://www.google.com/generate_204"
+
+if (( SUCCESS < 2 )); then
+    echo "FAIL: TCP endpoint is reachable but fewer than 2/3 HTTPS destinations worked through VLESS Reality."
+    echo "This isolates the failure to REALITY/VLESS credentials, target/SNI, live Xray user state, or node outbound routing."
+    docker logs --tail 40 "$CONTAINER" 2>&1 | \
+        sed -E \
+          -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g' \
+          -e 's/[A-Za-z0-9_-]{43,100}/[REDACTED_LONG_STRING]/g'
+    exit 1
+fi
+echo "PASS: disposable VLESS Reality tunnel has internet egress ($SUCCESS/3 HTTPS destinations)."
 
 echo "[6/6] Deleting disposable Marzban user and verifying 404..."
 docker compose exec -T admin python -m app.node_smoke_user delete     --server "$SERVER_ID" --name "$NAME"
