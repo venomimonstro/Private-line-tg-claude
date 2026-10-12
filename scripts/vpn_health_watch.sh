@@ -81,8 +81,13 @@ fi
     if [[ "$NEED_HOT_ADD" -eq 1 ]]; then
         echo "Checking fresh-user zero-restart provisioning capability..."
         if bash scripts/smoke_vpn_node.sh "$SERVER_ID" --hot-add; then
-            printf '%s\n' "$NOW" > "$HOT_FILE"
-            chmod 600 "$HOT_FILE"
+            if docker compose exec -T admin python -m app.node_probe_state \
+                --server "$SERVER_ID" --hot-add-success >/dev/null; then
+                printf '%s\n' "$NOW" > "$HOT_FILE"
+                chmod 600 "$HOT_FILE"
+            else
+                NODE_OK=0
+            fi
         else
             NODE_OK=0
         fi
