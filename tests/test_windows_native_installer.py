@@ -63,7 +63,8 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         root = Path("/app")
         installer = (root / "windows_native/PrivateLine.Installer/Program.cs").read_text(encoding="utf-8")
         route = (root / "admin/routes/windows_diagnostics.py").read_text(encoding="utf-8")
-        self.assertIn("PrivateLineSetupV2", installer)
+        self.assertIn('Path.Combine(dir,"install.lock")', installer)
+        self.assertIn("FileShare.None", installer)
         self.assertIn("PrivateLineClientV2", installer)
         self.assertIn("CLIENT_RUNNING_CLOSE_FIRST", installer)
         self.assertIn("InstallEmbeddedXrayAsync", installer)
@@ -73,6 +74,7 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         self.assertNotIn("/api/windows/profile", pair_block)
         self.assertIn("iter_personal_windows_exe", route)
         self.assertIn("Content-Length", route)
+        self.assertIn('"X-Accel-Buffering": "no"', route)
         self.assertNotIn("BytesIO(payload)", route)
 
     def test_native_client_recovers_proxy_and_uses_local_failover(self):
@@ -86,6 +88,8 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         self.assertIn("RecoverStaleProxy", client)
         self.assertIn("CleanupOrphanXray", client)
         self.assertIn("ProxyState", client)
+        self.assertIn("tunnelWatchdog", client)
+        self.assertIn("Task.WhenAll", client)
         self.assertIn("success<2", client.replace(" ", ""))
         self.assertIn("diagnostics.Checked=false", client.replace(" ", ""))
         self.assertNotIn("_ = FlushPendingAsync()", client)
@@ -98,6 +102,20 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         self.assertIn("windows_cache", build)
         self.assertIn("dotnet build", build)
         self.assertIn("dotnet publish", build)
+        self.assertIn("PrivateLineSetup.exe.new", build)
+        self.assertIn('mv -f "$OUT/PrivateLineSetup.exe.new"', build)
+
+
+    def test_windows_profile_returns_healthy_failover_set(self):
+        root = Path("/app")
+        enrollment = (root / "app/windows_enrollment.py").read_text(encoding="utf-8")
+        route = (root / "admin/routes/windows_diagnostics.py").read_text(encoding="utf-8")
+        self.assertIn("async def active_user_links", enrollment)
+        self.assertIn("VpnServer.status == VpnServerStatus.active", enrollment)
+        self.assertIn("VpnServer.is_selectable.is_(True)", enrollment)
+        self.assertIn("last_e2e_success_at >= fresh_after", enrollment)
+        self.assertIn('"vless_urls": urls', route)
+        self.assertIn('"vless_url": urls[0]', route)
 
     def test_native_sources_do_not_require_manual_credentials(self):
         root = Path("/app/windows_native")
