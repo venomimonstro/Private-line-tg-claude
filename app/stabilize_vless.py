@@ -52,7 +52,6 @@ async def run(node: str, probe_only: bool = False) -> int:
                     Subscription.expires_at > datetime.utcnow(),
                 )
                 .order_by(Subscription.id.desc(), VpnKey.id.desc())
-                .limit(25)
             )).all()
             if not candidates:
                 print("FAIL: no active subscription key on this node")
