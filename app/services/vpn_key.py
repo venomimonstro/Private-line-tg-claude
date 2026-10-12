@@ -184,7 +184,7 @@ async def create_vpn_key(
     now = datetime.utcnow()
     if (
         server.last_e2e_success_at is None
-        or server.last_e2e_success_at < now - timedelta(minutes=10)
+        or server.last_e2e_success_at < now - timedelta(minutes=3)
     ):
         raise ValueError("VPN node real E2E health proof is stale")
     if (
