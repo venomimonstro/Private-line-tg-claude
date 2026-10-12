@@ -95,8 +95,7 @@ else
         NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/update_node_xray.sh             scripts/migrate_reality_target.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
         if [[ -n "$NODE_CHANGED_FILES" ]]; then
             echo "Node/VPN changes since last successful node rollout:"
-            printf '%s
-' "$NODE_CHANGED_FILES" | sed 's/^/  - /'
+            printf '%s\\n' "$NODE_CHANGED_FILES" | sed 's/^/  - /'
             NODE_UPDATE=true
         fi
     fi
@@ -148,8 +147,7 @@ PY
 )" || fail "could not discover a registered Marzban node"
 
 [[ -n "$NODE_ROWS" ]] || fail "no Marzban nodes returned"
-printf '%s
-' "$NODE_ROWS" | sed 's/^/  /'
+printf '%s\\n' "$NODE_ROWS" | sed 's/^/  /'
 
 REMOTE_ARCHIVE=""
 CRED_ROOT="$(mktemp -d)"
@@ -294,8 +292,7 @@ EOF
     echo "PASS: node $SERVER_ID ($NODE_HOST)"
 done <<< "$NODE_ROWS"
 
-printf '%s
-' "$HEAD" > "$STATE_FILE"
+printf '%s\\n' "$HEAD" > "$STATE_FILE"
 chmod 600 "$STATE_FILE"
 
 echo
