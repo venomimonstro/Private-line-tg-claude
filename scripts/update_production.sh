@@ -92,7 +92,7 @@ else
         echo "Previous node revision is unavailable locally; convergence required."
         NODE_UPDATE=true
     elif [[ "$NODE_STATE" != "$HEAD" ]]; then
-        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/update_node_xray.sh             scripts/migrate_reality_target.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
+        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/converge_vpn_node.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
         if [[ -n "$NODE_CHANGED_FILES" ]]; then
             echo "Node/VPN changes since last successful node rollout:"
             printf '%s\\n' "$NODE_CHANGED_FILES" | sed 's/^/  - /'
@@ -157,8 +157,7 @@ trap '[[ -n "$REMOTE_ARCHIVE" ]] && rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"
 if [[ "$NODE_UPDATE" == true ]]; then
     REMOTE_ARCHIVE="$(mktemp)"
     tar -czf "$REMOTE_ARCHIVE" \
-        scripts/update_node_xray.sh \
-        scripts/migrate_reality_target.sh \
+        scripts/converge_vpn_node.sh \
         scripts/inspect_node_vless.sh
 fi
 
@@ -221,13 +220,8 @@ for key in ("host","port","username","auth_type","secret_b64"):
              tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
              trap '"'"'rm -rf "$tmp"'"'"' EXIT
              tar -xzf - -C "$tmp"
-             if ! bash "$tmp/scripts/update_node_xray.sh"; then
-                 echo "=== AUTOMATIC NODE DIAGNOSTICS: XRAY UPDATE FAILED ===" >&2
-                 bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
-                 exit 1
-             fi
-             if ! bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com; then
-                 echo "=== AUTOMATIC NODE DIAGNOSTICS: REALITY TARGET FAILED ===" >&2
+             if ! bash "$tmp/scripts/converge_vpn_node.sh"; then
+                 echo "=== AUTOMATIC NODE DIAGNOSTICS: GOLDEN CONVERGENCE FAILED ===" >&2
                  bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
                  exit 1
              fi
