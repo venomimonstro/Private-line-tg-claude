@@ -291,10 +291,18 @@ class MarzbanClient:
             return None
 
         try:
-            for inbound in config.get("inbounds", []):
+            reality_inbounds = [
+                inbound for inbound in config.get("inbounds", [])
+                if inbound.get("protocol") == "vless"
+                and inbound.get("streamSettings", {}).get("security") == "reality"
+            ]
+            if len(reality_inbounds) != 1:
+                raise MarzbanConfigError(
+                    f"Expected exactly one VLESS Reality inbound, found {len(reality_inbounds)}"
+                )
+
+            for inbound in reality_inbounds:
                 stream = inbound.get("streamSettings", {})
-                if stream.get("security") != "reality":
-                    continue
                 reality = stream.get("realitySettings", {})
                 priv_b64 = reality.get("privateKey", "")
                 short_ids = reality.get("shortIds", [])
