@@ -21,8 +21,8 @@ cd /opt/marzban
 CONFIG=/var/lib/marzban/xray_config.json
 [[ -s "$CONFIG" ]] || { echo "FAIL: $CONFIG is missing" >&2; exit 2; }
 
-MARZBAN_IMAGE="$(docker compose config --images 2>/dev/null | head -n1)"
-[[ -n "$MARZBAN_IMAGE" ]] || { echo "FAIL: cannot determine Marzban Docker image" >&2; exit 2; }
+CURRENT_MARZBAN_IMAGE="$(docker compose config --images 2>/dev/null | head -n1)"
+[[ -n "$CURRENT_MARZBAN_IMAGE" ]] || { echo "FAIL: cannot determine current Marzban Docker image" >&2; exit 2; }
 case "$(uname -m)" in
     x86_64)
         EXPECTED_MARZBAN="ghcr.io/gozargah/marzban:v0.8.4@sha256:953700b0b91b35dcd5165072fc7029fc3c5bd6ed10d644f80d7cb9a84a9a27f1"
@@ -35,11 +35,7 @@ case "$(uname -m)" in
         exit 2
         ;;
 esac
-[[ "$MARZBAN_IMAGE" == "$EXPECTED_MARZBAN" ]] || {
-    echo "FAIL: Marzban image is not the tested digest-pinned v0.8.4 runtime" >&2
-    echo "Current image: $MARZBAN_IMAGE" >&2
-    exit 2
-}
+MARZBAN_IMAGE="$EXPECTED_MARZBAN"
 
 XRAY_VERSION=26.6.27
 CORE="/var/lib/marzban/xray-core/$XRAY_VERSION/xray"
@@ -90,8 +86,12 @@ grep -q 'ALPN protocol: h2' "$TLS_LOG" || {
 rm -f "$TLS_LOG"
 trap - EXIT
 
-echo "[2/7] Prepare pinned Xray $XRAY_VERSION + synchronous Marzban/Xray mutations"
+echo "[2/7] Prepare pinned Marzban + Xray $XRAY_VERSION + synchronous mutations"
 RUNTIME_CHANGED=0
+if [[ "$CURRENT_MARZBAN_IMAGE" != "$EXPECTED_MARZBAN" ]]; then
+    echo "Legacy/unpinned Marzban image detected; converging via compose override."
+    RUNTIME_CHANGED=1
+fi
 if ! docker compose ps --status running -q marzban | grep -q .; then
     RUNTIME_CHANGED=1
 else
