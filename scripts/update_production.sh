@@ -270,6 +270,9 @@ EOF
     echo "[3/5] Fresh-user hot-add E2E WITHOUT Xray restart"
     bash scripts/smoke_vpn_node.sh "$SERVER_ID" --hot-add \
         || { quarantine_node "$SERVER_ID" "fresh Marzban user did not hot-add into live Xray"; fail "zero-restart user provisioning failed for node $SERVER_ID"; }
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$SERVER_ID" --hot-add-success \
+        || fail "could not persist hot-add health proof for node $SERVER_ID"
 
     echo "[4/5] Persistent synthetic real HTTPS tunnel"
     bash scripts/smoke_vpn_node.sh "$SERVER_ID" \
