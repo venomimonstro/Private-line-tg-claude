@@ -26,7 +26,7 @@ else
     NAME="plprobe_s${SERVER_ID}"
 fi
 PORT=19582
-CONTAINER="private-line-node-smoke-$"
+CONTAINER="private-line-node-smoke-${SERVER_ID}-$"
 
 cleanup() {
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -183,11 +183,19 @@ PY
         exit 2
     }
 
-    if curl -q -4 -fsS --noproxy '' \
-        --proxy "socks5h://127.0.0.1:$PORT" \
-        --connect-timeout 5 --max-time 10 \
-        https://www.google.com/generate_204 -o /dev/null 2>/dev/null; then
-        echo "FAIL: deleted hot-add canary still passes traffic in live Xray." >&2
+    REMOVED=0
+    for _ in $(seq 1 10); do
+        if ! curl -q -4 -fsS --noproxy '' \
+            --proxy "socks5h://127.0.0.1:$PORT" \
+            --connect-timeout 3 --max-time 6 \
+            https://www.google.com/generate_204 -o /dev/null 2>/dev/null; then
+            REMOVED=1
+            break
+        fi
+        sleep 1
+    done
+    if [[ "$REMOVED" != 1 ]]; then
+        echo "FAIL: deleted hot-add canary still passes traffic in live Xray after 10s." >&2
         echo "Marzban DB and Xray HandlerService are out of sync; node cannot be production-selectable." >&2
         exit 1
     fi
