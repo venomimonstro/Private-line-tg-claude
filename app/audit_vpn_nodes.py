@@ -5,6 +5,7 @@ No credentials, UUIDs, or VLESS links are printed and nothing is modified.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
@@ -37,6 +38,21 @@ async def audit() -> int:
             checked += 1
             if not server.is_selectable:
                 print(f"FAIL: node #{server.id} {server.name}: active but not selectable")
+                failed += 1
+                continue
+            now = datetime.utcnow()
+            if (
+                server.last_e2e_success_at is None
+                or server.last_e2e_success_at < now - timedelta(minutes=10)
+            ):
+                print(f"FAIL: node #{server.id} {server.name}: real E2E proof is stale")
+                failed += 1
+                continue
+            if (
+                server.last_hot_add_success_at is None
+                or server.last_hot_add_success_at < now - timedelta(minutes=45)
+            ):
+                print(f"FAIL: node #{server.id} {server.name}: hot-add proof is stale")
                 failed += 1
                 continue
             try:
