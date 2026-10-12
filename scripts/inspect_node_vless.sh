@@ -41,13 +41,14 @@ try:
         r = s.get("realitySettings", {})
         if i.get("protocol") == "vless":
             print(
-                "tag=%r port=%r listen=%r network=%r security=%r dest=%r sni=%r "
-                "shortIds=%s privateKey_present=%s"
+                "tag=%r port=%r listen=%r network=%r security=%r target=%r sni=%r "
+                "shortIds=%s privateKey_present=%s publicKey_present=%s"
                 % (
                     i.get("tag"), i.get("port"), i.get("listen"),
-                    s.get("network"), s.get("security"), r.get("dest"),
+                    s.get("network"), s.get("security"),
+                    r.get("target") or r.get("dest"),
                     r.get("serverNames"), len(r.get("shortIds", [])),
-                    bool(r.get("privateKey")),
+                    bool(r.get("privateKey")), bool(r.get("publicKey")),
                 )
             )
     print("outbounds:", [(x.get("tag"), x.get("protocol")) for x in config.get("outbounds", [])])
