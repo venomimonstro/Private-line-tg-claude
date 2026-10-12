@@ -21,7 +21,6 @@ cd /opt/marzban
 CONFIG=/var/lib/marzban/xray_config.json
 [[ -s "$CONFIG" ]] || { echo "FAIL: $CONFIG is missing" >&2; exit 2; }
 
-CORE="/usr/local/bin/xray"
 MARZBAN_IMAGE="$(docker compose config --images 2>/dev/null | head -n1)"
 [[ -n "$MARZBAN_IMAGE" ]] || { echo "FAIL: cannot determine Marzban Docker image" >&2; exit 2; }
 case "$(uname -m)" in
@@ -41,7 +40,15 @@ esac
     echo "Current image: $MARZBAN_IMAGE" >&2
     exit 2
 }
+
+XRAY_VERSION=26.6.27
+XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
+CORE_DIR="/var/lib/marzban/xray-core/$XRAY_VERSION"
+CORE="$CORE_DIR/xray"
+
 docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 || docker pull "$MARZBAN_IMAGE" >/dev/null
+docker image inspect "$XRAY_IMAGE" >/dev/null 2>&1 || docker pull "$XRAY_IMAGE" >/dev/null
+
 TARGET_HOST="${REALITY_TARGET_HOST:-dl.google.com}"
 TARGET="${TARGET_HOST}:443"
 API_PORT=2096
@@ -84,17 +91,29 @@ grep -q 'ALPN protocol: h2' "$TLS_LOG" || {
 rm -f "$TLS_LOG"
 trap - EXIT
 
-echo "[2/7] Verify Xray bundled with the pinned Marzban image"
-BUNDLED_XRAY_VERSION="$(docker run --rm --entrypoint "$CORE" "$MARZBAN_IMAGE" version 2>/dev/null | head -n1 || true)"
-[[ "$BUNDLED_XRAY_VERSION" == Xray* ]] || {
-    echo "FAIL: bundled Marzban Xray binary is unavailable" >&2
+echo "[2/7] Verify pinned Xray $XRAY_VERSION and live process"
+CORE_CHANGED=0
+RUNTIME_CHANGED=0
+if [[ ! -x "$CORE" ]] || ! "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION"; then
+    tmp_container="$(docker create "$XRAY_IMAGE")"
+    tmp_bin="$(mktemp)"
+    cleanup_core() {
+        docker rm -f "${tmp_container:-}" >/dev/null 2>&1 || true
+        rm -f "${tmp_bin:-}"
+    }
+    trap cleanup_core EXIT
+    docker cp "$tmp_container:/usr/local/bin/xray" "$tmp_bin"
+    mkdir -p "$CORE_DIR"
+    install -m 755 "$tmp_bin" "$CORE"
+    CORE_CHANGED=1
+    cleanup_core
+    trap - EXIT
+fi
+"$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION" || {
+    echo "FAIL: Xray $XRAY_VERSION pin failed" >&2
     exit 2
 }
-echo "Bundled runtime: $BUNDLED_XRAY_VERSION"
 
-RUNTIME_CHANGED=0
-# A prior custom install may still point Marzban at an unrelated Xray. The
-# standard runtime must use the binary packaged inside this exact Marzban image.
 if ! docker compose exec -T marzban python - "$CORE" <<'PY' >/dev/null 2>&1
 import os, pathlib, sys
 expected=sys.argv[1]
@@ -132,7 +151,7 @@ PY
     echo "FAIL: existing REALITY privateKey missing/invalid; refusing rotation" >&2
     exit 2
 }
-XRAY_KEYS="$(docker run --rm --entrypoint "$CORE" "$MARZBAN_IMAGE" x25519 -i "$PRIVATE_KEY" 2>/dev/null || true)"
+XRAY_KEYS="$("$CORE" x25519 -i "$PRIVATE_KEY" 2>/dev/null || true)"
 PUBLIC_KEY="$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ /^(public ?key|password( \(publickey\))?)$/ { print $2; exit }')"
 [[ "$PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43,44}$ ]] || {
     echo "FAIL: bundled Xray could not derive REALITY public key" >&2
@@ -239,11 +258,8 @@ print(f"PASS: canonical inbound tag={tag!r}; credentials preserved")
 PY
 
 # Test the exact candidate before touching production.
-docker run --rm \
-    -v "$CANDIDATE:/tmp/private-line-xray.json:ro" \
-    --entrypoint "$CORE" "$MARZBAN_IMAGE" \
-    run -test -config /tmp/private-line-xray.json </dev/null >/dev/null \
-    || { echo "FAIL: bundled Xray rejected canonical candidate" >&2; exit 2; }
+"$CORE" run -test -config "$CANDIDATE" </dev/null >/dev/null \
+    || { echo "FAIL: Xray $XRAY_VERSION rejected canonical candidate" >&2; exit 2; }
 
 CHANGED=0
 if ! cmp -s "$CONFIG" "$CANDIDATE"; then
@@ -254,7 +270,7 @@ fi
 # Keep Marzban's own core launcher deterministic.
 ENV_CHANGED=0
 grep -qxF "XRAY_JSON=/var/lib/marzban/xray_config.json" .env || ENV_CHANGED=1
-grep -qxF "XRAY_EXECUTABLE_PATH=/usr/local/bin/xray" .env || ENV_CHANGED=1
+grep -qxF "XRAY_EXECUTABLE_PATH=$CORE" .env || ENV_CHANGED=1
 grep -qxF "XRAY_ASSETS_PATH=/usr/local/share/xray" .env || ENV_CHANGED=1
 grep -qxF "UVICORN_HOST=0.0.0.0" .env || ENV_CHANGED=1
 grep -qxF "UVICORN_PORT=$API_PORT" .env || ENV_CHANGED=1
@@ -266,7 +282,7 @@ p=Path("/opt/marzban/.env")
 lines=p.read_text().splitlines()
 updates={
     "XRAY_JSON": "/var/lib/marzban/xray_config.json",
-    "XRAY_EXECUTABLE_PATH": "/usr/local/bin/xray",
+    "XRAY_EXECUTABLE_PATH": "$CORE",
     "XRAY_ASSETS_PATH": "/usr/local/share/xray",
     "UVICORN_HOST": "0.0.0.0",
     "UVICORN_PORT": "$API_PORT",
@@ -319,8 +335,8 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^marzban-proxy.service'; the
 fi
 
 echo "[5/7] Restart only when the canonical runtime changed"
-if [[ "$CHANGED" -eq 1 || "$ENV_CHANGED" -eq 1 || "$RUNTIME_CHANGED" -eq 1 ]]; then
-    echo "Runtime change detected: config=$CHANGED env=$ENV_CHANGED process=$RUNTIME_CHANGED"
+if [[ "$CHANGED" -eq 1 || "$CORE_CHANGED" -eq 1 || "$ENV_CHANGED" -eq 1 || "$RUNTIME_CHANGED" -eq 1 ]]; then
+    echo "Runtime change detected: config=$CHANGED core=$CORE_CHANGED env=$ENV_CHANGED process=$RUNTIME_CHANGED"
     docker compose up -d --no-deps --force-recreate marzban </dev/null
 else
     echo "PASS: canonical Xray runtime already current; no core restart"
@@ -352,17 +368,16 @@ done
     exit 2
 }
 
-echo "[7/7] Verify running bundled core and canonical static config"
+echo "[7/7] Verify running Xray $XRAY_VERSION and canonical static config"
 RUNNING_XRAY_VERSION="$(docker compose exec -T marzban "$CORE" version 2>/dev/null | head -n1 || true)"
-[[ "$RUNNING_XRAY_VERSION" == "$BUNDLED_XRAY_VERSION" ]] || {
-    echo "FAIL: running Xray does not match pinned Marzban image runtime" >&2
-    echo "Bundled=$BUNDLED_XRAY_VERSION running=$RUNNING_XRAY_VERSION" >&2
+[[ "$RUNNING_XRAY_VERSION" == Xray\ $XRAY_VERSION* ]] || {
+    echo "FAIL: running Xray is not $XRAY_VERSION: $RUNNING_XRAY_VERSION" >&2
     exit 2
 }
 docker compose exec -T marzban "$CORE" run -test -config "$CONFIG" </dev/null >/dev/null \
     || { echo "FAIL: live static config no longer validates" >&2; exit 2; }
 
 echo "GOLDEN NODE PASS"
-echo "Runtime: $RUNNING_XRAY_VERSION bundled with digest-pinned Marzban v0.8.4."
+echo "Runtime: $RUNNING_XRAY_VERSION; Marzban v0.8.4 digest-pinned."
 echo "Preserved: Marzban DB, user UUIDs, REALITY privateKey, shortIds, inbound tag."
 echo "Canonical: VLESS/TCP/REALITY/Vision-ready on public TCP/443, target=$TARGET."
