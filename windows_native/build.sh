@@ -9,8 +9,19 @@ CACHE="$ROOT/data/windows_cache"
 WORK="$ROOT/windows_native"
 PAYLOAD="$WORK/PrivateLine.Installer/Payload"
 mkdir -p "$OUT" "$CACHE" "$PAYLOAD"
+# The official dotnet SDK image is intentionally minimal and may not ship
+# unzip/curl. Install only disposable build dependencies inside that one-shot
+# container; nothing is installed on the production host.
+if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends curl unzip ca-certificates coreutils >/dev/null
+    rm -rf /var/lib/apt/lists/*
+  fi
+fi
 for cmd in curl unzip sha256sum dotnet; do
-  command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: missing $cmd" >&2; exit 2; }
+  command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: missing build dependency $cmd" >&2; exit 2; }
 done
 XRAY_VERSION=26.6.27
 BASE="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}"
