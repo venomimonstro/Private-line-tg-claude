@@ -1,4 +1,8 @@
-"""Print verified dedicated Marzban node IDs, one per line, for shell gates."""
+"""Print recoverable dedicated Marzban node IDs for operator acceptance gates.
+
+Quarantined/unreachable nodes are intentionally included so a successful real
+E2E gate can recover them. Explicitly disabled nodes remain excluded.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +19,7 @@ async def main() -> int:
         rows = (await db.execute(
             select(VpnServer)
             .where(
-                VpnServer.status == VpnServerStatus.active,
+                VpnServer.status != VpnServerStatus.disabled,
                 VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc())
