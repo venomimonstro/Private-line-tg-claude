@@ -29,6 +29,12 @@ fail() {
     exit 2
 }
 
+quarantine_node() {
+    local server_id="$1" reason="$2"
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$server_id" --failure --reason "$reason" >/dev/null 2>&1 || true
+}
+
 [[ "$(pwd)" == "/opt/private-line" ]] || {
     echo "WARN: expected /opt/private-line, current path: $(pwd)" >&2
 }
@@ -222,7 +228,7 @@ for key in ("host","port","username","auth_type","secret_b64"):
             cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
                 -o BatchMode=yes -i "$SECRET_FILE" \
                 "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
+                || { quarantine_node "$SERVER_ID" "remote node convergence failed"; fail "remote update failed for node $SERVER_ID ($SSH_HOST)"; }
         elif [[ "$SSH_AUTH" == "password" ]]; then
             ASKPASS="$NODE_CRED_DIR/askpass"
             cat > "$ASKPASS" <<EOF
@@ -241,7 +247,7 @@ EOF
                     -o PreferredAuthentications=password,keyboard-interactive \
                     -o PubkeyAuthentication=no \
                     "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote update failed for node $SERVER_ID ($SSH_HOST)"
+                || { quarantine_node "$SERVER_ID" "remote node convergence failed"; fail "remote update failed for node $SERVER_ID ($SSH_HOST)"; }
         else
             fail "unsupported SSH auth type for node $SERVER_ID"
         fi
@@ -252,22 +258,29 @@ EOF
     fi
 
     echo "[2/4] Reconcile Marzban DB/runtime/host metadata"
-    docker compose exec -T admin         python -m app.stabilize_vless --node "$NODE_HOST"         || fail "reconciliation failed for node $SERVER_ID"
+    docker compose exec -T admin python -m app.stabilize_vless --node "$NODE_HOST" \
+        || { quarantine_node "$SERVER_ID" "Marzban/runtime reconciliation failed"; fail "reconciliation failed for node $SERVER_ID"; }
 
     echo "[3/4] Disposable-user real HTTPS tunnel"
-    bash scripts/smoke_vpn_node.sh "$SERVER_ID" --publish         || fail "disposable E2E smoke failed for node $SERVER_ID"
+    bash scripts/smoke_vpn_node.sh "$SERVER_ID" \
+        || { quarantine_node "$SERVER_ID" "disposable VLESS Reality HTTPS probe failed"; fail "disposable E2E smoke failed for node $SERVER_ID"; }
 
     echo "[4/4] Existing paid-key E2E when available"
     set +e
-    SUB_ID="$(docker compose exec -T admin         python -m app.stabilize_vless         --node "$NODE_HOST"         --probe-subscription 2>/dev/null | tr -d '\r' | tail -n 1)"
+    SUB_ID="$(docker compose exec -T admin python -m app.stabilize_vless \
+        --node "$NODE_HOST" --probe-subscription 2>/dev/null | tr -d '\r' | tail -n 1)"
     SUB_RC=$?
     set -e
     if [[ "$SUB_RC" -eq 0 && "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
-        bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID"             || fail "paid-key E2E failed: subscription $SUB_ID / node $SERVER_ID"
+        bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
+            || { quarantine_node "$SERVER_ID" "paid customer VLESS Reality HTTPS probe failed"; fail "paid-key E2E failed: subscription $SUB_ID / node $SERVER_ID"; }
     else
         echo "No active paid key on node $SERVER_ID; disposable E2E is sufficient."
     fi
 
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$SERVER_ID" --success \
+        || fail "could not publish healthy node $SERVER_ID after successful E2E"
     echo "PASS: node $SERVER_ID ($NODE_HOST)"
 done <<< "$NODE_ROWS"
 
