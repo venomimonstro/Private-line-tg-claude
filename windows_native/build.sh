@@ -29,9 +29,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "[windows 1/4] Verify cached official Xray payload"
-curl -fL --retry 3 --retry-delay 2 \
-  --connect-timeout 15 --max-time 60 \
-  "$XRAY_DGST_URL" -o "$TMP/xray.dgst"
+if [[ -s "$DGST_CACHE" ]]; then
+  cp "$DGST_CACHE" "$TMP/xray.dgst"
+else
+  curl -fL --retry 3 --retry-delay 2 \
+    --connect-timeout 15 --max-time 60 \
+    "$XRAY_DGST_URL" -o "$TMP/xray.dgst"
+fi
 
 EXPECTED_SHA256="$(
   grep -Ei 'sha2-256|sha-256|sha256' "$TMP/xray.dgst" \
