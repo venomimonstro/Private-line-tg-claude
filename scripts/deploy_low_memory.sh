@@ -70,8 +70,12 @@ docker compose config -q
 echo "[2/8] Free RAM, disk and optional monitoring..."
 docker stop private-line-grafana-1 private-line-prometheus-1 private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
 rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
-docker builder prune -af >/dev/null 2>&1 || true
-docker image prune -af >/dev/null 2>&1 || true
+# Keep dependency layers on routine updates. Reclaim build cache only when
+# disk pressure would prevent the deployment; never prune data volumes.
+if (( $(df -Pm . | awk 'NR==2 {print $4}') < 1200 )); then
+  docker builder prune -af >/dev/null 2>&1 || true
+  docker image prune -af >/dev/null 2>&1 || true
+fi
 # Reclaim only bounded, regenerable host caches. Never prune Docker volumes,
 # delete PostgreSQL data, or truncate live Docker container logs.
 if command -v journalctl >/dev/null 2>&1; then

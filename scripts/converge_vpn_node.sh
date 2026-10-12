@@ -39,7 +39,7 @@ MARZBAN_IMAGE="$EXPECTED_MARZBAN"
 
 XRAY_VERSION=26.6.27
 CORE="/var/lib/marzban/xray-core/$XRAY_VERSION/xray"
-PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V2"
+PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V3"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 || docker pull "$MARZBAN_IMAGE" >/dev/null

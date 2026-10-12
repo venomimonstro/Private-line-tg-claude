@@ -379,7 +379,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("marzban:v0.8.4@sha256:", installer)
         self.assertIn("EXPECTED_MARZBAN", golden)
         self.assertIn("XRAY_VERSION=26.6.27", golden)
-        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
+        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V3", runtime)
         self.assertIn("do not return HTTP success before live Xray accepts user", runtime)
         self.assertIn("/code/app/xray/operations.py:ro", runtime)
         self.assertIn("/code/app/routers/user.py:ro", runtime)
@@ -394,7 +394,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
 
     def test_marzban_user_api_waits_for_live_xray_mutation(self):
         runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
-        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
+        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V3", runtime)
         self.assertIn("xray.operations.add_user(dbuser=dbuser)", runtime)
         self.assertIn("xray.operations.update_user(dbuser=dbuser)", runtime)
         self.assertGreaterEqual(

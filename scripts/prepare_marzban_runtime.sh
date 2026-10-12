@@ -22,7 +22,7 @@ OVERRIDE_DIR="$DATA_DIR/overrides"
 OPERATIONS_OVERRIDE="$OVERRIDE_DIR/operations.py"
 USER_ROUTER_OVERRIDE="$OVERRIDE_DIR/user.py"
 COMPOSE_OVERRIDE="$MARZBAN_DIR/docker-compose.override.yml"
-PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V2"
+PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V3"
 
 if [[ -z "${MARZBAN_IMAGE:-}" ]]; then
     case "$(uname -m)" in
@@ -86,13 +86,20 @@ if "from time import sleep" not in src:
     )
 
 def replace_function(text: str, name: str, replacement: str) -> str:
-    start = text.index(f"@threaded_function\ndef {name}(")
-    nxt = text.find("\n\n@threaded_function", start + 1)
-    if nxt < 0:
-        nxt = text.find("\n\ndef ", start + 1)
-    if nxt < 0:
-        raise RuntimeError(f"cannot locate end of {name}")
-    return text[:start] + replacement.rstrip() + text[nxt:]
+    # A function ends at its AST end_lineno, not at the next decorated
+    # function. The old delimiter scan deleted public user operations.
+    nodes = [node for node in ast.parse(text).body
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name == name]
+    if len(nodes) != 1:
+        raise RuntimeError(f"expected exactly one function {name}")
+    node = nodes[0]
+    start = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[:start]) + replacement.rstrip() + "\n" + "".join(lines[node.end_lineno:])
+
+original_names = {node.name for node in ast.parse(src).body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 add = f'''# {marker}
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
@@ -157,12 +164,19 @@ src = replace_function(src, "_alter_inbound_user", alter)
 src = src.replace("not in ('tcp', 'kcp')", "not in ('tcp', 'raw', 'kcp')")
 src = src.replace("in ('tcp', 'kcp')", "in ('tcp', 'raw', 'kcp')")
 
-ast.parse(src, filename="operations.py")
+patched_tree = ast.parse(src, filename="operations.py")
+patched_names = {node.name for node in patched_tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+if original_names != patched_names:
+    raise RuntimeError(f"runtime patch changed module functions: {original_names ^ patched_names}")
+for required in ("add_user", "update_user", "remove_user", "add_node", "remove_node", "connect_node", "restart_node"):
+    if required not in patched_names:
+        raise RuntimeError(f"runtime patch lost required operation: {required}")
+print("PASS: all upstream Marzban operations preserved")
 Path(os.environ["DEST"]).write_text(src)
 PY
 
 python3 -m py_compile "$OPS_PATCHED"
-install -m 600 "$OPS_PATCHED" "$OPERATIONS_OVERRIDE"
 
 echo "[runtime 3/5] Patch critical Marzban user POST/PUT to wait for live Xray"
 USER_SOURCE="$(mktemp)"
@@ -192,7 +206,7 @@ modify_old = '''    if user.status in [UserStatus.active, UserStatus.on_hold]:
     else:
         bg.add_task(xray.operations.remove_user, dbuser=dbuser)
 '''
-modify_new = '''    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V2:
+modify_new = '''    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V3:
     # status/proxy/inbound mutation is successful only after live Xray accepts it.
     if user.status in [UserStatus.active, UserStatus.on_hold]:
         xray.operations.update_user(dbuser=dbuser)
@@ -207,7 +221,7 @@ delete_old = '''    crud.remove_user(db, dbuser)
     bg.add_task(xray.operations.remove_user, dbuser=dbuser)
 '''
 delete_new = '''    crud.remove_user(db, dbuser)
-    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V2:
+    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V3:
     # deletion is acknowledged only after live Xray accepted hot-remove.
     xray.operations.remove_user(dbuser=dbuser)
 '''
@@ -220,6 +234,8 @@ Path(os.environ["DEST"]).write_text(src)
 PY
 
 python3 -m py_compile "$USER_PATCHED"
+# Both modules must pass before either production override is replaced.
+install -m 600 "$OPS_PATCHED" "$OPERATIONS_OVERRIDE"
 install -m 600 "$USER_PATCHED" "$USER_ROUTER_OVERRIDE"
 
 rm -f "$OPS_SOURCE" "$OPS_PATCHED" "$USER_SOURCE" "$USER_PATCHED"
