@@ -8,7 +8,7 @@ WORK="$ROOT/windows_native"
 PAYLOAD="$WORK/PrivateLine.Installer/Payload"
 
 mkdir -p "$OUT" "$CACHE" "$PAYLOAD"
-rm -f "$OUT/PrivateLineSetup.exe" "$PAYLOAD/xray.exe"
+rm -f "$PAYLOAD/xray.exe" "$OUT/PrivateLineSetup.exe.new"
 
 if ! command -v curl >/dev/null 2>&1 \
    || ! command -v unzip >/dev/null 2>&1 \
@@ -34,7 +34,7 @@ curl -fL --retry 3 --retry-delay 2 \
   "$XRAY_DGST_URL" -o "$TMP/xray.dgst"
 
 EXPECTED_SHA256="$(
-  grep -Ei 'sha-?256|sha256' "$TMP/xray.dgst" \
+  grep -Ei 'sha2-256|sha-256|sha256' "$TMP/xray.dgst" \
     | grep -Eo '[A-Fa-f0-9]{64}' | head -n1 | tr 'A-F' 'a-f'
 )"
 if [[ ! "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
@@ -92,16 +92,18 @@ dotnet publish "$WORK/PrivateLine.Installer/PrivateLine.Installer.csproj" \
   -p:DebugType=None -p:DebugSymbols=false
 
 echo "[windows 4/4] Verify final PE artifact"
-cp "$WORK/out-installer/PrivateLineSetup.exe" "$OUT/PrivateLineSetup.exe"
-test -s "$OUT/PrivateLineSetup.exe"
-[[ "$(head -c2 "$OUT/PrivateLineSetup.exe")" == "MZ" ]] || {
+cp "$WORK/out-installer/PrivateLineSetup.exe" "$OUT/PrivateLineSetup.exe.new"
+test -s "$OUT/PrivateLineSetup.exe.new"
+[[ "$(head -c2 "$OUT/PrivateLineSetup.exe.new")" == "MZ" ]] || {
   echo "FAIL: installer is not a Windows PE file" >&2
   exit 2
 }
-SIZE="$(stat -c%s "$OUT/PrivateLineSetup.exe")"
+SIZE="$(stat -c%s "$OUT/PrivateLineSetup.exe.new")"
 (( SIZE >= 100000 && SIZE <= 250*1024*1024 )) || {
   echo "FAIL: installer size is outside expected bounds: $SIZE" >&2
   exit 2
 }
+chmod 644 "$OUT/PrivateLineSetup.exe.new"
+mv -f "$OUT/PrivateLineSetup.exe.new" "$OUT/PrivateLineSetup.exe"
 
-echo "PASS: native Windows installer built and verified: $SIZE bytes"
+echo "PASS: native Windows installer atomically published: $SIZE bytes"
