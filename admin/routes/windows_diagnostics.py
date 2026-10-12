@@ -169,22 +169,37 @@ async def windows_device_report(request: Request, report: DiagnosticReport,
 async def download_personal_windows_client(request: Request, user_id: int | None = None,
                                            admin: User = Depends(require_super_admin),
                                            db: AsyncSession = Depends(get_async_session)):
-    from io import BytesIO
     from fastapi.responses import StreamingResponse
     from app.windows_enrollment import create_enrollment
-    from app.windows_native_installer import build_personal_windows_exe
+    from app.windows_native_installer import (
+        build_personalization_overlay,
+        iter_personal_windows_exe,
+        personalized_installer_size,
+    )
     try:
         request_base = str(request.base_url).rstrip("/")
         base_override = request_base if request_base.startswith("https://") else None
-        base, code, pin = await create_enrollment(db, user_id if user_id is not None else admin.id, base_url=base_override)
-        payload = build_personal_windows_exe(base_url=base, pairing_code=code, tls_pin=pin)
+        base, code, pin = await create_enrollment(
+            db, user_id if user_id is not None else admin.id, base_url=base_override
+        )
+        overlay = build_personalization_overlay(
+            base_url=base, pairing_code=code, tls_pin=pin
+        )
+        total_size = personalized_installer_size(overlay=overlay)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="Native Windows installer is not built on this server") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return StreamingResponse(BytesIO(payload), media_type="application/vnd.microsoft.portable-executable",
-        headers={"Content-Disposition": 'attachment; filename="PrivateLineSetup.exe"',
-                 "Cache-Control": "private, no-store", "X-Content-Type-Options":"nosniff"})
+    return StreamingResponse(
+        iter_personal_windows_exe(overlay=overlay),
+        media_type="application/vnd.microsoft.portable-executable",
+        headers={
+            "Content-Disposition": 'attachment; filename="PrivateLineSetup.exe"',
+            "Content-Length": str(total_size),
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/windows-client/download")
