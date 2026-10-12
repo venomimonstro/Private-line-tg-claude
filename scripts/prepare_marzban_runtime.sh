@@ -216,6 +216,7 @@ echo "[runtime 4/5] Install read-only source overrides"
 cat > "$COMPOSE_OVERRIDE.tmp" <<EOF
 services:
   marzban:
+    image: $MARZBAN_IMAGE
     volumes:
       - $OPERATIONS_OVERRIDE:/code/app/xray/operations.py:ro
       - $USER_ROUTER_OVERRIDE:/code/app/routers/user.py:ro
