@@ -31,7 +31,8 @@ PY
     echo "FAIL: could not allocate local paid-probe SOCKS port" >&2
     exit 2
 }
-PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-$"
+RUN_ID="$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
+PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-${RUN_ID}"
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
 CONFIG="$WORKDIR/xray-client.json"
 
