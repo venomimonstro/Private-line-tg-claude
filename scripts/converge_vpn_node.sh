@@ -60,6 +60,7 @@ version_ok() {
 }
 
 echo "[2/7] Verify pinned Xray $XRAY_VERSION"
+CORE_CHANGED=0
 if ! version_ok; then
     echo "Installing tested Xray core $XRAY_VERSION..."
     docker pull "$XRAY_IMAGE" >/dev/null
@@ -73,6 +74,7 @@ if ! version_ok; then
     docker cp "$tmp_container:/usr/local/bin/xray" "$tmp_bin"
     mkdir -p "$CORE_DIR"
     install -m 755 "$tmp_bin" "$CORE"
+    CORE_CHANGED=1
     cleanup_core
     trap - EXIT
 fi
@@ -204,6 +206,11 @@ if ! cmp -s "$CONFIG" "$CANDIDATE"; then
 fi
 
 # Keep Marzban's own core launcher deterministic.
+ENV_CHANGED=0
+grep -qxF "XRAY_JSON=/var/lib/marzban/xray_config.json" .env || ENV_CHANGED=1
+grep -qxF "XRAY_EXECUTABLE_PATH=$CORE" .env || ENV_CHANGED=1
+grep -qxF "XRAY_ASSETS_PATH=/usr/local/share/xray" .env || ENV_CHANGED=1
+
 python3 - <<PY
 from pathlib import Path
 import os, re
@@ -246,10 +253,11 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 echo "[5/7] Restart only when the canonical runtime changed"
-if [[ "$CHANGED" -eq 1 ]]; then
+if [[ "$CHANGED" -eq 1 || "$CORE_CHANGED" -eq 1 || "$ENV_CHANGED" -eq 1 ]]; then
+    echo "Runtime change detected: config=$CHANGED core=$CORE_CHANGED env=$ENV_CHANGED"
     docker compose up -d --no-deps --force-recreate marzban </dev/null
 else
-    echo "PASS: canonical Xray config already current; no core restart"
+    echo "PASS: canonical Xray runtime already current; no core restart"
 fi
 
 echo "[6/7] Wait for Marzban API and live Xray listener"
