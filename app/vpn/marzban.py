@@ -791,8 +791,10 @@ class MarzbanClient:
 
     # ─── Other API methods ─────────────────────────────────────────────────────
 
-    async def disable_key(self, username: str) -> None:
-        """Disable a Marzban user without invoking the buggy DELETE/report path."""
+    async def disable_key(
+        self, username: str, *, restart_core: bool = True
+    ) -> None:
+        """Disable a Marzban user; use restart only when mutation health is unproven."""
         headers = await self._headers()
         url = f"{self._base}/api/user/{username}"
         current = await self._client.get(url, headers=headers)
@@ -811,8 +813,11 @@ class MarzbanClient:
         verify.raise_for_status()
         if verify.json().get("status") != "disabled":
             raise MarzbanConfigError("Marzban user disable did not persist")
-        # Revocation must reach the live Xray process, not only the Marzban DB.
-        await self.restart_core_with_db_users(reason=f"disable {username}")
+        # Marzban schedules live HandlerService removal after the DB update.
+        # Production nodes continuously prove that zero-restart hot-remove works.
+        # When that proof is stale callers request a conservative core rebuild.
+        if restart_core:
+            await self.restart_core_with_db_users(reason=f"disable {username}")
 
     async def user_absent(self, username: str, *, attempts: int = 8) -> bool:
         """Confirm deletion with a fresh HTTP session.
