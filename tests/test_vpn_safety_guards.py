@@ -292,9 +292,10 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_production_gate_republishes_disposable_verified_nodes(self):
         text = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
         disposable = text.index('bash scripts/smoke_vpn_node.sh "$server_id"')
-        publish = text.index("--server", disposable)
-        self.assertIn("app.node_probe_state", text[disposable:publish + 300])
-        self.assertIn("--success", text[disposable:publish + 300])
+        next_step = text.index('CURRENT_STEP="8/11', disposable)
+        block = text[disposable:next_step]
+        self.assertIn("app.node_probe_state", block)
+        self.assertIn("--success", block)
 
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
