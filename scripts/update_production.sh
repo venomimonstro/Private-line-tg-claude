@@ -81,8 +81,10 @@ docker compose exec -T admin python -m unittest \
     tests.test_vless_probe_config \
     tests.test_vpn_safety_guards \
     tests.test_marzban_stability \
-    || fail "VPN regression suite failed; nodes were not modified"
-echo "PASS: VPN regression suite"
+    tests.test_windows_native_installer \
+    tests.test_windows_diagnostics \
+    || fail "VPN/Windows regression suite failed; nodes were not modified"
+echo "PASS: VPN + Windows regression suite"
 
 # Install/refresh the host-level real data-plane watchdog. The current
 # production-update lock prevents it from racing this rollout.
