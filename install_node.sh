@@ -152,8 +152,9 @@ REALITY_DEST="${REALITY_TARGET_HOST}:443"
 
 mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
-# Reproducible runtime: pin the Marzban image pulled during installation and
-# always run the tested Xray build instead of whichever core the panel bundles.
+# Reproducible runtime: pin the exact official Marzban image and use the
+# Xray binary bundled inside that image. This keeps Marzban's Python/xray-api
+# layer and the core version in the combination shipped by upstream.
 case "$(uname -m)" in
     x86_64)
         MARZBAN_IMAGE="ghcr.io/gozargah/marzban:v0.8.4@sha256:953700b0b91b35dcd5165072fc7029fc3c5bd6ed10d644f80d7cb9a84a9a27f1"
@@ -165,37 +166,13 @@ case "$(uname -m)" in
         die "Неподдерживаемая архитектура Marzban: $(uname -m)"
         ;;
 esac
-# Client compatibility is pinned deliberately. Xray changed REALITY protocol
-# compatibility across 24.x -> 25.x, while 26.7.x introduced additional
-# third-party client regressions. 26.6.27 is the compatibility baseline for
-# our own clients/probes and current Hiddify/V2RayNG-style Reality profiles.
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2"
-XRAY_DIR="$MARZBAN_DATA/xray-core/26.6.27"
-XRAY_BIN="$XRAY_DIR/xray"
+XRAY_BIN="/usr/local/bin/xray"
 
-info "Загружаю зафиксированные Marzban + Xray runtime images..."
+info "Загружаю зафиксированный официальный Marzban runtime..."
 docker pull "$MARZBAN_IMAGE" >/dev/null
-docker pull "$XRAY_IMAGE" >/dev/null
 MARZBAN_PIN="$MARZBAN_IMAGE"
 docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 \
     || die "Digest-pinned Marzban image не загружен."
-docker image inspect "$XRAY_IMAGE" >/dev/null 2>&1 \
-    || die "Digest-pinned Xray 26.6.27 image не загружен."
-
-mkdir -p "$XRAY_DIR"
-TMP_XRAY_CONTAINER="$(docker create "$XRAY_IMAGE")"
-TMP_XRAY_BIN="$(mktemp)"
-cleanup_xray_extract() {
-    docker rm -f "${TMP_XRAY_CONTAINER:-}" >/dev/null 2>&1 || true
-    rm -f "${TMP_XRAY_BIN:-}"
-}
-trap cleanup_xray_extract EXIT
-docker cp "$TMP_XRAY_CONTAINER:/usr/local/bin/xray" "$TMP_XRAY_BIN"
-install -m 755 "$TMP_XRAY_BIN" "$XRAY_BIN"
-cleanup_xray_extract
-trap - EXIT
-"$XRAY_BIN" version 2>/dev/null | head -n1 | grep -q '^Xray 26\.6\.27' \
-    || die "Установлен неожиданный Xray core."
 
 # Reality target must be a stable TLS 1.3 + HTTP/2 endpoint.
 TARGET_TLS_LOG="$(mktemp)"
@@ -259,7 +236,7 @@ UVICORN_PORT=${MARZBAN_PORT}
 SUDO_USERNAME=${MARZBAN_USER}
 SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
-XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray
+XRAY_EXECUTABLE_PATH=/usr/local/bin/xray
 XRAY_ASSETS_PATH=/usr/local/share/xray
 EOF
 
@@ -276,7 +253,7 @@ ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp \
     || die "Не удалось ограничить Marzban API по IP основного сервера."
 ufw --force enable >/dev/null 2>&1 || die "Не удалось включить UFW."
 
-info "Запускаю Marzban с Xray 26.6.27..."
+info "Запускаю pinned Marzban с bundled Xray..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
 # Wait for Marzban API to become ready (up to 120s)
@@ -295,15 +272,15 @@ for i in $(seq 1 24); do
     fi
 done
 
-SERVER_XRAY_VERSION="$(docker compose exec -T marzban /var/lib/marzban/xray-core/26.6.27/xray version 2>/dev/null | head -n1 || true)"
-[[ "$SERVER_XRAY_VERSION" == Xray\ 26.6.27* ]] || die "Marzban не запустил Xray 26.6.27."
-success "Совместимый runtime: $SERVER_XRAY_VERSION"
+SERVER_XRAY_VERSION="$(docker compose exec -T marzban "$XRAY_BIN" version 2>/dev/null | head -n1 || true)"
+[[ "$SERVER_XRAY_VERSION" == Xray* ]] || die "Bundled Xray внутри pinned Marzban не запустился."
+success "Совместимый upstream runtime: $SERVER_XRAY_VERSION"
 
 # ─── Generate VLESS Reality keys ──────────────────────────────────────────────
 section "Генерация VLESS Reality ключей"
 
-XRAY_KEYS="$("$XRAY_BIN" x25519 2>/dev/null || true)"
-[[ -n "$XRAY_KEYS" ]] || die "Xray 26.6.27 не смог сгенерировать Reality keypair."
+XRAY_KEYS="$(docker compose exec -T marzban "$XRAY_BIN" x25519 2>/dev/null || true)"
+[[ -n "$XRAY_KEYS" ]] || die "Bundled Xray не смог сгенерировать Reality keypair."
 
 # Xray outputs vary by release:
 # legacy: "Private key:" / "Public key:"
@@ -377,8 +354,9 @@ PYEOF
 
 success "XRay конфиг с Reality записан (порт $VPN_PORT, один стабильный shortId)"
 
-"$XRAY_BIN" run -test -config "$MARZBAN_DATA/xray_config.json" </dev/null >/dev/null \
-    || die "Xray 26.6.27 отклонил финальный VLESS/REALITY конфиг."
+docker compose exec -T marzban "$XRAY_BIN" run -test \
+    -config /var/lib/marzban/xray_config.json </dev/null >/dev/null \
+    || die "Bundled Xray отклонил финальный VLESS/REALITY конфиг."
 
 # Restart Marzban to apply Reality config
 info "Перезапускаю Marzban с Reality конфигом..."
