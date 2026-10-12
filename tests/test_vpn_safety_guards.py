@@ -352,9 +352,10 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("marzban:v0.8.4@sha256:", installer)
         self.assertIn("EXPECTED_MARZBAN", golden)
         self.assertIn("XRAY_VERSION=26.6.27", golden)
-        self.assertIn("PRIVATE_LINE_XRAY_HOTADD_RETRY_V1", runtime)
-        self.assertIn("Xray hot-add failed after", runtime)
+        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
+        self.assertIn("do not return HTTP success before live Xray accepts user", runtime)
         self.assertIn("/code/app/xray/operations.py:ro", runtime)
+        self.assertIn("/code/app/routers/user.py:ro", runtime)
         self.assertIn("docker-compose.override.yml", runtime)
 
     def test_paid_provisioning_has_no_per-user_xray_restart(self):
