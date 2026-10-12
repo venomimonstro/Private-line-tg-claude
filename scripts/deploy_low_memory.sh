@@ -13,7 +13,7 @@ fail() {
   echo "--- admin/nginx/db status ---" >&2
   docker compose ps -a db admin bot nginx >&2 || true
   echo "--- recent admin/nginx errors ---" >&2
-  docker compose logs --tail=80 admin nginx 2>&1 |     sed -E       -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g'       -e 's/(password|token|secret|privateKey)[=:][^[:space:]]+/\1=[REDACTED]/Ig'       -e 's@vless://[^[:space:]<]+@[VLESS_REDACTED]@g' >&2 || true
+  docker compose logs --tail=12 admin nginx 2>&1 |     sed -E       -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g'       -e 's/(password|token|secret|privateKey)[=:][^[:space:]]+/\1=[REDACTED]/Ig'       -e 's@vless://[^[:space:]<]+@[VLESS_REDACTED]@g' >&2 || true
   exit 2
 }
 
@@ -71,12 +71,17 @@ echo "[2/8] Free RAM, disk and optional monitoring..."
 docker stop private-line-grafana-1 private-line-prometheus-1 private-line-alertmanager-1 private-line-node-exporter-1 >/dev/null 2>&1 || true
 rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
 docker builder prune -af >/dev/null 2>&1 || true
-docker image prune -f >/dev/null 2>&1 || true
+docker image prune -af >/dev/null 2>&1 || true
 AVAILABLE_KB="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
 (( AVAILABLE_KB >= 140000 )) || fail "less than ~137 MiB available RAM"
 FREE_MB="$(df -Pm . | awk 'NR==2 {print $4}')"
 echo "Free disk before build: ${FREE_MB} MiB"
-(( FREE_MB >= 1200 )) || fail "less than 1200 MiB free disk after safe build-cache cleanup"
+if (( FREE_MB < 1200 )); then
+  echo "Disk capacity diagnostics (no volumes or running containers removed):" >&2
+  df -h . /var/lib/docker 2>/dev/null >&2 || true
+  docker system df 2>/dev/null >&2 || true
+  fail "only ${FREE_MB} MiB free; need 1200 MiB for safe app rebuild. Expand the VPS disk or clear known disposable data; production data/volumes untouched"
+fi
 
 echo "[3/8] Database..."
 start_existing_or_create db
