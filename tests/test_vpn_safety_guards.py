@@ -206,6 +206,23 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn('background task and may swallow\\n', source)
         self.assertNotIn('restart_core_with_db_users(reason=f"provision {safe_name}")\\n', source)
 
+    def test_marzban_customer_link_is_built_from_authoritative_reality_state(self):
+        source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
+        self.assertIn("Expected exactly one VLESS Reality inbound", source)
+        self.assertIn("authoritative_base =", source)
+        self.assertIn("self._inject_reality(", source)
+        self.assertIn("Marzban emitted no matching VLESS share URI", source)
+        self.assertIn("after core restart", source)
+
+    def test_node_reality_metadata_is_self_contained(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        updater = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
+        self.assertIn('PUBLIC_KEY_VAL="$PUBLIC_KEY"', installer)
+        self.assertIn('"publicKey": os.environ["PUBLIC_KEY_VAL"]', installer)
+        self.assertIn('"target": os.environ["REALITY_DEST_VAL"]', installer)
+        self.assertIn("reality['publicKey'] = public_key", updater)
+        self.assertIn("derived != public_key", updater)
+
     def test_production_updater_uses_encrypted_node_ssh_access(self):
         text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
         self.assertIn("app.node_ssh_access", text)
