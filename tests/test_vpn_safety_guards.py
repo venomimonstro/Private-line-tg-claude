@@ -193,10 +193,12 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertLess(tcp, xray)
         self.assertIn("VLESS/REALITY tunnel", text)
 
-    def test_marzban_node_installer_migrates_env_admin_to_db(self):
+    def test_marzban_node_installer_keeps_simple_bootstrap_admin(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
-        self.assertIn("marzban-cli admin import-from-env -y", installer)
-        self.assertIn("SUDO_USERNAME/SUDO_PASSWORD", installer)
+        self.assertIn("SUDO_USERNAME=", installer)
+        self.assertIn("SUDO_PASSWORD=", installer)
+        self.assertNotIn("marzban-cli admin import-from-env -y", installer)
+        self.assertIn("chmod 600", installer)
 
     def test_one_command_updater_rolls_nodes_from_control_plane(self):
         top = (ROOT / "update.sh").read_text(encoding="utf-8")
@@ -208,8 +210,9 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("app.node_ssh_access", orchestrator)
         self.assertNotIn('"root@$NODE_HOST"', orchestrator)
         self.assertNotIn('bash "$tmp/scripts/migrate_marzban_env_admin.sh"', orchestrator)
-        self.assertIn("update_node_xray.sh", orchestrator)
-        self.assertIn("migrate_reality_target.sh", orchestrator)
+        self.assertIn("converge_vpn_node.sh", orchestrator)
+        self.assertNotIn('bash "$tmp/scripts/update_node_xray.sh"', orchestrator)
+        self.assertNotIn('bash "$tmp/scripts/migrate_reality_target.sh"', orchestrator)
         self.assertIn("smoke_vpn_node.sh", orchestrator)
         self.assertIn("probe_vless_e2e.sh", orchestrator)
         self.assertIn("docker compose build admin", deploy)
@@ -221,6 +224,32 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("no pull required", source)
         self.assertIn('version_matches "$WORKDIR/xray"', source)
         self.assertNotIn('version | head -n 1 | grep', source)
+
+    def test_golden_node_is_single_standard_reality_path(self):
+        source = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn("exactly one VLESS + TCP + REALITY inbound", source)
+        self.assertIn('"network": "tcp"', source)
+        self.assertIn('"security": "reality"', source)
+        self.assertIn('"minClientVer": "0.0.0"', source)
+        self.assertIn('"port"] = 443', source)
+        self.assertIn("credentials preserved", source)
+        self.assertNotIn("os.urandom", source)
+
+    def test_node_management_has_no_socat_dependency(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        converger = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertNotIn("apt-get install -y -qq socat", installer)
+        self.assertNotIn("ExecStart=/usr/bin/socat", installer)
+        self.assertIn("UVICORN_PORT=", installer)
+        self.assertIn("UVICORN_PORT", converger)
+        self.assertIn("systemctl disable --now marzban-proxy.service", converger)
+
+    def test_marzban_api_is_firewall_restricted_before_startup(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        allow = installer.index('ufw allow from "$MAIN_SERVER_IP"')
+        start = installer.index('info "Запускаю Marzban')
+        self.assertLess(allow, start)
+        self.assertIn("UVICORN_HOST=0.0.0.0", installer)
 
     def test_xray_updater_repairs_public_443_firewall(self):
         source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
