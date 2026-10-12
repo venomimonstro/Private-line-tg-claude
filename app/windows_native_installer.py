@@ -63,6 +63,44 @@ def iter_personal_windows_exe(*, overlay: bytes, chunk_size: int = STREAM_CHUNK)
     yield overlay
 
 
+def open_personal_windows_exe(*, overlay: bytes, chunk_size: int = STREAM_CHUNK) -> tuple[int, Iterator[bytes]]:
+    """Open one immutable on-disk snapshot before StreamingResponse is created.
+
+    The file handle retains the original inode if the build atomically publishes
+    a newer version during an active download. Content-Length always matches.
+    """
+    if not overlay.startswith(MARKER) or len(overlay) > len(MARKER) + 4096:
+        raise ValueError("Invalid Windows personalization overlay")
+    if not 64 * 1024 <= chunk_size <= 4 * 1024 * 1024:
+        raise ValueError("Invalid installer stream chunk")
+    fh = BASE_INSTALLER.open("rb")
+    try:
+        size = fh.seek(0, 2)
+        if not 100_000 <= size <= MAX_BASE_SIZE:
+            raise ValueError("Invalid native Windows installer artifact")
+        fh.seek(0)
+        if fh.read(2) != b"MZ":
+            raise ValueError("Invalid native Windows installer artifact")
+        fh.seek(max(0, size - 64 * 1024))
+        if MARKER in fh.read():
+            raise ValueError("Base installer unexpectedly contains personalization overlay")
+        fh.seek(0)
+    except Exception:
+        fh.close()
+        raise
+
+    def chunks() -> Iterator[bytes]:
+        with fh:
+            while True:
+                data = fh.read(chunk_size)
+                if not data:
+                    break
+                yield data
+            yield overlay
+
+    return size + len(overlay), chunks()
+
+
 def build_personal_windows_exe(*, base_url: str, pairing_code: str, tls_pin: str) -> bytes:
     """Compatibility helper for tests/tools; production HTTP uses streaming."""
     overlay = build_personalization_overlay(
