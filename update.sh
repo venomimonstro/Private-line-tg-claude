@@ -31,5 +31,18 @@ else
     echo "Code updated: ${BEFORE:0:8} -> ${AFTER:0:8}"
 fi
 
-bash -n scripts/update_production.sh
+for script in \
+    scripts/update_production.sh \
+    scripts/update_node_xray.sh \
+    scripts/migrate_reality_target.sh \
+    scripts/smoke_vpn_node.sh \
+    scripts/probe_vless_e2e.sh \
+    scripts/production_vpn_gate.sh; do
+    bash -n "$script" || {
+        echo "FAIL: shell syntax check failed: $script" >&2
+        exit 2
+    }
+done
+echo "PASS: VPN rollout shell syntax"
+
 exec bash scripts/update_production.sh "$@"
