@@ -34,7 +34,7 @@ async def run(action: str, server_id: int, name: str) -> int:
             if not await client.check_connection():
                 print("STOP: Marzban authentication failed")
                 return 2
-            if action in ("create", "ensure"):
+            if action in ("create", "ensure", "create-live"):
                 if action == "ensure":
                     headers = await client._headers()
                     existing = await client._client.get(
@@ -47,11 +47,17 @@ async def run(action: str, server_id: int, name: str) -> int:
                     if existing.status_code != 404:
                         print(f"STOP: probe user lookup HTTP {existing.status_code}")
                         return 2
-                key = await client.create_key(name=name)
+                key = await client.create_key(
+                    name=name,
+                    restart_core=(action == "create"),
+                )
                 print(canonical_client_link(key.access_url, "Private Line VPN"))
                 return 0
-            if action == "delete":
-                await client.delete_key(name)
+            if action in ("delete", "delete-live"):
+                await client.delete_key(
+                    name,
+                    restart_core=(action == "delete"),
+                )
                 if not await client.user_absent(name):
                     print("FAIL: temporary user still exists after cleanup verification")
                     return 2
@@ -68,7 +74,7 @@ async def run(action: str, server_id: int, name: str) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["create", "ensure", "delete"])
+    parser.add_argument("action", choices=["create", "ensure", "create-live", "delete", "delete-live"])
     parser.add_argument("--server", required=True, type=int)
     parser.add_argument("--name", required=True)
     args = parser.parse_args()
