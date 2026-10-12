@@ -5,7 +5,7 @@ auto-apply the latest config.  When repair_marzban_keys() updates the stored
 access_url in the DB the next app refresh picks it up automatically — the user
 never needs to touch their client manually.
 
-Token format:  base64url(telegram_id) + "." + hmac_sha256(SECRET_KEY, telegram_id)[:12]
+Token format: base64url(telegram_id) + "." + 128-bit HMAC-SHA256 signature
 - Stable: same user → same token always
 - Secure: can't guess another user's token without SECRET_KEY
 - No DB migration needed — derived on the fly
@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
@@ -27,7 +27,8 @@ from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
-from app.services.vpn_key import get_client_access_url, _server_protocol
+from app.services.vpn_key import get_access_url, _server_protocol
+from app.services.vpn_link import canonical_client_link
 
 logger = logging.getLogger(__name__)
 
@@ -68,22 +69,30 @@ async def vpn_subscription(
             VpnServer.status != VpnServerStatus.disabled,
             VpnServer.provider != "private-line-primary",
         )
-        .order_by(VpnServer.id.asc(), VpnKey.id.asc())
+        .order_by(
+            case((VpnServer.status == VpnServerStatus.active, 0), else_=1),
+            VpnServer.failure_count.asc(),
+            VpnServer.id.asc(),
+            VpnKey.id.asc(),
+        )
     )
-    rows = keys_result.all()
-    keys = [key for key, server in rows if _server_protocol(server) == "marzban"]
+    rows = [
+        (key, server)
+        for key, server in keys_result.all()
+        if _server_protocol(server) == "marzban"
+    ]
 
     links: list[str] = []
-    for key in keys:
+    for key, server in rows:
         try:
-            url = get_client_access_url(key)
-            if url:
-                # The canonical share URI already has exactly one #fragment.
-                # Never append another one: a duplicate breaks some importers.
-                if url not in links:
-                    links.append(url)
+            label = key.label or f"{server.flag_emoji or '🌍'} {server.country}"
+            if server.status == VpnServerStatus.unreachable:
+                label = f"{label} • резерв"
+            url = canonical_client_link(get_access_url(key), label)
+            if url and url not in links:
+                links.append(url)
         except Exception as exc:
-            logger.warning("sub: cannot decrypt key %d: %s", key.id, exc)
+            logger.warning("sub: cannot format key %d: %s", key.id, exc)
 
     if not links:
         return Response(status_code=204)
