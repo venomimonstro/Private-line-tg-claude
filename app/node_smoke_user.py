@@ -15,7 +15,7 @@ from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _make_client, _server_protocol
 from app.services.vpn_link import canonical_client_link
 
-_TEST_NAME = re.compile(r"(?:pltest_[0-9a-f]{16}|plhot_[0-9a-f]{16}|plprobe_s[1-9][0-9]*)\\Z")
+_TEST_NAME = re.compile(r"(?:pltest_[0-9a-f]{16}|plhot_[0-9a-f]{16}|plprobe_s[1-9][0-9]*)\Z")
 
 
 async def run(action: str, server_id: int, name: str) -> int:
