@@ -358,6 +358,30 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("/code/app/routers/user.py:ro", runtime)
         self.assertIn("docker-compose.override.yml", runtime)
 
+    def test_marzban_user_api_waits_for_live_xray_mutation(self):
+        runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
+        self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
+        self.assertIn("xray.operations.add_user(dbuser=dbuser)", runtime)
+        self.assertIn("xray.operations.update_user(dbuser=dbuser)", runtime)
+        self.assertIn("xray.operations.remove_user(dbuser=dbuser)", runtime)
+        self.assertIn("delays = (0.10, 0.35, 0.80)", runtime)
+        self.assertIn("timeout=3", runtime)
+        self.assertNotIn("timeout=30", runtime)
+
+    def test_disable_uses_recent_hot_remove_proof_before_any_core_restart(self):
+        source = inspect.getsource(vpn_key.disable_vpn_key)
+        self.assertIn("hot_remove_proven", source)
+        self.assertIn("last_hot_add_success_at", source)
+        self.assertIn("timedelta(minutes=45)", source)
+        self.assertIn("restart_core=not hot_remove_proven", source)
+
+    def test_health_watch_control_flow_is_not_corrupted(self):
+        source = (ROOT / "scripts" / "vpn_health_watch.sh").read_text(encoding="utf-8")
+        self.assertIn("while IFS=$'\\t' read -r SERVER_ID SERVER_STATUS; do", source)
+        self.assertIn("HOT_ADD_INTERVAL=1800", source)
+        self.assertIn("--hot-add-success", source)
+        self.assertNotIn("while IFS=\nif (( FAILED", source)
+
     def test_paid_provisioning_has_no_per-user_xray_restart(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
         self.assertIn("restart_core=False", source)
