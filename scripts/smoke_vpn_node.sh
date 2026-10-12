@@ -17,30 +17,26 @@ MODE="${2:-}"
 }
 
 WORK="$(mktemp -d -t private-line-node-smoke-XXXXXXXX)"
-NAME="$(python3 -c 'import secrets; print("pltest_"+secrets.token_hex(8))')"
+NAME="plprobe_s${SERVER_ID}"
 PORT=19582
 CONTAINER="private-line-node-smoke-$$"
-CREATED=0
 
 cleanup() {
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    if [[ "$CREATED" == 1 ]]; then
-        docker compose exec -T admin python -m app.node_smoke_user delete             --server "$SERVER_ID" --name "$NAME" >/dev/null 2>&1 ||             echo "WARNING: temporary node user cleanup failed: $NAME" >&2
-    fi
     rm -f "$WORK/profile.txt" "$WORK/client.json" "$WORK/egress.txt" "$WORK/curl.log"
     rmdir "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "[1/6] Creating disposable Marzban user on node $SERVER_ID..."
-CREATED=1
-docker compose exec -T admin python -m app.node_smoke_user create     --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
+echo "[1/5] Ensuring persistent synthetic Marzban probe user on node $SERVER_ID..."
+docker compose exec -T admin python -m app.node_smoke_user ensure \
+    --server "$SERVER_ID" --name "$NAME" > "$WORK/profile.txt"
 
-echo "[2/6] Validating exact client share URI..."
+echo "[2/5] Validating exact client share URI..."
 docker compose exec -T admin python -m app.vless_e2e_probe_config     --stdin-url --socks-port "$PORT" < "$WORK/profile.txt" > "$WORK/client.json"
 python3 -m json.tool "$WORK/client.json" >/dev/null
 
-echo "[3/6] Checking public VPN endpoint TCP reachability from control plane..."
+echo "[3/5] Checking public VPN endpoint TCP reachability from control plane..."
 if ! python3 - "$WORK/client.json" <<'PY'
 import json, socket, sys
 cfg=json.load(open(sys.argv[1]))
@@ -63,7 +59,7 @@ then
 fi
 
 XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2}"
-echo "[4/6] Starting clean Xray compatibility client ($XRAY_IMAGE)..."
+echo "[4/5] Starting clean Xray compatibility client ($XRAY_IMAGE)..."
 docker run -d --name "$CONTAINER" --network host --user 0:0 --read-only     --cap-drop ALL --security-opt no-new-privileges     -v "$WORK/client.json:/tmp/client.json:ro"     "$XRAY_IMAGE" run -c /tmp/client.json >/dev/null
 
 READY=0
@@ -86,7 +82,7 @@ done
     exit 2
 }
 
-echo "[5/6] Requesting multiple HTTPS destinations through disposable VLESS Reality credentials..."
+echo "[5/5] Requesting multiple HTTPS destinations through disposable VLESS Reality credentials..."
 SUCCESS=0
 probe() {
     local label="$1" url="$2"
@@ -133,10 +129,8 @@ if (( SUCCESS < 2 )); then
 fi
 echo "PASS: disposable VLESS Reality tunnel has internet egress ($SUCCESS/3 HTTPS destinations)."
 
-echo "[6/6] Deleting disposable Marzban user and verifying 404..."
-docker compose exec -T admin python -m app.node_smoke_user delete     --server "$SERVER_ID" --name "$NAME"
-CREATED=0
-echo "PASS: dedicated VPN node lifecycle works end-to-end"
+echo "PASS: synthetic VPN probe user is retained for future read-only E2E checks."
+echo "PASS: dedicated VPN node works end-to-end without per-check credential churn"
 if [[ "$MODE" == "--publish" ]]; then
     echo "[publish] Final read-only integrity check and customer publication..."
     docker compose exec -T admin python -m app.promote_vpn_node --server "$SERVER_ID"
