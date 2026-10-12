@@ -329,12 +329,18 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_hot_add_gate_proves_hot_remove_and_uses_unique_docker_name(self):
         smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
         helper = (ROOT / "app" / "node_smoke_user.py").read_text(encoding="utf-8")
-        self.assertIn('CONTAINER="private-line-node-smoke-${SERVER_ID}-$"', smoke)
+        self.assertIn('CONTAINER="private-line-node-smoke-${SERVER_ID}-${RUN_ID}"', smoke)
         self.assertIn('s.bind(("127.0.0.1", 0))', smoke)
         self.assertIn("delete-live", smoke)
         self.assertIn("hot-remove reached live Xray WITHOUT restart", smoke)
         self.assertIn('restart_core=(action == "delete")', helper)
         self.assertIn("for _ in $(seq 1 10)", smoke)
+
+    def test_paid_probe_uses_random_local_port_and_container_identity(self):
+        paid = (ROOT / "scripts" / "probe_vless_e2e.sh").read_text(encoding="utf-8")
+        self.assertIn('s.bind(("127.0.0.1", 0))', paid)
+        self.assertIn('PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-${RUN_ID}"', paid)
+        self.assertIn("server-scoped acceptance is non-interactive", paid)
 
     def test_vpn_health_watch_is_real_e2e_and_non_mutating_after_probe_exists(self):
         watch = (ROOT / "scripts" / "vpn_health_watch.sh").read_text(encoding="utf-8")
