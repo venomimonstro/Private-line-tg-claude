@@ -541,7 +541,32 @@ public sealed class MainForm : Form
 
     void RecoverStaleProxy()
     {
-        RestoreProxy();
+        if(File.Exists(StatePath)) {
+            RestoreProxy();
+            return;
+        }
+        // Version 2.0 used a fixed SOCKS port without crash-state persistence.
+        // Only undo its exact known stale proxy; never modify another VPN,
+        // administrator-configured proxy or corporate network setting.
+        try {
+            using var key=Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Internet Settings",true
+            );
+            if(key is null)return;
+            var current=Convert.ToString(key.GetValue("ProxyServer",""))??"";
+            if(
+                Convert.ToInt32(key.GetValue("ProxyEnable",0))==1
+                && string.Equals(
+                    current,"socks=127.0.0.1:19590",
+                    StringComparison.OrdinalIgnoreCase
+                )
+            ) {
+                key.SetValue("ProxyEnable",0,RegistryValueKind.DWord);
+                key.SetValue("ProxyServer","");
+                RefreshWindowsProxy();
+                status.Text="Обнаружен и отключён устаревший proxy предыдущей версии.";
+            }
+        } catch {}
     }
 
     void CleanupOrphanXray()
