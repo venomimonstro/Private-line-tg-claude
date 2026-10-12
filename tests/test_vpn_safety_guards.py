@@ -264,8 +264,9 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
         self.assertIn("running idempotent node convergence anyway", source)
         self.assertIn("NODE_UPDATE=true", source)
-        self.assertIn("update_node_xray.sh", source)
-        self.assertIn("migrate_reality_target.sh", source)
+        self.assertIn("converge_vpn_node.sh", source)
+        self.assertNotIn('bash "$tmp/scripts/update_node_xray.sh"', source)
+        self.assertNotIn('bash "$tmp/scripts/migrate_reality_target.sh"', source)
         self.assertIn("runtime/firewall drift", source)
 
     def test_ssh_management_failure_does_not_quarantine_data_plane(self):
@@ -273,6 +274,25 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("VPN admission state was not changed because SSH is not a data-plane proof", source)
         ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/4]')]
         self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
+
+    def test_synthetic_smoke_user_is_persistent_and_read_only_after_first_create(self):
+        smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
+        helper = (ROOT / "app" / "node_smoke_user.py").read_text(encoding="utf-8")
+        marzban = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
+        self.assertIn('NAME="plprobe_s${SERVER_ID}"', smoke)
+        self.assertIn("app.node_smoke_user ensure", smoke)
+        self.assertNotIn("app.node_smoke_user delete", smoke)
+        self.assertIn('if action == "ensure"', helper)
+        self.assertIn("client.get_key(name)", helper)
+        get_key = marzban[marzban.index("async def get_key"):marzban.index("# ─── Repair", marzban.index("async def get_key"))]
+        self.assertNotIn("restart_core_with_db_users", get_key)
+        self.assertNotIn(".put(", get_key)
+        self.assertNotIn(".delete(", get_key)
+
+    def test_reconcile_restarts_core_only_for_real_user_mutation(self):
+        source = (ROOT / "app" / "services" / "vpn_reconcile.py").read_text(encoding="utf-8")
+        self.assertIn("if apply and remote_changed:", source)
+        self.assertNotIn("always rebuild the live core on --apply", source)
 
     def test_marzban_create_key_has_live_return_path(self):
         source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
