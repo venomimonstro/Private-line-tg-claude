@@ -18,7 +18,7 @@ from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import _server_protocol
+from app.services.vpn_key import _make_client, _server_protocol
 from app.services.vpn_reconcile import reconcile_marzban_server
 
 
@@ -39,8 +39,8 @@ async def run(node: str, probe_only: bool = False) -> int:
         server = servers[0]
 
         if probe_only:
-            sub_id = await db.scalar(
-                select(VpnKey.subscription_id)
+            candidates = (await db.execute(
+                select(VpnKey, Subscription)
                 .join(Subscription, Subscription.id == VpnKey.subscription_id)
                 .where(
                     VpnKey.server_id == server.id,
@@ -51,16 +51,44 @@ async def run(node: str, probe_only: bool = False) -> int:
                     ]),
                     Subscription.expires_at > datetime.utcnow(),
                 )
-                # Probe the newest live subscription rather than a historical
-                # active-key row left behind by an expired subscription.
                 .order_by(Subscription.id.desc(), VpnKey.id.desc())
-                .limit(1)
-            )
-            if not sub_id:
+                .limit(25)
+            )).all()
+            if not candidates:
                 print("FAIL: no active subscription key on this node")
                 return 2
-            print(sub_id)
-            return 0
+
+            # Do not quarantine a healthy node merely because the newest local
+            # row is quota-exhausted or remotely limited. Select a credential
+            # that Marzban itself currently considers active; the subsequent
+            # Xray E2E probe still proves the real tunnel.
+            client = _make_client(server)
+            try:
+                if not await client.check_connection():
+                    print("FAIL: Marzban authentication unavailable")
+                    return 2
+                headers = await client._headers()
+                for key, _subscription in candidates:
+                    response = await client._client.get(
+                        f"{client._base}/api/user/{key.outline_key_id}",
+                        headers=headers,
+                    )
+                    if response.status_code != 200:
+                        continue
+                    remote = response.json()
+                    if remote.get("status") != "active":
+                        continue
+                    limit = int(remote.get("data_limit") or 0)
+                    used = int(remote.get("used_traffic") or 0)
+                    if limit > 0 and used >= limit:
+                        continue
+                    print(key.subscription_id)
+                    return 0
+            finally:
+                await client.aclose()
+
+            print("FAIL: no remotely active non-exhausted paid key on this node")
+            return 2
 
         result = await reconcile_marzban_server(db, server.id, apply=True)
         if result.errors:
