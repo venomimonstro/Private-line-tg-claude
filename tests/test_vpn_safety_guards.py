@@ -164,19 +164,17 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn('REALITY_SNI="www.microsoft.com"', installer)
         self.assertNotIn('openssl s_client -connect www.microsoft.com:443', inspect)
 
-    def test_reality_target_migration_preserves_credentials(self):
+    def test_legacy_reality_target_migration_delegates_to_golden_converger(self):
         text = (ROOT / "scripts" / "migrate_reality_target.sh").read_text(encoding="utf-8")
-        self.assertIn("preserving credentials", text)
-        self.assertNotIn("x25519", text)
-        self.assertIn('r.get("privateKey")', text)
-        self.assertIn('r.get("shortIds")', text)
+        self.assertIn("converge_vpn_node.sh", text)
+        self.assertIn("REALITY_TARGET_HOST", text)
+        self.assertNotIn("docker compose restart", text)
+        self.assertNotIn("privateKey", text)
 
-    def test_reality_target_is_health_checked_even_when_already_configured(self):
-        text = (ROOT / "scripts" / "migrate_reality_target.sh").read_text(encoding="utf-8")
-        validate = text.index('validate_target "$TARGET_HOST"')
-        already = text.index('if python3 - "$CONFIG" "$TARGET_HOST"')
-        self.assertLess(validate, already)
+    def test_golden_converger_validates_reality_target_every_run(self):
+        text = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
         self.assertIn("-tls1_3 -alpn h2", text)
+        self.assertIn("Verify REALITY target TLS 1.3 + HTTP/2", text)
 
     def test_disposable_e2e_uses_multiple_independent_https_destinations(self):
         text = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
@@ -217,13 +215,20 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("probe_vless_e2e.sh", orchestrator)
         self.assertIn("docker compose build admin", deploy)
 
-    def test_xray_updater_checks_live_runtime_before_pull(self):
+    def test_legacy_xray_updater_delegates_to_golden_converger(self):
         source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
-        self.assertIn('version_matches() {', source)
-        self.assertIn('with socket.create_connection(("127.0.0.1", 443)', source)
-        self.assertIn("no pull required", source)
-        self.assertIn('version_matches "$WORKDIR/xray"', source)
-        self.assertNotIn('version | head -n 1 | grep', source)
+        self.assertIn("converge_vpn_node.sh", source)
+        self.assertNotIn("docker pull", source)
+        self.assertNotIn("xray.next", source)
+
+    def test_server_xray_comes_from_exact_pinned_marzban_image(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn("XRAY_EXECUTABLE_PATH=/usr/local/bin/xray", installer)
+        self.assertNotIn("ghcr.io/xtls/xray-core", installer)
+        self.assertIn('CORE="/usr/local/bin/xray"', golden)
+        self.assertIn("EXPECTED_MARZBAN", golden)
+        self.assertNotIn("ghcr.io/xtls/xray-core", golden)
 
     def test_golden_node_is_single_standard_reality_path(self):
         source = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
@@ -251,14 +256,10 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertLess(allow, start)
         self.assertIn("UVICORN_HOST=0.0.0.0", installer)
 
-    def test_xray_updater_repairs_public_443_firewall(self):
-        source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
-        self.assertIn("ensure_vpn_firewall()", source)
+    def test_golden_converger_repairs_public_443_firewall(self):
+        source = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
         self.assertIn('ufw allow 443/tcp comment "VLESS Reality VPN"', source)
-        self.assertIn("UFW still does not allow public TCP/443", source)
-        first_check = source.index("ensure_vpn_firewall")
-        first_success = source.index("no restart required")
-        self.assertLess(first_check, first_success)
+        self.assertIn("UFW does not allow public TCP/443", source)
 
     def test_one_command_update_always_converges_node_drift(self):
         source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
@@ -319,16 +320,16 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("authoritative_base =", source)
         self.assertIn("self._inject_reality(", source)
         self.assertIn("Marzban emitted no matching VLESS share URI", source)
-        self.assertIn("after core restart", source)
+        self.assertIn("fresh-user E2E", source)
 
     def test_node_reality_metadata_is_self_contained(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
-        updater = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
+        golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
         self.assertIn('PUBLIC_KEY_VAL="$PUBLIC_KEY"', installer)
         self.assertIn('"publicKey": os.environ["PUBLIC_KEY_VAL"]', installer)
         self.assertIn('"target": os.environ["REALITY_DEST_VAL"]', installer)
-        self.assertIn("reality['publicKey'] = public_key", updater)
-        self.assertIn("derived != public_key", updater)
+        self.assertIn('"publicKey": public_key', golden)
+        self.assertIn("PUBLIC_KEY=", golden)
 
     def test_production_updater_uses_encrypted_node_ssh_access(self):
         text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
@@ -336,6 +337,11 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("SSH_ASKPASS_REQUIRE=force", text)
         self.assertIn("StrictHostKeyChecking=accept-new", text)
         self.assertNotIn('"root@$NODE_HOST"', text)
+
+    def test_operator_gate_can_recover_quarantined_nodes(self):
+        source = (ROOT / "app" / "production_probe_targets.py").read_text(encoding="utf-8")
+        self.assertIn("VpnServer.status != VpnServerStatus.disabled", source)
+        self.assertNotIn("VpnServer.status == VpnServerStatus.active", source)
 
     def test_production_update_never_skips_runtime_vpn_e2e(self):
         text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
