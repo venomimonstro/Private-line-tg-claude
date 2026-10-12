@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Prepare the exact Marzban/Xray runtime used by Private Line.
+# Prepare one reproducible Marzban/Xray runtime for Private Line.
 #
-# Marzban v0.8.4 remains the management/API layer, while Xray 26.6.27 is pinned
-# explicitly for current REALITY client compatibility. The only Marzban source
-# override is operations.py: upstream silently swallows Xray gRPC
-# ConnectionError during user hot-add/hot-remove, so we add bounded retries and
-# keep the failure visible in logs. A real E2E canary still decides admission.
+# Marzban v0.8.4 commits a user to DB and then schedules Xray mutation through
+# FastAPI BackgroundTasks. Upstream also swallows xray-api ConnectionError in
+# threaded helpers. That allows HTTP 200 + a valid UUID while the live Xray
+# process does not know the user. Private Line makes critical POST/PUT user
+# mutations synchronous and retry-bounded: HTTP success means HandlerService
+# accepted the mutation; otherwise the control plane retries/fails closed.
 set -Eeuo pipefail
 umask 077
 
@@ -19,8 +20,9 @@ CORE_DIR="$DATA_DIR/xray-core/$XRAY_VERSION"
 CORE="$CORE_DIR/xray"
 OVERRIDE_DIR="$DATA_DIR/overrides"
 OPERATIONS_OVERRIDE="$OVERRIDE_DIR/operations.py"
+USER_ROUTER_OVERRIDE="$OVERRIDE_DIR/user.py"
 COMPOSE_OVERRIDE="$MARZBAN_DIR/docker-compose.override.yml"
-PATCH_MARKER="PRIVATE_LINE_XRAY_HOTADD_RETRY_V1"
+PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V2"
 
 if [[ -z "${MARZBAN_IMAGE:-}" ]]; then
     case "$(uname -m)" in
@@ -43,7 +45,7 @@ chmod 700 "$OVERRIDE_DIR"
 docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 || docker pull "$MARZBAN_IMAGE" >/dev/null
 docker image inspect "$XRAY_IMAGE" >/dev/null 2>&1 || docker pull "$XRAY_IMAGE" >/dev/null
 
-echo "[runtime 1/4] Ensure Xray $XRAY_VERSION"
+echo "[runtime 1/5] Ensure pinned Xray $XRAY_VERSION"
 if [[ ! -x "$CORE" ]] || ! "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION"; then
     tmp_container="$(docker create "$XRAY_IMAGE")"
     tmp_bin="$(mktemp)"
@@ -58,25 +60,17 @@ if [[ ! -x "$CORE" ]] || ! "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xr
     trap - EXIT
 fi
 "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION" || {
-    echo "FAIL: Xray $XRAY_VERSION installation verification failed" >&2
+    echo "FAIL: pinned Xray installation verification failed" >&2
     exit 2
 }
 
-echo "[runtime 2/4] Build minimal Marzban hot-add retry override from pinned image"
-tmp_source="$(mktemp)"
-tmp_patched="$(mktemp)"
-cleanup_patch() {
-    rm -f "${tmp_source:-}" "${tmp_patched:-}"
-}
-trap cleanup_patch EXIT
+echo "[runtime 2/5] Patch Marzban Xray mutation helpers: synchronous + bounded retry"
+OPS_SOURCE="$(mktemp)"
+OPS_PATCHED="$(mktemp)"
+docker run --rm --entrypoint cat "$MARZBAN_IMAGE" /code/app/xray/operations.py > "$OPS_SOURCE"
+[[ -s "$OPS_SOURCE" ]] || { echo "FAIL: cannot read upstream operations.py" >&2; exit 2; }
 
-docker run --rm --entrypoint cat "$MARZBAN_IMAGE" /code/app/xray/operations.py > "$tmp_source"
-[[ -s "$tmp_source" ]] || {
-    echo "FAIL: cannot read Marzban operations.py from pinned image" >&2
-    exit 2
-}
-
-SOURCE="$tmp_source" DEST="$tmp_patched" MARKER="$PATCH_MARKER" python3 - <<'PY'
+SOURCE="$OPS_SOURCE" DEST="$OPS_PATCHED" MARKER="$PATCH_MARKER" python3 - <<'PY'
 import ast
 import os
 from pathlib import Path
@@ -93,91 +87,64 @@ if "from time import sleep" not in src:
 
 def replace_function(text: str, name: str, replacement: str) -> str:
     start = text.index(f"@threaded_function\ndef {name}(")
-    next_marker = text.find("\n\n@threaded_function", start + 1)
-    if next_marker < 0:
-        next_marker = text.find("\n\ndef ", start + 1)
-    if next_marker < 0:
-        raise RuntimeError(f"cannot find end of {name}")
-    return text[:start] + replacement.rstrip() + text[next_marker:]
+    nxt = text.find("\n\n@threaded_function", start + 1)
+    if nxt < 0:
+        nxt = text.find("\n\ndef ", start + 1)
+    if nxt < 0:
+        raise RuntimeError(f"cannot locate end of {name}")
+    return text[:start] + replacement.rstrip() + text[nxt:]
 
 add = f'''# {marker}
-@threaded_function
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
     delays = (0.10, 0.30, 0.80, 1.50)
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
+            api.add_inbound_user(tag=inbound_tag, user=account, timeout=10)
             return
         except xray.exc.EmailExistsError:
             return
-        except xray.exc.ConnectionError as exc:
+        except xray.exc.ConnectionError:
             if attempt == len(delays):
-                logger.error(
-                    "Xray hot-add failed after %d attempts for inbound %s: %s",
-                    attempt, inbound_tag, type(exc).__name__,
-                )
-                return
+                raise
             sleep(delay)
 '''
 
-remove = '''@threaded_function
-def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
+remove = '''def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
     delays = (0.10, 0.30, 0.80, 1.50)
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.remove_inbound_user(tag=inbound_tag, email=email, timeout=30)
+            api.remove_inbound_user(tag=inbound_tag, email=email, timeout=10)
             return
         except xray.exc.EmailNotFoundError:
             return
-        except xray.exc.ConnectionError as exc:
+        except xray.exc.ConnectionError:
             if attempt == len(delays):
-                logger.error(
-                    "Xray hot-remove failed after %d attempts for inbound %s: %s",
-                    attempt, inbound_tag, type(exc).__name__,
-                )
-                return
+                raise
             sleep(delay)
 '''
 
-alter = '''@threaded_function
-def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
+alter = '''def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
     delays = (0.10, 0.30, 0.80, 1.50)
-    removed = False
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.remove_inbound_user(
-                tag=inbound_tag, email=account.email, timeout=30
-            )
-            removed = True
+            api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=10)
             break
         except xray.exc.EmailNotFoundError:
-            removed = True
             break
-        except xray.exc.ConnectionError as exc:
+        except xray.exc.ConnectionError:
             if attempt == len(delays):
-                logger.error(
-                    "Xray hot-alter remove failed after %d attempts for inbound %s: %s",
-                    attempt, inbound_tag, type(exc).__name__,
-                )
-                return
+                raise
             sleep(delay)
-
-    if not removed:
-        return
 
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
+            api.add_inbound_user(tag=inbound_tag, user=account, timeout=10)
             return
         except xray.exc.EmailExistsError:
             return
-        except xray.exc.ConnectionError as exc:
+        except xray.exc.ConnectionError:
             if attempt == len(delays):
-                logger.error(
-                    "Xray hot-alter add failed after %d attempts for inbound %s: %s",
-                    attempt, inbound_tag, type(exc).__name__,
-                )
-                return
+                raise
             sleep(delay)
 '''
 
@@ -185,37 +152,73 @@ src = replace_function(src, "_add_user_to_inbound", add)
 src = replace_function(src, "_remove_user_from_inbound", remove)
 src = replace_function(src, "_alter_inbound_user", alter)
 
-# Marzban v0.8.4 images predating upstream PR #1642 can strip Vision from RAW.
-# Supporting RAW here is harmless for our TCP inbound and makes the override
-# correct if the network alias changes between Xray releases.
-src = src.replace(
-    "not in ('tcp', 'kcp')",
-    "not in ('tcp', 'raw', 'kcp')",
-)
-src = src.replace(
-    "in ('tcp', 'kcp')",
-    "in ('tcp', 'raw', 'kcp')",
-)
+# Upstream PR #1642 added RAW to the Vision allow-list. Keep the pinned 0.8.4
+# source compatible even though Private Line deliberately uses TCP.
+src = src.replace("not in ('tcp', 'kcp')", "not in ('tcp', 'raw', 'kcp')")
+src = src.replace("in ('tcp', 'kcp')", "in ('tcp', 'raw', 'kcp')")
 
 ast.parse(src, filename="operations.py")
 Path(os.environ["DEST"]).write_text(src)
 PY
 
-python3 -m py_compile "$tmp_patched"
-if [[ ! -s "$OPERATIONS_OVERRIDE" ]] || ! cmp -s "$tmp_patched" "$OPERATIONS_OVERRIDE"; then
-    install -m 600 "$tmp_patched" "$OPERATIONS_OVERRIDE"
-fi
-grep -q "$PATCH_MARKER" "$OPERATIONS_OVERRIDE" || {
-    echo "FAIL: Marzban hot-add retry patch marker is missing" >&2
-    exit 2
-}
+python3 -m py_compile "$OPS_PATCHED"
+install -m 600 "$OPS_PATCHED" "$OPERATIONS_OVERRIDE"
 
-echo "[runtime 3/4] Ensure persistent read-only Marzban override mount"
+echo "[runtime 3/5] Patch critical Marzban user POST/PUT to wait for live Xray"
+USER_SOURCE="$(mktemp)"
+USER_PATCHED="$(mktemp)"
+docker run --rm --entrypoint cat "$MARZBAN_IMAGE" /code/app/routers/user.py > "$USER_SOURCE"
+[[ -s "$USER_SOURCE" ]] || { echo "FAIL: cannot read upstream user.py" >&2; exit 2; }
+
+SOURCE="$USER_SOURCE" DEST="$USER_PATCHED" MARKER="$PATCH_MARKER" python3 - <<'PY'
+import ast
+import os
+from pathlib import Path
+
+src = Path(os.environ["SOURCE"]).read_text()
+marker = os.environ["MARKER"]
+
+post_old = "    bg.add_task(xray.operations.add_user, dbuser=dbuser)\n"
+post_new = (
+    f"    # {marker}: do not return HTTP success before live Xray accepts user\n"
+    "    xray.operations.add_user(dbuser=dbuser)\n"
+)
+if post_old not in src:
+    raise RuntimeError("upstream POST /user mutation hook changed")
+src = src.replace(post_old, post_new, 1)
+
+modify_old = '''    if user.status in [UserStatus.active, UserStatus.on_hold]:
+        bg.add_task(xray.operations.update_user, dbuser=dbuser)
+    else:
+        bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+'''
+modify_new = '''    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V2:
+    # status/proxy/inbound mutation is successful only after live Xray accepts it.
+    if user.status in [UserStatus.active, UserStatus.on_hold]:
+        xray.operations.update_user(dbuser=dbuser)
+    else:
+        xray.operations.remove_user(dbuser=dbuser)
+'''
+if modify_old not in src:
+    raise RuntimeError("upstream PUT /user mutation hook changed")
+src = src.replace(modify_old, modify_new, 1)
+
+ast.parse(src, filename="user.py")
+Path(os.environ["DEST"]).write_text(src)
+PY
+
+python3 -m py_compile "$USER_PATCHED"
+install -m 600 "$USER_PATCHED" "$USER_ROUTER_OVERRIDE"
+
+rm -f "$OPS_SOURCE" "$OPS_PATCHED" "$USER_SOURCE" "$USER_PATCHED"
+
+echo "[runtime 4/5] Install read-only source overrides"
 cat > "$COMPOSE_OVERRIDE.tmp" <<EOF
 services:
   marzban:
     volumes:
       - $OPERATIONS_OVERRIDE:/code/app/xray/operations.py:ro
+      - $USER_ROUTER_OVERRIDE:/code/app/routers/user.py:ro
 EOF
 chmod 600 "$COMPOSE_OVERRIDE.tmp"
 if [[ ! -f "$COMPOSE_OVERRIDE" ]] || ! cmp -s "$COMPOSE_OVERRIDE.tmp" "$COMPOSE_OVERRIDE"; then
@@ -224,11 +227,10 @@ else
     rm -f "$COMPOSE_OVERRIDE.tmp"
 fi
 
-echo "[runtime 4/4] Verify artifacts"
+echo "[runtime 5/5] Verify exact runtime artifacts"
 docker compose -f "$MARZBAN_DIR/docker-compose.yml" -f "$COMPOSE_OVERRIDE" config -q
 grep -q "$PATCH_MARKER" "$OPERATIONS_OVERRIDE"
+grep -q "$PATCH_MARKER" "$USER_ROUTER_OVERRIDE"
 "$CORE" version 2>/dev/null | head -n1 | grep -q "^Xray $XRAY_VERSION"
 
-cleanup_patch
-trap - EXIT
-echo "PRIVATE LINE RUNTIME PASS: Marzban v0.8.4 + Xray $XRAY_VERSION + bounded gRPC hot-add retries"
+echo "PRIVATE LINE RUNTIME PASS: Marzban v0.8.4 + Xray $XRAY_VERSION + synchronous verified user mutations"
