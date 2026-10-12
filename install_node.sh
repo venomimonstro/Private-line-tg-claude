@@ -277,6 +277,7 @@ success "Reality Public Key: $PUBLIC_KEY"
 #  - plain UDP DNS (1.1.1.1, 8.8.8.8)
 VPN_PORT_VAL=$VPN_PORT \
 PRIVATE_KEY_VAL="$PRIVATE_KEY" \
+PUBLIC_KEY_VAL="$PUBLIC_KEY" \
 REALITY_SNI_VAL="$REALITY_SNI" \
 REALITY_DEST_VAL="$REALITY_DEST" \
 python3 << 'PYEOF' > "$MARZBAN_DATA/xray_config.json"
@@ -297,9 +298,15 @@ config = {
             "security": "reality",
             "realitySettings": {
                 "show": False,
-                "dest": os.environ["REALITY_DEST_VAL"],
+                "target": os.environ["REALITY_DEST_VAL"],
                 "serverNames": [os.environ["REALITY_SNI_VAL"]],
                 "privateKey": os.environ["PRIVATE_KEY_VAL"],
+                # Marzban 0.8.x expects publicKey metadata when its bundled
+                # x25519 output parser cannot understand newer Xray labels.
+                "publicKey": os.environ["PUBLIC_KEY_VAL"],
+                "minClientVer": "",
+                "maxClientVer": "",
+                "maxTimeDiff": 0,
                 "shortIds": [os.urandom(8).hex() for _ in range(8)]
             }
         }
