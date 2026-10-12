@@ -200,7 +200,7 @@ inbound["streamSettings"] = {
     "security": "reality",
     "realitySettings": {
         "show": False,
-        "target": target,
+        "dest": target,
         "xver": 0,
         "serverNames": [target_host],
         "privateKey": private_key,
