@@ -151,7 +151,8 @@ print("PASS: Chrome client ZIP is packaged and available inside admin/bot image"
 from pathlib import Path
 native = Path("/app/data/windows_dist/PrivateLineSetup.exe")
 assert native.is_file() and native.stat().st_size > 100_000
-assert native.read_bytes()[:2] == b"MZ"
+with native.open("rb") as fh:
+    assert fh.read(2) == b"MZ"
 print("PASS: native Windows EXE is mounted and available to admin runtime")
 PY
 
