@@ -171,13 +171,13 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("docker compose restart", text)
         self.assertNotIn("privateKey", text)
 
-    def test_server_reality_uses_bundled_xray_dest_schema(self):
+    def test_server_reality_uses_xray_26627_target_schema(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
-        self.assertIn('"dest": os.environ["REALITY_DEST_VAL"]', installer)
-        self.assertIn('"dest": target', golden)
-        self.assertNotIn('"target": os.environ["REALITY_DEST_VAL"]', installer)
-        self.assertNotIn('"target": target', golden)
+        self.assertIn('"target": os.environ["REALITY_DEST_VAL"]', installer)
+        self.assertIn('"target": target', golden)
+        self.assertNotIn('"dest": os.environ["REALITY_DEST_VAL"]', installer)
+        self.assertNotIn('"dest": target', golden)
 
     def test_golden_converger_validates_reality_target_every_run(self):
         text = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
