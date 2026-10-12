@@ -43,15 +43,13 @@ def digest(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
 
 
-async def active_user_links(session: AsyncSession, user_id: int) -> list[str]:
-    """Return healthy Windows-compatible endpoints in deterministic failover order.
+async def active_user_servers(session: AsyncSession, user_id: int) -> list[dict]:
+    """Existing paid credentials, including temporarily unhealthy nodes.
 
-    One API request can therefore give the native client primary + reserve
-    credentials without repeated profile fetches. Quarantined/staging nodes are
-    intentionally excluded: existing credentials remain stored, but Windows
-    will not prefer a node that has not passed current production admission.
+    Never hide an already-issued key because the *monitor* is stale. New-key
+    admission stays fail-closed elsewhere. Windows performs a direct VLESS
+    handshake/HTTPS probe and can let a user choose an alternative node.
     """
-    fresh_after = datetime.utcnow() - timedelta(minutes=3)
     rows = (await session.execute(
         select(VpnKey, VpnServer)
         .join(Subscription, Subscription.id == VpnKey.subscription_id)
@@ -65,28 +63,49 @@ async def active_user_links(session: AsyncSession, user_id: int) -> list[str]:
                 SubscriptionStatus.expires_soon,
             ]),
             Subscription.expires_at > datetime.utcnow(),
-            VpnServer.status == VpnServerStatus.active,
-            VpnServer.is_selectable.is_(True),
-            VpnServer.last_e2e_success_at.is_not(None),
-            VpnServer.last_e2e_success_at >= fresh_after,
+            VpnServer.status != VpnServerStatus.disabled,
             VpnServer.provider != "private-line-primary",
         )
         .order_by(VpnServer.id.asc(), VpnKey.id.asc())
     )).all()
-    links: list[str] = []
+    found: dict[int, dict] = {}
     for key, server in rows:
-        if _server_protocol(server) != "marzban":
+        if server.id in found or _server_protocol(server) != "marzban":
             continue
-        link = get_client_access_url(key)
-        if link not in links:
-            links.append(link)
-        if len(links) >= 3:
-            break
-    return links
+        try:
+            link = get_client_access_url(key)
+            if not link.startswith("vless://"):
+                continue
+        except (ValueError, TypeError):
+            continue
+        healthy = (
+            server.status == VpnServerStatus.active
+            and server.is_selectable
+            and server.last_e2e_success_at is not None
+            and server.last_e2e_success_at >= datetime.utcnow() - timedelta(minutes=15)
+        )
+        label = " · ".join(
+            s for s in (server.flag_emoji, server.city or server.country, server.name)
+            if s
+        )
+        found[server.id] = {
+            "id": server.id,
+            "name": label[:110] or f"Сервер {server.id}",
+            "status": "healthy" if healthy else "unchecked",
+            "vless_url": link,
+        }
+
+    servers = list(found.values())
+    servers.sort(key=lambda item: (item["status"] != "healthy", item["id"]))
+    return servers[:20]
+
+
+async def active_user_links(session: AsyncSession, user_id: int) -> list[str]:
+    """Legacy Windows profile representation."""
+    return [item["vless_url"] for item in await active_user_servers(session, user_id)]
 
 
 async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
-    """Backward-compatible primary endpoint helper."""
     links = await active_user_links(session, user_id)
     return links[0] if links else None
 
