@@ -699,6 +699,80 @@ class MarzbanClient:
             port=None,
         )
 
+    async def get_key(self, name: str) -> MarzbanKey:
+        """Read one existing active VLESS/REALITY credential without mutation.
+
+        Used by synthetic health probes and other read-only checks. It never
+        restarts Xray, edits the Marzban user, or rotates any credential.
+        """
+        safe_name = name[:32]
+        headers = await self._headers()
+        response = await self._client.get(
+            f"{self._base}/api/user/{safe_name}", headers=headers
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        config = await self._get_core_config()
+        reality_inbounds = [
+            item for item in (config or {}).get("inbounds", [])
+            if item.get("protocol") == "vless"
+            and item.get("streamSettings", {}).get("security") == "reality"
+        ]
+        if len(reality_inbounds) != 1:
+            raise MarzbanConfigError("Expected exactly one VLESS Reality inbound")
+        inbound = reality_inbounds[0]
+        tag = inbound.get("tag")
+        port = inbound.get("port")
+        if not isinstance(tag, str) or not tag or not isinstance(port, int):
+            raise MarzbanConfigError("Invalid VLESS Reality inbound")
+
+        proxy = data.get("proxies", {}).get("vless", {})
+        try:
+            user_uuid = str(UUID(proxy.get("id") or ""))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise MarzbanConfigError("Existing Marzban user has invalid UUID") from exc
+        if (
+            data.get("status") != "active"
+            or proxy.get("flow") != "xtls-rprx-vision"
+            or tag not in data.get("inbounds", {}).get("vless", [])
+        ):
+            raise MarzbanConfigError(
+                "Existing Marzban user is not active on the production Reality/Vision inbound"
+            )
+
+        reality = await self.get_reality_params()
+        if reality is None:
+            raise MarzbanConfigError("Reality configuration unavailable")
+        public_key, short_id, sni = reality
+
+        hosts = await self._client.get(f"{self._base}/api/hosts", headers=headers)
+        if hosts.status_code != 200 or not isinstance(hosts.json(), dict):
+            raise MarzbanConfigError("Marzban public hosts unavailable")
+        entries = hosts.json().get(tag, [])
+        public = []
+        for item in entries if isinstance(entries, list) else []:
+            if not isinstance(item, dict) or item.get("is_disabled") in (True, "true", "True"):
+                continue
+            address = item.get("address")
+            try:
+                if isinstance(address, str) and ipaddress.ip_address(address).is_global:
+                    public.append(item)
+            except ValueError:
+                continue
+        if len(public) != 1:
+            raise MarzbanConfigError("Expected exactly one public host for Reality probe")
+
+        address = public[0]["address"]
+        configured_port = public[0].get("port")
+        public_port = port if configured_port in (None, "", 0, "0") else int(configured_port)
+        base = (
+            f"vless://{user_uuid}@{address}:{public_port}"
+            f"?type=tcp&security=none#{safe_name}"
+        )
+        access_url = self._inject_reality(base, public_key, short_id, sni)
+        return MarzbanKey(id=safe_name, name=safe_name, access_url=access_url, port=None)
+
     # ─── Repair ────────────────────────────────────────────────────────────────
 
     async def repair_all_users_inbounds(self) -> tuple[int, int]:
