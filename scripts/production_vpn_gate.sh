@@ -77,6 +77,9 @@ for server_id in "${NODE_IDS[@]}"; do
             >/dev/null 2>&1 || true
         fail "Zero-restart fresh-user tunnel failed on server $server_id"
     fi
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$server_id" --hot-add-success \
+        || fail "Could not persist hot-add proof for server $server_id"
     echo "--- persistent synthetic smoke: server $server_id ---"
     if ! bash scripts/smoke_vpn_node.sh "$server_id"; then
         docker compose exec -T admin python -m app.node_probe_state \
