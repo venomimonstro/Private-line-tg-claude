@@ -218,7 +218,11 @@ cfg["outbounds"] = [
 cfg["routing"] = {
     "domainStrategy": "AsIs",
     "rules": [
-        {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
+        {"type": "field", "ip": [
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+            "127.0.0.0/8", "169.254.0.0/16",
+            "::1/128", "fc00::/7", "fe80::/10"
+        ], "outboundTag": "block"},
         {"type": "field", "network": "tcp,udp", "outboundTag": "direct"},
     ],
 }
@@ -229,7 +233,7 @@ print(f"PASS: canonical inbound tag={tag!r}; credentials preserved")
 PY
 
 # Test the exact candidate before touching production.
-docker compose exec -T marzban "$CORE" run -test -config "$CANDIDATE" </dev/null >/dev/null \
+"$CORE" run -test -config "$CANDIDATE" </dev/null >/dev/null \
     || { echo "FAIL: pinned Xray rejected canonical candidate" >&2; exit 2; }
 
 CHANGED=0
@@ -340,9 +344,9 @@ done
 }
 
 echo "[7/7] Verify running pinned core and canonical static config"
-docker compose exec -T marzban "$CORE" version </dev/null | head -1 | grep -q "^Xray $XRAY_VERSION" \
+"$CORE" version </dev/null | head -1 | grep -q "^Xray $XRAY_VERSION" \
     || { echo "FAIL: wrong Xray binary" >&2; exit 2; }
-docker compose exec -T marzban "$CORE" run -test -config "$CONFIG" </dev/null >/dev/null \
+"$CORE" run -test -config "$CONFIG" </dev/null >/dev/null \
     || { echo "FAIL: live static config no longer validates" >&2; exit 2; }
 
 echo "GOLDEN NODE PASS"
