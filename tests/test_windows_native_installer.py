@@ -59,6 +59,31 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         finally:
             native.BASE_INSTALLER = old
 
+    def test_stream_snapshot_survives_atomic_replacement(self):
+        old = native.BASE_INSTALLER
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                base = Path(td) / "PrivateLineSetup.exe"
+                base.write_bytes(b"MZ" + b"A" * 150_000)
+                native.BASE_INSTALLER = base
+                overlay = native.build_personalization_overlay(
+                    base_url="https://198.51.100.10",
+                    pairing_code="x" * 48,
+                    tls_pin="sha256//" + "A" * 44,
+                )
+                size, stream = native.open_personal_windows_exe(
+                    overlay=overlay, chunk_size=64 * 1024
+                )
+                replacement = Path(td) / "new.exe"
+                replacement.write_bytes(b"MZ" + b"B" * 200_000)
+                replacement.replace(base)
+                result = b"".join(stream)
+                self.assertEqual(len(result), size)
+                self.assertTrue(result.startswith(b"MZ" + b"A" * 100))
+                self.assertTrue(result.endswith(overlay))
+        finally:
+            native.BASE_INSTALLER = old
+
     def test_native_installer_is_single_instance_atomic_and_low_load(self):
         root = Path("/app")
         installer = (root / "windows_native/PrivateLine.Installer/Program.cs").read_text(encoding="utf-8")
@@ -72,7 +97,7 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         self.assertIn("/api/windows/enroll", installer)
         pair_block = installer[installer.index("static async Task PairAsync"):]
         self.assertNotIn("/api/windows/profile", pair_block)
-        self.assertIn("iter_personal_windows_exe", route)
+        self.assertIn("open_personal_windows_exe", route)
         self.assertIn("Content-Length", route)
         self.assertIn('"X-Accel-Buffering": "no"', route)
         self.assertNotIn("BytesIO(payload)", route)
@@ -89,7 +114,7 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         self.assertIn("CleanupOrphanXray", client)
         self.assertIn("ProxyState", client)
         self.assertIn("tunnelWatchdog", client)
-        self.assertIn("Task.WhenAll", client)
+        self.assertIn("CurlProbeAsync", client)
         self.assertIn("success<2", client.replace(" ", ""))
         self.assertIn("diagnostics.Checked=false", client.replace(" ", ""))
         self.assertNotIn("_ = FlushPendingAsync()", client)
@@ -97,25 +122,36 @@ class NativeWindowsInstallerTests(unittest.TestCase):
     def test_windows_build_verifies_official_xray_digest_and_reuses_cache(self):
         build = Path("/app/windows_native/build.sh").read_text(encoding="utf-8")
         self.assertIn("Xray-windows-64.zip.dgst", build)
-        self.assertIn("EXPECTED_SHA256", build)
+        self.assertIn("SHA2-256", build)
         self.assertIn("sha256sum", build)
         self.assertIn("windows_cache", build)
-        self.assertIn("dotnet build", build)
         self.assertIn("dotnet publish", build)
-        self.assertIn("PrivateLineSetup.exe.new", build)
-        self.assertIn('mv -f "$OUT/PrivateLineSetup.exe.new"', build)
+        self.assertIn("dotnet publish", build)
+        self.assertIn('STAGED="$OUT/.PrivateLineSetup.', build)
+        self.assertIn('mv -f "$STAGED" "$OUT/PrivateLineSetup.exe"', build)
 
 
-    def test_windows_profile_returns_healthy_failover_set(self):
+    def test_existing_paid_keys_remain_usable_when_health_check_is_stale(self):
         root = Path("/app")
         enrollment = (root / "app/windows_enrollment.py").read_text(encoding="utf-8")
         route = (root / "admin/routes/windows_diagnostics.py").read_text(encoding="utf-8")
-        self.assertIn("async def active_user_links", enrollment)
-        self.assertIn("VpnServer.status == VpnServerStatus.active", enrollment)
-        self.assertIn("VpnServer.is_selectable.is_(True)", enrollment)
-        self.assertIn("last_e2e_success_at >= fresh_after", enrollment)
+        self.assertIn("async def active_user_servers", enrollment)
+        self.assertIn("VpnServer.status != VpnServerStatus.disabled", enrollment)
+        self.assertIn('item["status"] != "healthy"', enrollment)
+        self.assertNotIn("last_e2e_success_at >= fresh_after", enrollment)
+        self.assertIn('"servers": servers', route)
         self.assertIn('"vless_urls": urls', route)
-        self.assertIn('"vless_url": urls[0]', route)
+
+    def test_windows_can_select_named_server_or_direct_telegram_key(self):
+        root = Path("/app")
+        client = (root / "windows_native/PrivateLine.Client/MainForm.cs").read_text(encoding="utf-8")
+        self.assertIn("serverSelector", client)
+        self.assertIn("Автоматически (лучший доступный)", client)
+        self.assertIn("SelectedServerId()", client)
+        self.assertIn("PasteTelegramKey()", client)
+        self.assertIn("DataProtectionScope.CurrentUser", client)
+        self.assertIn("Ключ из Telegram", client)
+        self.assertIn("candidates=availableServers.Where", client)
 
     def test_native_sources_do_not_require_manual_credentials(self):
         root = Path("/app/windows_native")
