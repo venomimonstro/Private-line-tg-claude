@@ -31,7 +31,7 @@ async def run(server_id: int) -> int:
         now = datetime.utcnow()
         if (
             server.last_e2e_success_at is None
-            or server.last_e2e_success_at < now - timedelta(minutes=10)
+            or server.last_e2e_success_at < now - timedelta(minutes=3)
             or server.last_hot_add_success_at is None
             or server.last_hot_add_success_at < now - timedelta(minutes=45)
         ):
