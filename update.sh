@@ -35,6 +35,7 @@ for script in \
     scripts/update_production.sh \
     scripts/update_node_xray.sh \
     scripts/migrate_reality_target.sh \
+    scripts/inspect_node_vless.sh \
     scripts/smoke_vpn_node.sh \
     scripts/probe_vless_e2e.sh \
     scripts/production_vpn_gate.sh; do
