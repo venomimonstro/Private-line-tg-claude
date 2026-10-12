@@ -35,8 +35,21 @@ internal static class Program
             return;
         }
 
-        using var installMutex=new Mutex(true,InstallMutexName,out var ownsInstall);
-        if(!ownsInstall) {
+        var dir=Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PrivateLine"
+        );
+        Directory.CreateDirectory(dir);
+
+        FileStream? installLock=null;
+        try {
+            installLock=new FileStream(
+                Path.Combine(dir,"install.lock"),
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None
+            );
+        } catch(IOException) {
             MessageBox.Show(
                 "Установка Private Line уже выполняется. Дождитесь завершения текущего окна.",
                 "Private Line",
@@ -45,12 +58,7 @@ internal static class Program
             );
             return;
         }
-
-        var dir=Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PrivateLine"
-        );
-        Directory.CreateDirectory(dir);
+        using(installLock) {
 
         Bootstrap? boot=null;
         try {
@@ -94,6 +102,7 @@ internal static class Program
                 MessageBoxIcon.Error
             );
             Environment.ExitCode=1;
+        }
         }
     }
 
@@ -142,12 +151,21 @@ internal static class Program
 
     static Bootstrap ReadBootstrap()
     {
-        var bytes=File.ReadAllBytes(Environment.ProcessPath!);
+        var path=Environment.ProcessPath
+            ??throw new InvalidOperationException("INSTALLER_PATH_MISSING");
         var marker=Encoding.ASCII.GetBytes(Marker);
-        var pos=LastIndexOf(bytes,marker);
+        using var input=new FileStream(
+            path,FileMode.Open,FileAccess.Read,FileShare.Read,16*1024,
+            FileOptions.RandomAccess
+        );
+        var tailLen=(int)Math.Min(input.Length,8192);
+        var tail=new byte[tailLen];
+        input.Seek(-tailLen,SeekOrigin.End);
+        input.ReadExactly(tail);
+        var pos=LastIndexOf(tail,marker);
         if(pos<0) throw new InvalidOperationException("BOOTSTRAP_MISSING");
         var payload=Encoding.UTF8.GetString(
-            bytes,pos+marker.Length,bytes.Length-pos-marker.Length
+            tail,pos+marker.Length,tail.Length-pos-marker.Length
         );
         var b=JsonSerializer.Deserialize<Bootstrap>(payload)
             ??throw new InvalidOperationException("BOOTSTRAP_INVALID");
