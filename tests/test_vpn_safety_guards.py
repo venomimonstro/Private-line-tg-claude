@@ -499,6 +499,19 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("app.node_probe_state", block)
         self.assertIn("--success", block)
 
+    def test_paid_key_failure_gets_only_one_bounded_db_user_resync(self):
+        update = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
+        recovery = (ROOT / "app" / "resync_vpn_node.py").read_text(encoding="utf-8")
+        self.assertIn("app.resync_vpn_node", update)
+        self.assertIn("app.resync_vpn_node", gate)
+        self.assertIn("ONE emergency DB->live Xray resync", update)
+        self.assertIn("one bounded DB-user resync", gate)
+        self.assertIn("restart_core_with_db_users", recovery)
+        self.assertIn("credentials unchanged", recovery)
+        self.assertNotIn("create_key(", recovery)
+        self.assertNotIn("delete_key(", recovery)
+
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
         self.assertIn("retired", text.lower())
