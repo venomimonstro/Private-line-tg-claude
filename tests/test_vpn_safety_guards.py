@@ -439,7 +439,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
         self.assertIn('PUBLIC_KEY_VAL="$PUBLIC_KEY"', installer)
         self.assertIn('"publicKey": os.environ["PUBLIC_KEY_VAL"]', installer)
-        self.assertIn('"dest": os.environ["REALITY_DEST_VAL"]', installer)
+        self.assertIn('"target": os.environ["REALITY_DEST_VAL"]', installer)
         self.assertIn('"publicKey": public_key', golden)
         self.assertIn("PUBLIC_KEY=", golden)
 
@@ -522,6 +522,16 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
         self.assertIn('"profile-title": "Private Line VPN"', route)
         self.assertIn('VpnServer.provider != "private-line-primary"', route)
+
+
+    def test_legacy_node_image_is_self_healed_by_compose_override(self):
+        runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
+        golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn("image: $MARZBAN_IMAGE", runtime)
+        self.assertIn("CURRENT_MARZBAN_IMAGE", golden)
+        self.assertIn('MARZBAN_IMAGE="$EXPECTED_MARZBAN"', golden)
+        self.assertIn("Legacy/unpinned Marzban image detected", golden)
+        self.assertNotIn("Marzban image is not the tested digest-pinned", golden)
 
 
 if __name__ == "__main__":
