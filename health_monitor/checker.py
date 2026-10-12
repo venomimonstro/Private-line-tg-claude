@@ -74,6 +74,19 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
         from app.services.vpn_reconcile import reconcile_marzban_server
         for vpn_server in vpn_servers:
             try:
+                now = datetime.utcnow()
+                if (
+                    vpn_server.last_e2e_success_at is None
+                    or vpn_server.last_e2e_success_at < now - timedelta(minutes=10)
+                ):
+                    failures.append(f"node#{vpn_server.id}: stale real-E2E proof")
+                    continue
+                if (
+                    vpn_server.last_hot_add_success_at is None
+                    or vpn_server.last_hot_add_success_at < now - timedelta(minutes=45)
+                ):
+                    failures.append(f"node#{vpn_server.id}: stale fresh-user hot-add proof")
+                    continue
                 result = await reconcile_marzban_server(
                     session, vpn_server.id, apply=False
                 )
