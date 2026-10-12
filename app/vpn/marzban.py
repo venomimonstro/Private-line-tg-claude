@@ -406,6 +406,8 @@ class MarzbanClient:
         traffic_limit_gb: float | None = None,
         ip_limit: int = 0,
         uuid: str | None = None,
+        *,
+        restart_core: bool = True,
     ) -> MarzbanKey:
         headers = await self._headers()
         safe_name = name[:32]
@@ -662,14 +664,16 @@ class MarzbanClient:
                 "Authoritative VLESS endpoint differs from published Marzban host"
             )
 
-        # Marzban adds/updates Xray users in a background task and may swallow
-        # runtime API connection errors. Do not return a paid credential until
-        # the live core has been rebuilt from the authoritative Marzban DB.
-        await self.restart_core_with_db_users(reason=f"provision {safe_name}")
+        # Marzban 0.8.4 schedules HandlerService hot-add as a background task.
+        # Production-selectable nodes are required to pass a fresh-user E2E
+        # canary without restart. Keep restart_core=True only for explicit
+        # recovery/legacy call sites; normal paid provisioning uses the proven
+        # live-add path and therefore does not interrupt existing sessions.
+        if restart_core:
+            await self.restart_core_with_db_users(reason=f"provision {safe_name}")
 
-        # Re-read the user after the core rebuild. A successful POST/PUT alone
-        # is not enough with Marzban 0.8.x: the DB row may exist while the live
-        # Xray process still has stale user state.
+        # Re-read authoritative Marzban DB state. Live-runtime membership is
+        # proven separately by the hot-add E2E admission gate.
         verify_user = await self._client.get(
             f"{self._base}/api/user/{safe_name}", headers=await self._headers()
         )
@@ -687,8 +691,7 @@ class MarzbanClient:
             or verified.get("status") != "active"
         ):
             raise MarzbanConfigError(
-                "Marzban user is not active on the verified Reality/Vision inbound "
-                "after core restart"
+                "Marzban user is not active on the verified Reality/Vision inbound"
             )
 
         logger.info("Key ready for %s (credentials omitted)", safe_name)
@@ -902,7 +905,7 @@ class MarzbanClient:
                 delay = min(delay * 1.7, 2.0)
         return False
 
-    async def delete_key(self, username: str) -> None:
+    async def delete_key(self, username: str, *, restart_core: bool = True) -> None:
         headers = await self._headers()
         resp = None
         transport_error: Exception | None = None
@@ -947,9 +950,11 @@ class MarzbanClient:
             ) from transport_error
 
         # The DELETE endpoint also schedules removal from Xray in background.
-        # A core resync guarantees a deleted test/revoked user is gone from
-        # the live runtime even if Marzban's background Xray API call failed.
-        await self.restart_core_with_db_users(reason=f"delete {username}")
+        # Explicit revocation keeps the conservative restart fallback. Ephemeral
+        # hot-add canaries pass restart_core=False so the admission test itself
+        # never creates downtime.
+        if restart_core:
+            await self.restart_core_with_db_users(reason=f"delete {username}")
 
     async def get_users(self) -> dict[str, dict]:
         """Read every page; never mistake a truncated list for deleted users."""
