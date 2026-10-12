@@ -121,14 +121,16 @@ fi
 # bind-mounted. A force-recreate without a build would silently keep old code.
 docker compose build admin || fail "application runtime image build failed"
 
-echo "[5/8] Admin..."
-# Recreate only the stateless application container. DB remains untouched.
+echo "[5/8] Database migrations with the newly built application image..."
+# Expand/nullable migrations are applied before the new admin process starts.
+# The previous admin can continue serving while these additive columns appear.
+docker compose run --rm --no-deps admin python -m alembic upgrade head \
+  || fail "database migration failed; existing admin left untouched"
+
+echo "[6/8] Admin..."
+# Recreate only after schema is compatible with the new application model.
 docker compose up -d --no-deps --force-recreate admin
 wait_http http://127.0.0.1:8000/_health 45 || fail "FastAPI admin did not become healthy"
-
-echo "[6/8] Database migrations..."
-docker compose exec -T admin python -m alembic upgrade head
-wait_http http://127.0.0.1:8000/_health 10 || fail "admin unhealthy after migration"
 docker compose exec -T admin python - <<'PY'
 import io
 import json
