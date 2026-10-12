@@ -223,8 +223,16 @@ for key in ("host","port","username","auth_type","secret_b64"):
              tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
              trap '"'"'rm -rf "$tmp"'"'"' EXIT
              tar -xzf - -C "$tmp"
-             bash "$tmp/scripts/update_node_xray.sh"
-             bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com
+             if ! bash "$tmp/scripts/update_node_xray.sh"; then
+                 echo "=== AUTOMATIC NODE DIAGNOSTICS: XRAY UPDATE FAILED ===" >&2
+                 bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
+                 exit 1
+             fi
+             if ! bash "$tmp/scripts/migrate_reality_target.sh" dl.google.com; then
+                 echo "=== AUTOMATIC NODE DIAGNOSTICS: REALITY TARGET FAILED ===" >&2
+                 bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
+                 exit 1
+             fi
              echo "REMOTE NODE PASS"'
 
         echo "[1/4] Remote node convergence (stored SSH access; no terminal prompt)"
