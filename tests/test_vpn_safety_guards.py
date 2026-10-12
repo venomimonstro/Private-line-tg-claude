@@ -200,6 +200,29 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn('version_matches "$WORKDIR/xray"', source)
         self.assertNotIn('version | head -n 1 | grep', source)
 
+    def test_xray_updater_repairs_public_443_firewall(self):
+        source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
+        self.assertIn("ensure_vpn_firewall()", source)
+        self.assertIn('ufw allow 443/tcp comment "VLESS Reality VPN"', source)
+        self.assertIn("UFW still does not allow public TCP/443", source)
+        first_check = source.index("ensure_vpn_firewall")
+        first_success = source.index("no restart required")
+        self.assertLess(first_check, first_success)
+
+    def test_one_command_update_always_converges_node_drift(self):
+        source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        self.assertIn("running idempotent node convergence anyway", source)
+        self.assertIn("NODE_UPDATE=true", source)
+        self.assertIn("update_node_xray.sh", source)
+        self.assertIn("migrate_reality_target.sh", source)
+        self.assertIn("runtime/firewall drift", source)
+
+    def test_ssh_management_failure_does_not_quarantine_data_plane(self):
+        source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        self.assertIn("VPN admission state was not changed because SSH is not a data-plane proof", source)
+        ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/4]')]
+        self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
+
     def test_marzban_create_key_has_live_return_path(self):
         source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
         self.assertIn("return MarzbanKey(", source)
