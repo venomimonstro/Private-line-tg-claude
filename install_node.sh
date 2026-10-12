@@ -292,10 +292,13 @@ done
 
 SERVER_XRAY_VERSION="$(docker compose exec -T marzban "$XRAY_BIN" version 2>/dev/null | head -n1 || true)"
 [[ "$SERVER_XRAY_VERSION" == Xray\ 26.6.27* ]] || die "Marzban не запустил pinned Xray 26.6.27."
-docker compose exec -T marzban grep -q "PRIVATE_LINE_XRAY_HOTADD_RETRY_V1" \
+docker compose exec -T marzban grep -q "PRIVATE_LINE_XRAY_MUTATION_SYNC_V2" \
     /code/app/xray/operations.py \
-    || die "Marzban hot-add retry override не активирован."
-success "Runtime: $SERVER_XRAY_VERSION + Marzban hot-add retry override"
+    || die "Marzban synchronous Xray operations override не активирован."
+docker compose exec -T marzban grep -q "PRIVATE_LINE_XRAY_MUTATION_SYNC_V2" \
+    /code/app/routers/user.py \
+    || die "Marzban synchronous user API override не активирован."
+success "Runtime: $SERVER_XRAY_VERSION + synchronous verified Marzban/Xray user mutations"
 
 # ─── Generate VLESS Reality keys ──────────────────────────────────────────────
 section "Генерация VLESS Reality ключей"
