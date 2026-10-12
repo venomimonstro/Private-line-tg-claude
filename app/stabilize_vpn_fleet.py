@@ -75,13 +75,17 @@ async def run(apply: bool) -> int:
                     )
                 )
                 server.current_users = int(active_count or 0)
-                # Per-key integrity failures must not take a structurally
-                # healthy VPN node offline for every other customer.
+                # This command proves only structural/control-plane
+                # coherence. It must not erase a real data-plane quarantine
+                # reason; only app.node_probe_state --success may do that.
                 healthy += 1
                 if result.errors:
                     failures += 1
-                    server.last_error = f"VPN key reconciliation errors: {result.errors}"
-                else:
+                    if server.status == VpnServerStatus.active:
+                        server.last_error = (
+                            f"VPN key reconciliation errors: {result.errors}"
+                        )
+                elif server.status == VpnServerStatus.active:
                     server.last_error = None
             except Exception as exc:
                 failures += 1
