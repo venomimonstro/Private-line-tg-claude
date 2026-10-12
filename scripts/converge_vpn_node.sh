@@ -376,11 +376,13 @@ RUNNING_XRAY_VERSION="$(docker compose exec -T marzban "$CORE" version 2>/dev/nu
     exit 2
 }
 docker compose exec -T marzban grep -q "$PATCH_MARKER" /code/app/xray/operations.py \
-    || { echo "FAIL: Marzban hot-add retry override is not active" >&2; exit 2; }
+    || { echo "FAIL: Marzban synchronous Xray operations override is not active" >&2; exit 2; }
+docker compose exec -T marzban grep -q "$PATCH_MARKER" /code/app/routers/user.py \
+    || { echo "FAIL: Marzban synchronous user API override is not active" >&2; exit 2; }
 docker compose exec -T marzban "$CORE" run -test -config "$CONFIG" </dev/null >/dev/null \
     || { echo "FAIL: live static config no longer validates" >&2; exit 2; }
 
 echo "GOLDEN NODE PASS"
-echo "Runtime: $RUNNING_XRAY_VERSION + Marzban bounded gRPC hot-add retries."
+echo "Runtime: $RUNNING_XRAY_VERSION + synchronous verified Marzban user mutations."
 echo "Preserved: Marzban DB, user UUIDs, REALITY privateKey, shortIds, inbound tag."
 echo "Canonical: VLESS/TCP/REALITY/Vision-ready on public TCP/443, target=$TARGET."
