@@ -34,6 +34,8 @@ fi
 for script in \
     scripts/update_production.sh \
     scripts/converge_vpn_node.sh \
+    scripts/vpn_health_watch.sh \
+    scripts/install_vpn_health_timer.sh \
     scripts/update_node_xray.sh \
     scripts/migrate_reality_target.sh \
     scripts/inspect_node_vless.sh \
