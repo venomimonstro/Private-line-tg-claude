@@ -18,6 +18,28 @@ cd /opt/marzban
 CONFIG=/var/lib/marzban/xray_config.json
 [ -f "$CONFIG" ] || { echo "FAIL: $CONFIG missing" >&2; exit 2; }
 
+validate_target() {
+  local host="$1" log
+  log="$(mktemp)"
+  if ! timeout 15 openssl s_client -connect "$host:443" \
+      -servername "$host" -tls1_3 -alpn h2 </dev/null >"$log" 2>&1; then
+    rm -f "$log"
+    echo "FAIL: REALITY target $host TLS1.3 handshake failed" >&2
+    return 1
+  fi
+  if ! grep -q 'ALPN protocol: h2' "$log"; then
+    rm -f "$log"
+    echo "FAIL: REALITY target $host did not negotiate HTTP/2" >&2
+    return 1
+  fi
+  rm -f "$log"
+  return 0
+}
+
+# Target health is part of the data plane, not merely installation metadata.
+# Validate it even when no config migration is necessary.
+validate_target "$TARGET_HOST"
+
 if python3 - "$CONFIG" "$TARGET_HOST" <<'PY'
 import json, sys
 cfg=json.load(open(sys.argv[1]))
@@ -39,20 +61,7 @@ then
   exit 0
 fi
 
-echo "[1/5] Validating candidate REALITY target $TARGET_HOST..."
-TLS_LOG="$(mktemp)"
-if ! timeout 15 openssl s_client -connect "$TARGET_HOST:443"     -servername "$TARGET_HOST" -tls1_3 -alpn h2 </dev/null     >"$TLS_LOG" 2>&1; then
-  rm -f "$TLS_LOG"
-  echo "FAIL: candidate target TLS1.3 handshake failed" >&2
-  exit 2
-fi
-if ! grep -q 'ALPN protocol: h2' "$TLS_LOG"; then
-  rm -f "$TLS_LOG"
-  echo "FAIL: candidate target did not negotiate HTTP/2" >&2
-  exit 2
-fi
-rm -f "$TLS_LOG"
-
+echo "[1/5] Candidate REALITY target $TARGET_HOST passed TLS1.3 + h2 validation."
 BACKUP="/var/lib/marzban/backups/reality-target-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$BACKUP"
 cp -p "$CONFIG" "$BACKUP/xray_config.json"
