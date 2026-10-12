@@ -894,7 +894,7 @@ async def register_node(
             server.ssh_port = 22
             server.ssh_username = "root"
         server.max_users = max(1, body.max_users)
-        server.status = VpnServerStatus.active
+        server.status = VpnServerStatus.maintenance
         # Any registration can change credentials/runtime metadata. Pause
         # new assignments until the control plane proves a disposable VLESS
         # user can reach HTTPS through this node. Existing paid keys remain
@@ -918,7 +918,7 @@ async def register_node(
             ssh_port=22,
             ssh_username="root",
             max_users=max(1, body.max_users),
-            status=VpnServerStatus.active,
+            status=VpnServerStatus.maintenance,
             is_selectable=False,
         )
         session.add(server)
