@@ -103,8 +103,12 @@ else
 fi
 
 if [[ "$NODE_UPDATE" != true ]]; then
-    echo "PASS: no node-side code rollout required; runtime/E2E validation is still mandatory."
+    echo "No node-side code change; running idempotent node convergence anyway to repair runtime/firewall drift."
 fi
+# Configuration drift (firewall, REALITY metadata, target, pinned core) can
+# break customer traffic without any Git change. The node updater is designed
+# to be idempotent, so always converge before the mandatory E2E acceptance.
+NODE_UPDATE=true
 
 echo
 echo "=== DISCOVER REGISTERED MARZBAN NODES ==="
@@ -228,7 +232,7 @@ for key in ("host","port","username","auth_type","secret_b64"):
             cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
                 -o BatchMode=yes -i "$SECRET_FILE" \
                 "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || { quarantine_node "$SERVER_ID" "remote node convergence failed"; fail "remote update failed for node $SERVER_ID ($SSH_HOST)"; }
+                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); VPN admission state was not changed because SSH is not a data-plane proof"
         elif [[ "$SSH_AUTH" == "password" ]]; then
             ASKPASS="$NODE_CRED_DIR/askpass"
             cat > "$ASKPASS" <<EOF
@@ -247,14 +251,12 @@ EOF
                     -o PreferredAuthentications=password,keyboard-interactive \
                     -o PubkeyAuthentication=no \
                     "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || { quarantine_node "$SERVER_ID" "remote node convergence failed"; fail "remote update failed for node $SERVER_ID ($SSH_HOST)"; }
+                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); VPN admission state was not changed because SSH is not a data-plane proof"
         else
             fail "unsupported SSH auth type for node $SERVER_ID"
         fi
         rm -rf "$NODE_CRED_DIR"
         unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
-    else
-        echo "[1/4] Node code unchanged; skipping SSH rollout, continuing mandatory runtime validation"
     fi
 
     echo "[2/4] Reconcile Marzban DB/runtime/host metadata"
