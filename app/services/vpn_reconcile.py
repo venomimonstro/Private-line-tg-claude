@@ -343,6 +343,7 @@ async def reconcile_marzban_server(
                             traffic_limit_gb=remaining,
                             ip_limit=ip_limit,
                             uuid=original_uuid,
+                            restart_core=False,
                         )
                         if str(UUID(urlsplit(recreated.access_url).username or "")) != original_uuid:
                             raise MarzbanConfigError("Recreated Marzban user changed UUID")
