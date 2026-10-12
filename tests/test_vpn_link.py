@@ -47,10 +47,10 @@ class VlessShareLinkTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             canonical_client_link(self.URI.replace("#old-profile", "&security=tls#old-profile"))
 
-    def test_empty_short_id_supported(self):
+    def test_empty_short_id_rejected_for_private_line_profile(self):
         raw = self.URI.replace("sid=abcdef0123456789", "sid=")
-        out = canonical_client_link(raw)
-        self.assertIn("sid=", urlsplit(out).query)
+        with self.assertRaises(ValueError):
+            canonical_client_link(raw)
 
     def test_private_line_brand_is_default_profile_name(self):
         shared = canonical_client_link(self.URI)
