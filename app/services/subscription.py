@@ -42,7 +42,7 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
         and get_circuit_breaker(s.id).is_available()
         and (not s.max_users or s.current_users < s.max_users)
         and s.last_e2e_success_at is not None
-        and s.last_e2e_success_at >= now - timedelta(minutes=10)
+        and s.last_e2e_success_at >= now - timedelta(minutes=3)
         and s.last_hot_add_success_at is not None
         and s.last_hot_add_success_at >= now - timedelta(minutes=45)
     ]
@@ -86,7 +86,7 @@ async def ensure_subscription_vpn_key(
             server.status != VpnServerStatus.active
             or not server.is_selectable
             or server.last_e2e_success_at is None
-            or server.last_e2e_success_at < proof_now - timedelta(minutes=10)
+            or server.last_e2e_success_at < proof_now - timedelta(minutes=3)
             or server.last_hot_add_success_at is None
             or server.last_hot_add_success_at < proof_now - timedelta(minutes=45)
         ):
