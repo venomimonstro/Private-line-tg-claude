@@ -41,7 +41,7 @@ internal static class Program
         );
         Directory.CreateDirectory(dir);
 
-        FileStream? installLock=null;
+        FileStream installLock;
         try {
             installLock=new FileStream(
                 Path.Combine(dir,"install.lock"),
