@@ -131,13 +131,15 @@ async def _device_user(request: Request, db: AsyncSession) -> int:
 
 @router.get("/api/windows/profile")
 async def windows_device_profile(request: Request, db: AsyncSession = Depends(get_async_session)):
-    from app.windows_enrollment import active_user_link
+    from app.windows_enrollment import active_user_links
     user_id = await _device_user(request, db)
-    url = await active_user_link(db, user_id)
-    if not url:
-        raise HTTPException(status_code=403, detail="VPN subscription is not active")
-    return JSONResponse({"ok": True, "vless_url": url},
-                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    urls = await active_user_links(db, user_id)
+    if not urls:
+        raise HTTPException(status_code=403, detail="VPN subscription has no healthy Windows endpoint")
+    return JSONResponse(
+        {"ok": True, "vless_url": urls[0], "vless_urls": urls},
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
 
 
 @router.post("/api/windows/report")
