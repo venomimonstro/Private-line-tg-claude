@@ -12,7 +12,7 @@ from uuid import UUID
 import re
 
 _PBK = re.compile(r"[A-Za-z0-9_-]{43,44}\Z")
-_HEX = re.compile(r"(?:[0-9a-fA-F]{2}){0,8}\Z")
+_HEX = re.compile(r"(?:[0-9a-fA-F]{2}){1,8}\Z")
 _SNI = re.compile(r"[A-Za-z0-9.-]{1,253}\Z")
 
 
