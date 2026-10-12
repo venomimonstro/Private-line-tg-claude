@@ -286,10 +286,19 @@ EOF
     SUB_RC=$?
     set -e
     if [[ "$SUB_RC" -eq 0 && "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
-        bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
-            || { quarantine_node "$SERVER_ID" "paid customer VLESS Reality HTTPS probe failed"; fail "paid-key E2E failed: subscription $SUB_ID / node $SERVER_ID"; }
+        if ! bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID"; then
+            echo "Paid key failed while fresh-user + synthetic probes passed."
+            echo "Running ONE emergency DB->live Xray resync for historical runtime drift..."
+            docker compose exec -T admin python -m app.resync_vpn_node \
+                --server "$SERVER_ID" --apply \
+                || { quarantine_node "$SERVER_ID" "emergency Xray DB-user resync failed"; fail "paid-key recovery resync failed on node $SERVER_ID"; }
+            sleep 2
+            bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
+                || { quarantine_node "$SERVER_ID" "paid key still failed after one DB-user resync"; fail "paid-key E2E failed after bounded recovery: subscription $SUB_ID / node $SERVER_ID"; }
+            echo "PASS: historical paid key recovered after one bounded Xray DB-user resync."
+        fi
     else
-        echo "No active paid key on node $SERVER_ID; disposable E2E is sufficient."
+        echo "No active paid key on node $SERVER_ID; fresh-user + synthetic E2E is sufficient."
     fi
 
     docker compose exec -T admin python -m app.node_probe_state \
