@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from html import escape
+from app.services.node_selection import rank_nodes
+
 import asyncio
 import time
 import urllib.parse
@@ -76,7 +79,7 @@ async def speed_test(message: Message, db_user: User) -> None:
                 VpnKey.status == VpnKeyStatus.active,
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.provider != "private-line-primary",
             )
             .limit(1)
         )
@@ -87,7 +90,7 @@ async def speed_test(message: Message, db_user: User) -> None:
             select(VpnServer).where(
                 VpnServer.status == VpnServerStatus.active,
                 VpnServer.is_selectable.is_(True),
-                VpnServer.provider == "marzban",
+                VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.sort_order if hasattr(VpnServer, "sort_order") else VpnServer.id)
         )
@@ -97,16 +100,7 @@ async def speed_test(message: Message, db_user: User) -> None:
         await msg.edit_text("❌ Нет активных серверов.")
         return
 
-    # Measure latency to all servers concurrently
-    async def measure(server: VpnServer) -> tuple[VpnServer, float | None]:
-        hp = _parse_host_port(server.api_url)
-        if hp is None:
-            return server, None
-        host, port = hp
-        latency = await _tcp_latency(host, port)
-        return server, latency
-
-    results = await asyncio.gather(*[measure(s) for s in servers])
+    results = await rank_nodes(servers)
 
     user_server_id = user_key.server_id if user_key else None
 
@@ -117,12 +111,12 @@ async def speed_test(message: Message, db_user: User) -> None:
         flag = server.flag_emoji or ""
         marker = " ← <b>Ваш</b>" if server.id == user_server_id else ""
         lines.append(
-            f"{emoji} {flag} <b>{server.name}</b>{marker}\n"
+            f"{emoji} {flag} <b>{escape(server.name)}</b>{marker}\n"
             f"   Пинг: {ms_str}\n"
         )
 
     lines.append(
-        "\n<i>Это техническая задержка control-plane → API ноды, а не скорость вашего телефона.</i>"
+        "\n<i>Это техническая задержка основной сервер → VPN-порт ноды, а не скорость вашего телефона.</i>"
     )
 
     await msg.edit_text("\n".join(lines), parse_mode="HTML")

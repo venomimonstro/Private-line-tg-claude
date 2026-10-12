@@ -60,15 +60,15 @@ if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]]    && [[ "$(cat "$WINDOWS_
     WINDOWS_STALE=false
 fi
 
-if [[ "$CODE_CHANGED" == "1" || "$WINDOWS_STALE" == true ]]; then
-    if [[ "$WINDOWS_STALE" == true ]]; then
+if [[ "$CODE_CHANGED" == "1" || ( "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ) ]]; then
+    if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ]]; then
         echo "Windows installer is missing/stale; deployment is required."
     fi
     bash scripts/deploy_low_memory.sh
 else
     RUNNING_COUNT="$(docker compose ps --status running -q db admin bot nginx | sed '/^$/d' | wc -l)"
     if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1 && [[ "$RUNNING_COUNT" -eq 4 ]]; then
-        echo "PASS: no new control-plane commit; Windows installer current; all four core services are healthy"
+        echo "PASS: no new control-plane commit; all four core services are healthy"
     else
         echo "Control plane is not fully healthy; running recovery deploy."
         bash scripts/deploy_low_memory.sh
@@ -81,10 +81,14 @@ docker compose exec -T admin python -m unittest \
     tests.test_vless_probe_config \
     tests.test_vpn_safety_guards \
     tests.test_marzban_stability \
-    tests.test_windows_native_installer \
-    tests.test_windows_diagnostics \
-    || fail "VPN/Windows regression suite failed; nodes were not modified"
-echo "PASS: VPN + Windows regression suite"
+    tests.test_node_selection \
+    || fail "VPN regression suite failed; nodes were not modified"
+echo "PASS: VLESS regression suite"
+
+if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" ]]; then
+    docker compose exec -T admin python -m unittest tests.test_windows_native_installer tests.test_windows_diagnostics \
+        || fail "optional Windows regression suite failed"
+fi
 
 # Install/refresh the host-level real data-plane watchdog. The current
 # production-update lock prevents it from racing this rollout.
@@ -236,7 +240,7 @@ for key in ("host","port","username","auth_type","secret_b64"):
              tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
              trap '"'"'rm -rf "$tmp"'"'"' EXIT
              tar -xzf - -C "$tmp"
-             if ! bash "$tmp/scripts/converge_vpn_node.sh"; then
+             if ! MAIN_SERVER_IP=194.146.223.104 bash "$tmp/scripts/converge_vpn_node.sh"; then
                  echo "=== AUTOMATIC NODE DIAGNOSTICS: GOLDEN CONVERGENCE FAILED ===" >&2
                  bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
                  exit 1
@@ -317,6 +321,20 @@ EOF
         || fail "could not publish healthy node $SERVER_ID after successful E2E"
     echo "PASS: node $SERVER_ID ($NODE_HOST)"
 done <<< "$NODE_ROWS"
+
+echo "=== RECOVER PAID ORDERS AFTER VPN ACCEPTANCE ==="
+docker compose exec -T admin python - <<'PYRECOVER'
+import asyncio
+from app.database import async_session_maker
+from app.payments.services import recover_paid_unfulfilled_payments
+async def main():
+    async with async_session_maker() as db:
+        result = await recover_paid_unfulfilled_payments(db, limit=50)
+        print("Paid order recovery:", result)
+        if result["failed"]:
+            raise SystemExit("FAIL: some paid orders remain unfulfilled; see admin payment errors")
+asyncio.run(main())
+PYRECOVER
 
 printf '%s\\n' "$HEAD" > "$STATE_FILE"
 chmod 600 "$STATE_FILE"

@@ -52,9 +52,6 @@ async def add_subscription_server_key(
         or _server_protocol(server) != "marzban"
     ):
         raise ServerSelectionError("Этот VPN-сервер пока недоступен")
-    if server.max_users and server.current_users >= server.max_users:
-        raise ServerSelectionError("На выбранном сервере закончились свободные места")
-
     existing = (await session.execute(
         select(VpnKey).where(
             VpnKey.user_id == user_id,
@@ -69,6 +66,9 @@ async def add_subscription_server_key(
         )
     if existing:
         return existing[0], False
+
+    if server.max_users and server.current_users >= server.max_users:
+        raise ServerSelectionError("На выбранном сервере закончились свободные места")
 
     tariff = await session.get(Tariff, subscription.tariff_id)
     if tariff is None:

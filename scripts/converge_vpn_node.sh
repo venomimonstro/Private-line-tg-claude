@@ -317,7 +317,16 @@ if command -v ufw >/dev/null 2>&1; then
             echo "FAIL: cannot add restricted Marzban API firewall rule" >&2
             exit 2
         }
-    ufw --force enable >/dev/null 2>&1 || true
+    SSH_LISTEN_PORT="$(printf '%s' "${SSH_CONNECTION:-}" | awk '{print $4}')"
+    if [[ "$SSH_LISTEN_PORT" =~ ^[0-9]+$ ]] && (( SSH_LISTEN_PORT >= 1 && SSH_LISTEN_PORT <= 65535 )); then
+        ufw allow from "$CONTROL_IP" to any port "$SSH_LISTEN_PORT" proto tcp \
+            comment "Private Line SSH management" >/dev/null \
+            || { echo "FAIL: cannot preserve SSH management access" >&2; exit 2; }
+    elif ! ufw status | grep -q '^Status: active'; then
+        echo "FAIL: cannot safely enable UFW without the SSH listening port" >&2
+        exit 2
+    fi
+    ufw --force enable >/dev/null 2>&1 || { echo "FAIL: UFW activation failed" >&2; exit 2; }
     ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW' || {
         echo "FAIL: UFW does not allow public TCP/443" >&2
         exit 2

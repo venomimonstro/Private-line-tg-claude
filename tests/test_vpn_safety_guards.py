@@ -279,7 +279,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_marzban_api_is_firewall_restricted_before_startup(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         allow = installer.index('ufw allow from "$MAIN_SERVER_IP"')
-        start = installer.index('info "Запускаю Marzban')
+        start = installer.index('cd "$MARZBAN_DIR" && docker compose up -d')
         self.assertLess(allow, start)
         self.assertIn("UVICORN_HOST=0.0.0.0", installer)
 
@@ -408,7 +408,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("--hot-add-success", source)
         self.assertNotIn("while IFS=\nif (( FAILED", source)
 
-    def test_paid_provisioning_has_no_per-user_xray_restart(self):
+    def test_paid_provisioning_has_no_per_user_xray_restart(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
         self.assertIn("restart_core=False", source)
 
@@ -492,7 +492,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         gate = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
         self.assertIn("quarantine_node", orchestrator)
         self.assertIn("app.node_probe_state", orchestrator)
-        self.assertIn("paid customer VLESS Reality HTTPS probe failed", orchestrator)
+        self.assertIn("paid key still failed after one DB-user resync", orchestrator)
         self.assertIn("VpnServerStatus.unreachable", state)
         self.assertIn("server.is_selectable = False", state)
         self.assertNotIn("delete_key(", state)
@@ -536,7 +536,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
         self.assertIn("retired", text.lower())
         self.assertNotIn("UPDATE vpn_servers", text)
-        self.assertNotIn("/api/hosts", text.split("EOF")[0])
+        self.assertNotIn("curl ", text)
 
     def test_public_subscription_brand(self):
         route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")

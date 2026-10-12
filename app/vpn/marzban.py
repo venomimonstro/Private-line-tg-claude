@@ -220,7 +220,7 @@ class MarzbanClient:
             not cleaned
             or len(cleaned) > 253
             or not re.fullmatch(
-                r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
+                r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
                 r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
                 cleaned,
             )

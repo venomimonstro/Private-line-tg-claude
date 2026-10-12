@@ -13,6 +13,7 @@ from app.database import async_session_maker
 from app.enums import SubscriptionStatus, VpnServerStatus
 from app.models.vpn_server import VpnServer
 from app.models.user import User
+from app.services.node_selection import node_is_ready, rank_nodes
 from app.services.server_access import ServerSelectionError, add_subscription_server_key
 from app.services.vpn_key import get_client_access_url, _server_protocol
 from bot.handlers.access import _get_active_subscription
@@ -37,7 +38,7 @@ async def cmd_servers(message: Message, db_user: User) -> None:
                     VpnServer.provider != "private-line-primary",
                 ).order_by(VpnServer.id.asc())
             )).scalars().all()
-            if _server_protocol(srv) == "marzban"
+            if node_is_ready(srv)
         ]
     if not servers:
         await message.answer("Доступных VPN-нод пока нет.")
@@ -47,6 +48,7 @@ async def cmd_servers(message: Message, db_user: User) -> None:
         text=f"{'✅' if srv.id in existing else '➕'} {srv.flag_emoji or '🌍'} {srv.name}",
         callback_data=f"choose_server:{srv.id}"
     )] for srv in servers]
+    rows.insert(0, [InlineKeyboardButton(text="⚡ Подобрать сервер", callback_data="choose_server:auto")])
     await message.answer(
         "🌍 <b>Серверы Private Line VPN</b>\n"
         "Выберите ноду. Добавление второй не удалит первый ключ.",
@@ -78,7 +80,7 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
         )
         servers = [
             srv for srv in result.scalars().all()
-            if _server_protocol(srv) == "marzban"
+            if node_is_ready(srv)
         ]
 
     if not servers:
@@ -93,6 +95,7 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
         )]
         for srv in servers
     ]
+    rows.insert(0, [InlineKeyboardButton(text="⚡ Подобрать сервер", callback_data="choose_server:auto")])
     await callback.message.answer(
         "🌍 <b>Выберите VPN-сервер</b>\n\n"
         "✅ Подключённый ключ  •  ➕ Добавить сервер\n"
@@ -107,8 +110,9 @@ async def on_geo_switch_start(callback: CallbackQuery, db_user: User) -> None:
 @router.callback_query(F.data.startswith("choose_server:"))
 async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
     try:
-        server_id = int((callback.data or "").split(":", 1)[1])
-        if server_id <= 0:
+        choice = (callback.data or "").split(":", 1)[1]
+        server_id = 0 if choice == "auto" else int(choice)
+        if choice != "auto" and server_id <= 0:
             raise ValueError()
     except (IndexError, ValueError):
         await callback.answer("Некорректный сервер.", show_alert=True)
@@ -119,8 +123,27 @@ async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Нет активной подписки.", show_alert=True)
         return
 
+    await callback.answer("Подбираем VPN-сервер…" if choice == "auto" else "Получаем ключ…")
     try:
         async with async_session_maker() as session:
+            if choice == "auto":
+                candidates = (await session.execute(select(VpnServer).where(
+                    VpnServer.status == VpnServerStatus.active,
+                    VpnServer.is_selectable.is_(True),
+                    VpnServer.provider != "private-line-primary",
+                ))).scalars().all()
+                from app.models.vpn_key import VpnKey
+                from app.enums import VpnKeyStatus
+                owned = set((await session.execute(select(VpnKey.server_id).where(
+                    VpnKey.user_id == db_user.id, VpnKey.subscription_id == sub.id,
+                    VpnKey.status == VpnKeyStatus.active,
+                ))).scalars().all())
+                ranked = await rank_nodes([s for s in candidates
+                    if s.id in owned or not s.max_users or s.current_users < s.max_users])
+                reachable = [s for s, latency in ranked if latency is not None]
+                if not reachable:
+                    raise ServerSelectionError("Нет доступного VPN-сервера. Попробуйте позже.")
+                server_id = reachable[0].id
             key, created = await add_subscription_server_key(
                 session, user_id=db_user.id, subscription_id=sub.id, server_id=server_id
             )
@@ -129,14 +152,11 @@ async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
             display = escape(server.name if server else "VPN")
             await session.commit()
     except ServerSelectionError as exc:
-        await callback.answer(str(exc)[:180], show_alert=True)
+        await callback.message.answer(escape(str(exc)[:180]), parse_mode="HTML")
         return
     except Exception as exc:
         logger.exception("Node selection failed for user=%s node=%s", db_user.id, server_id)
-        await callback.answer(
-            "Не удалось подключить ноду. Существующие VPN-ключи сохранены.",
-            show_alert=True,
-        )
+        await callback.message.answer("Не удалось подключить ноду. Существующие VPN-ключи сохранены.")
         return
 
     await callback.message.answer(
@@ -146,7 +166,6 @@ async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
         "Название профиля: <b>Private Line VPN</b>.",
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("geo_view:"))
