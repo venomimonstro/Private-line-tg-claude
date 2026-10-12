@@ -152,9 +152,10 @@ REALITY_DEST="${REALITY_TARGET_HOST}:443"
 
 mkdir -p "$MARZBAN_DIR" "$MARZBAN_DATA"
 
-# Reproducible runtime: pin the exact official Marzban image and use the
-# Xray binary bundled inside that image. This keeps Marzban's Python/xray-api
-# layer and the core version in the combination shipped by upstream.
+# Reproducible runtime: pin Marzban v0.8.4 and Xray 26.6.27 independently.
+# Current REALITY clients are not reliably compatible with Marzban's old
+# bundled core. A tiny Marzban operations.py override adds bounded gRPC
+# hot-add/hot-remove retries; real E2E still decides whether this node is usable.
 case "$(uname -m)" in
     x86_64)
         MARZBAN_IMAGE="ghcr.io/gozargah/marzban:v0.8.4@sha256:953700b0b91b35dcd5165072fc7029fc3c5bd6ed10d644f80d7cb9a84a9a27f1"
@@ -166,7 +167,7 @@ case "$(uname -m)" in
         die "Неподдерживаемая архитектура Marzban: $(uname -m)"
         ;;
 esac
-XRAY_BIN="/usr/local/bin/xray"
+XRAY_BIN="/var/lib/marzban/xray-core/26.6.27/xray"
 
 info "Загружаю зафиксированный официальный Marzban runtime..."
 docker pull "$MARZBAN_IMAGE" >/dev/null
@@ -236,11 +237,28 @@ UVICORN_PORT=${MARZBAN_PORT}
 SUDO_USERNAME=${MARZBAN_USER}
 SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
-XRAY_EXECUTABLE_PATH=/usr/local/bin/xray
+XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray
 XRAY_ASSETS_PATH=/usr/local/share/xray
 EOF
 
 chmod 600 "$MARZBAN_DIR/.env"
+
+# Fetch the exact runtime preparer through the already pinned control-plane
+# connection. It installs Xray 26.6.27 and a read-only Marzban hot-add retry
+# override before the first Marzban process starts.
+RUNTIME_PREPARER="$(mktemp)"
+trap 'rm -f "$RUNTIME_PREPARER"' EXIT
+curl --insecure --pinnedpubkey "$ADMIN_PIN" -fsSL \
+    -H "X-Node-Token: ${NODE_TOKEN}" \
+    "${ADMIN_URL}/admin/api/marzban-runtime-script" \
+    -o "$RUNTIME_PREPARER" \
+    || die "Не удалось получить runtime preparer с control-plane."
+bash -n "$RUNTIME_PREPARER" || die "Runtime preparer имеет некорректный shell syntax."
+MARZBAN_IMAGE="$MARZBAN_IMAGE" MARZBAN_DIR="$MARZBAN_DIR" MARZBAN_DATA="$MARZBAN_DATA" \
+    bash "$RUNTIME_PREPARER" \
+    || die "Не удалось подготовить Xray/Marzban runtime."
+rm -f "$RUNTIME_PREPARER"
+trap - EXIT
 
 # Close management API before the first process ever binds it.
 # UFW rules are staged first, then enabled, so TCP/2096 is reachable only
@@ -253,7 +271,7 @@ ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp \
     || die "Не удалось ограничить Marzban API по IP основного сервера."
 ufw --force enable >/dev/null 2>&1 || die "Не удалось включить UFW."
 
-info "Запускаю pinned Marzban с bundled Xray..."
+info "Запускаю pinned Marzban с Xray 26.6.27..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
 # Wait for Marzban API to become ready (up to 120s)
@@ -273,14 +291,17 @@ for i in $(seq 1 24); do
 done
 
 SERVER_XRAY_VERSION="$(docker compose exec -T marzban "$XRAY_BIN" version 2>/dev/null | head -n1 || true)"
-[[ "$SERVER_XRAY_VERSION" == Xray* ]] || die "Bundled Xray внутри pinned Marzban не запустился."
-success "Совместимый upstream runtime: $SERVER_XRAY_VERSION"
+[[ "$SERVER_XRAY_VERSION" == Xray\ 26.6.27* ]] || die "Marzban не запустил pinned Xray 26.6.27."
+docker compose exec -T marzban grep -q "PRIVATE_LINE_XRAY_HOTADD_RETRY_V1" \
+    /code/app/xray/operations.py \
+    || die "Marzban hot-add retry override не активирован."
+success "Runtime: $SERVER_XRAY_VERSION + Marzban hot-add retry override"
 
 # ─── Generate VLESS Reality keys ──────────────────────────────────────────────
 section "Генерация VLESS Reality ключей"
 
-XRAY_KEYS="$(docker compose exec -T marzban "$XRAY_BIN" x25519 2>/dev/null || true)"
-[[ -n "$XRAY_KEYS" ]] || die "Bundled Xray не смог сгенерировать Reality keypair."
+XRAY_KEYS="$("$XRAY_BIN" x25519 2>/dev/null || true)"
+[[ -n "$XRAY_KEYS" ]] || die "Xray 26.6.27 не смог сгенерировать Reality keypair."
 
 # Xray outputs vary by release:
 # legacy: "Private key:" / "Public key:"
@@ -354,9 +375,8 @@ PYEOF
 
 success "XRay конфиг с Reality записан (порт $VPN_PORT, один стабильный shortId)"
 
-docker compose exec -T marzban "$XRAY_BIN" run -test \
-    -config /var/lib/marzban/xray_config.json </dev/null >/dev/null \
-    || die "Bundled Xray отклонил финальный VLESS/REALITY конфиг."
+"$XRAY_BIN" run -test -config "$MARZBAN_DATA/xray_config.json" </dev/null >/dev/null \
+    || die "Xray 26.6.27 отклонил финальный VLESS/REALITY конфиг."
 
 # Restart Marzban to apply Reality config
 info "Перезапускаю Marzban с Reality конфигом..."
