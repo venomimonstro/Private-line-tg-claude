@@ -392,7 +392,19 @@ async def disable_vpn_key(
     client = _make_client(server)
     try:
         if isinstance(client, MarzbanClient):
-            await client.disable_key(vpn_key.outline_key_id)
+            # Avoid a node-wide Xray restart when the same live HandlerService
+            # mutation path has recently passed a fresh hot-add + hot-remove
+            # acceptance test. If that proof is stale, fail conservative and
+            # rebuild the core so revocation cannot remain DB-only.
+            hot_remove_proven = bool(
+                server.last_hot_add_success_at
+                and server.last_hot_add_success_at
+                >= datetime.utcnow() - timedelta(minutes=45)
+            )
+            await client.disable_key(
+                vpn_key.outline_key_id,
+                restart_core=not hot_remove_proven,
+            )
         else:
             await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
