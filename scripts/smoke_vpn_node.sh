@@ -25,7 +25,18 @@ if [[ "$MODE" == "--hot-add" ]]; then
 else
     NAME="plprobe_s${SERVER_ID}"
 fi
-PORT=19582
+PORT="$(python3 - <<'PY'
+import socket
+s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+[[ "$PORT" =~ ^[1-9][0-9]{3,4}$ ]] || {
+    echo "FAIL: could not allocate local SOCKS probe port" >&2
+    exit 2
+}
 CONTAINER="private-line-node-smoke-${SERVER_ID}-$"
 
 cleanup() {
@@ -139,7 +150,7 @@ probe "google" "https://www.google.com/generate_204"
 
 if (( SUCCESS < 2 )); then
     echo "FAIL: TCP endpoint is reachable but fewer than 2/3 HTTPS destinations worked through VLESS Reality."
-    echo "This isolates the failure to REALITY/VLESS credentials, target/SNI, live Xray user state, or node outbound routing."
+    echo "This isolates the failure to REALITY/VLESS credentials, dest/SNI, live Xray user state, or node outbound routing."
     docker logs --tail 40 "$CONTAINER" 2>&1 | \
         sed -E \
           -e 's/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/[UUID]/g' \
