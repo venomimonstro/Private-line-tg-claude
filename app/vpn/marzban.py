@@ -214,66 +214,18 @@ class MarzbanClient:
     # ─── Reality params ────────────────────────────────────────────────────────
 
     def _clean_sni(self, raw: str) -> str:
-        """Strip Markdown link formatting from SNI — e.g. [foo](url) → foo."""
-        if not raw:
-            return raw
-
-        cleaned = raw.strip()
-
-        # If there are no brackets, the string is already a clean hostname
-        if "[" not in cleaned and "]" not in cleaned:
-            return cleaned
-
-        # Log repr + hex so we can see exact bytes in production when Markdown is present
-        logger.warning("_clean_sni input repr: %r (hex: %s)", raw, raw.encode("utf-8").hex())
-
-        # Method 1: standard ASCII Markdown regex [text](url)
-        result = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
-        if result != cleaned:
-            logger.warning("SNI Markdown (regex) cleaned: %r → %r", cleaned, result.strip())
-            return result.strip()
-
-        # Method 2: Unicode full-width bracket normalisation
-        normalised = (
-            cleaned
-            .replace("［", "[").replace("］", "]")
-            .replace("（", "(").replace("）", ")")
-            .replace("【", "[").replace("】", "]")
-        )
-        result2 = _MARKDOWN_LINK_RE.sub(r"\1", normalised)
-        if result2 != normalised:
-            logger.warning("SNI Markdown (unicode-bracket) cleaned: %r → %r", cleaned, result2.strip())
-            return result2.strip()
-
-        # Method 3: manual extraction [text] → text
-        if cleaned.startswith("[") and "]" in cleaned:
-            end = cleaned.index("]")
-            candidate = cleaned[1:end].strip()
-            if candidate and "." in candidate and " " not in candidate and "(" not in candidate:
-                logger.warning("SNI bracket-extract cleaned: %r → %r", cleaned, candidate)
-                return candidate
-
-        # Method 4: regex for bare [text]
-        m = re.match(r"^\[([^\]]+)\]", cleaned)
-        if m:
-            candidate = m.group(1).strip()
-            if candidate and "." in candidate:
-                logger.warning("SNI bare-bracket cleaned: %r → %r", cleaned, candidate)
-                return candidate
-
-        # Method 5 (nuclear): extract first domain-like token from anywhere in string
-        # Handles invisible chars, unusual encodings, or any remaining Markdown variants
-        domains = re.findall(r'\b([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)\b', cleaned)
-        if domains:
-            candidate = domains[0]
-            logger.error(
-                "SNI nuclear-extract: all methods failed for %r — using first domain found: %r. "
-                "PLEASE FIX Marzban XRay serverNames config to store plain hostname.",
-                cleaned, candidate
+        """Return one strict DNS hostname; never guess or rewrite REALITY SNI."""
+        cleaned = (raw or "").strip().rstrip(".").lower()
+        if (
+            not cleaned
+            or len(cleaned) > 253
+            or not re.fullmatch(
+                r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
+                r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+                cleaned,
             )
-            return candidate
-
-        logger.error("_clean_sni: could not clean %r — returning as-is", cleaned)
+        ):
+            raise MarzbanConfigError("Reality serverName/SNI must be a plain DNS hostname")
         return cleaned
 
     async def get_reality_params(self) -> tuple[str, str, str] | None:
