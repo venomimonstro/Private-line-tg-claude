@@ -330,7 +330,7 @@ config = {
                 # Marzban 0.8.x expects publicKey metadata when its bundled
                 # x25519 output parser cannot understand newer Xray labels.
                 "publicKey": os.environ["PUBLIC_KEY_VAL"],
-                "minClientVer": "0.0.0",
+                "minClientVer": "",
                 "maxClientVer": "",
                 "maxTimeDiff": 0,
                 "shortIds": [os.urandom(8).hex()]
