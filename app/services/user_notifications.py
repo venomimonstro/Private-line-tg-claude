@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,12 +29,23 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     try:
         first_url: str = ""
 
-        subscription_url = make_subscription_url(user_id)
+        try:
+            subscription_url = make_subscription_url(user_id)
+        except Exception as exc:
+            subscription_url = ""
+            logger.warning(
+                "VPN subscription URL unavailable for Telegram chat %d: %s",
+                user_id, type(exc).__name__,
+            )
         _subscription_hint = (
-            "🔄 <b>Рекомендуется: подписка с автообновлением</b>\n"
-            f"<code>{escape(subscription_url)}</code>\n"
-            "Добавьте этот URL как Subscription/Подписку. "
-            "Список доступных серверов будет обновляться автоматически.\n\n"
+            (
+                "🔄 <b>Рекомендуется: подписка с автообновлением</b>\n"
+                f"<code>{escape(subscription_url)}</code>\n"
+                "Добавьте этот URL как Subscription/Подписку. "
+                "Список доступных серверов будет обновляться автоматически.\n\n"
+            )
+            if subscription_url
+            else ""
         )
 
         _app_hint = (
@@ -45,8 +57,6 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
             "Скопируйте ключ → откройте приложение → нажмите «+» → «Импорт из буфера».\n"
             "Подробная инструкция: кнопка «📱 Как подключиться» в меню."
         )
-
-        from html import escape
 
         if len(vpn_keys) == 1:
             url = get_client_access_url(vpn_keys[0])  # type: ignore[arg-type]
