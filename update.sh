@@ -34,6 +34,7 @@ fi
 for script in \
     scripts/update_production.sh \
     scripts/converge_vpn_node.sh \
+    scripts/prepare_marzban_runtime.sh \
     scripts/vpn_health_watch.sh \
     scripts/install_vpn_health_timer.sh \
     scripts/update_node_xray.sh \
