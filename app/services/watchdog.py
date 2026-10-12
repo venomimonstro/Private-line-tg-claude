@@ -1,9 +1,9 @@
-"""Read-only subscription watchdog.
+"""Subscription availability watchdog with additive failover.
 
-Production rule: a background scheduler may detect and alert, but must never
-mint/rotate/reissue VPN credentials on its own. Recovery is performed by the
-explicit preserve-first fleet stabilizer or by a concrete pending activation
-operation created at payment time.
+It never rotates or deletes an issued VPN credential. When an active
+subscription has no key on a currently healthy/selectable node, the watchdog
+may add a replacement profile on another recently-proven node and deliver it
+to the user. Existing keys remain intact for later recovery.
 """
 from __future__ import annotations
 
@@ -62,21 +62,69 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
     results["ok"] = len(subs) - len(missing)
 
     if missing:
+        from app.models.tariff import Tariff
+        from app.models.user import User
+        from app.services.subscription import ensure_subscription_vpn_key
+        from app.services.user_notifications import send_key_to_user
+
+        for sub in missing:
+            try:
+                tariff = await session.get(Tariff, sub.tariff_id)
+                if tariff is None:
+                    raise ValueError("tariff not found")
+                key = await ensure_subscription_vpn_key(sub, tariff, session)
+                if key is None:
+                    raise RuntimeError("no healthy failover node available")
+                await session.flush()
+
+                healthy_rows = (await session.execute(
+                    select(VpnKey)
+                    .join(VpnServer, VpnServer.id == VpnKey.server_id)
+                    .where(
+                        VpnKey.subscription_id == sub.id,
+                        VpnKey.status == VpnKeyStatus.active,
+                        VpnServer.status == VpnServerStatus.active,
+                        VpnServer.is_selectable.is_(True),
+                    )
+                    .order_by(VpnKey.id.asc())
+                )).scalars().all()
+                if not healthy_rows:
+                    raise RuntimeError("failover key was not persisted on a healthy node")
+
+                user = await session.get(User, sub.user_id)
+                if user is not None and user.telegram_id:
+                    await send_key_to_user(user.telegram_id, list(healthy_rows))
+                results["recovered"] += 1
+                logger.warning(
+                    "watchdog: additive failover restored subscription %d with %d healthy key(s)",
+                    sub.id, len(healthy_rows),
+                )
+            except Exception as exc:
+                results["recovery_failed"] += 1
+                results["errors"].append(
+                    f"sub#{sub.id}:{type(exc).__name__}"
+                )
+                logger.error(
+                    "watchdog additive failover failed for subscription %d: %s",
+                    sub.id, type(exc).__name__, exc_info=True,
+                )
+
+        await session.commit()
         ids = ", ".join(str(sub.id) for sub in missing[:20])
         message = (
-            f"🔴 VPN watchdog: {len(missing)} активных подписок без verified Marzban key.\n"
-            f"Sub IDs: {ids}{'...' if len(missing) > 20 else ''}\n"
-            "Автоматический перевыпуск отключён. Запустите production stabilization."
+            f"⚠️ VPN watchdog: degraded subscriptions={len(missing)}, "
+            f"recovered={results['recovered']}, failed={results['recovery_failed']}.\n"
+            f"Sub IDs: {ids}{'...' if len(missing) > 20 else ''}"
         )
-        logger.error("watchdog: %s", message.replace("\n", " | "))
         await notify_admin(message)
+        results["ok"] += results["recovered"]
     else:
         logger.info("watchdog: all %d active subscriptions have verified keys", len(subs))
     return results
 
 
 async def _find_best_server(session: AsyncSession) -> VpnServer | None:
-    """Read-only helper retained for diagnostics; never creates credentials."""
+    """Return the best currently admitted node for diagnostics/recovery."""
     from app.services.circuit_breaker import CircuitState, get_circuit_breaker
     from app.services.vpn_key import _server_protocol
 
