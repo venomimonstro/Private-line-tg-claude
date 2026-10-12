@@ -43,8 +43,15 @@ def digest(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
 
 
-async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
-    """Never give a device credentials for an expired or deactivated subscription."""
+async def active_user_links(session: AsyncSession, user_id: int) -> list[str]:
+    """Return healthy Windows-compatible endpoints in deterministic failover order.
+
+    One API request can therefore give the native client primary + reserve
+    credentials without repeated profile fetches. Quarantined/staging nodes are
+    intentionally excluded: existing credentials remain stored, but Windows
+    will not prefer a node that has not passed current production admission.
+    """
+    fresh_after = datetime.utcnow() - timedelta(minutes=3)
     rows = (await session.execute(
         select(VpnKey, VpnServer)
         .join(Subscription, Subscription.id == VpnKey.subscription_id)
@@ -53,17 +60,35 @@ async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
             VpnKey.user_id == user_id,
             VpnKey.status == VpnKeyStatus.active,
             Subscription.user_id == user_id,
-            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.expires_soon]),
+            Subscription.status.in_([
+                SubscriptionStatus.active,
+                SubscriptionStatus.expires_soon,
+            ]),
             Subscription.expires_at > datetime.utcnow(),
-            VpnServer.status != VpnServerStatus.disabled,
+            VpnServer.status == VpnServerStatus.active,
+            VpnServer.is_selectable.is_(True),
+            VpnServer.last_e2e_success_at.is_not(None),
+            VpnServer.last_e2e_success_at >= fresh_after,
             VpnServer.provider != "private-line-primary",
         )
-        .order_by(VpnKey.id)
+        .order_by(VpnServer.id.asc(), VpnKey.id.asc())
     )).all()
+    links: list[str] = []
     for key, server in rows:
-        if _server_protocol(server) == "marzban":
-            return get_client_access_url(key)
-    return None
+        if _server_protocol(server) != "marzban":
+            continue
+        link = get_client_access_url(key)
+        if link not in links:
+            links.append(link)
+        if len(links) >= 3:
+            break
+    return links
+
+
+async def active_user_link(session: AsyncSession, user_id: int) -> str | None:
+    """Backward-compatible primary endpoint helper."""
+    links = await active_user_links(session, user_id)
+    return links[0] if links else None
 
 
 async def create_enrollment(session: AsyncSession, user_id: int, *, base_url: str | None = None) -> tuple[str, str, str]:
