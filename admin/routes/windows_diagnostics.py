@@ -181,8 +181,7 @@ async def download_personal_windows_client(request: Request, user_id: int | None
     from app.windows_enrollment import create_enrollment
     from app.windows_native_installer import (
         build_personalization_overlay,
-        iter_personal_windows_exe,
-        personalized_installer_size,
+        open_personal_windows_exe,
     )
     try:
         request_base = str(request.base_url).rstrip("/")
@@ -193,13 +192,13 @@ async def download_personal_windows_client(request: Request, user_id: int | None
         overlay = build_personalization_overlay(
             base_url=base, pairing_code=code, tls_pin=pin
         )
-        total_size = personalized_installer_size(overlay=overlay)
+        total_size, installer_stream = open_personal_windows_exe(overlay=overlay)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="Native Windows installer is not built on this server") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return StreamingResponse(
-        iter_personal_windows_exe(overlay=overlay),
+        installer_stream,
         media_type="application/vnd.microsoft.portable-executable",
         headers={
             "Content-Disposition": 'attachment; filename="PrivateLineSetup.exe"',
