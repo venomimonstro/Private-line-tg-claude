@@ -221,14 +221,18 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("docker pull", source)
         self.assertNotIn("xray.next", source)
 
-    def test_server_xray_comes_from_exact_pinned_marzban_image(self):
+    def test_server_and_owned_clients_share_xray_26627_compatibility_baseline(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
-        self.assertIn("XRAY_EXECUTABLE_PATH=/usr/local/bin/xray", installer)
-        self.assertNotIn("ghcr.io/xtls/xray-core", installer)
-        self.assertIn('CORE="/usr/local/bin/xray"', golden)
-        self.assertIn("EXPECTED_MARZBAN", golden)
-        self.assertNotIn("ghcr.io/xtls/xray-core", golden)
+        smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
+        paid = (ROOT / "scripts" / "probe_vless_e2e.sh").read_text(encoding="utf-8")
+        self.assertIn("xray-core:26.6.27@", installer)
+        self.assertIn("XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray", installer)
+        self.assertIn("XRAY_VERSION=26.6.27", golden)
+        self.assertIn("xray-core:26.6.27@", golden)
+        self.assertIn("xray-core:26.6.27@", smoke)
+        self.assertIn("xray-core:26.6.27@", paid)
+        self.assertIn('"minClientVer": "0.0.0"', golden)
 
     def test_golden_node_is_single_standard_reality_path(self):
         source = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
@@ -273,7 +277,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
     def test_ssh_management_failure_does_not_quarantine_data_plane(self):
         source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
         self.assertIn("VPN admission state was not changed because SSH is not a data-plane proof", source)
-        ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/4]')]
+        ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/5]')]
         self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
 
     def test_subscription_activation_uses_tariff_multi_node_redundancy(self):
@@ -296,6 +300,14 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("stabilize_vpn_fleet", watch)
         self.assertNotIn("restart_core", watch)
         self.assertIn("OnUnitActiveSec=5min", timer)
+
+    def test_golden_runtime_keeps_marzban_and_xray_versions_independently_pinned(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn("marzban:v0.8.4@sha256:", installer)
+        self.assertIn("xray-core:26.6.27@sha256:", installer)
+        self.assertIn("EXPECTED_MARZBAN", golden)
+        self.assertIn("XRAY_VERSION=26.6.27", golden)
 
     def test_paid_provisioning_has_no_per-user_xray_restart(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
