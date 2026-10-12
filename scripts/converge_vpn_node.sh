@@ -207,7 +207,7 @@ inbound["streamSettings"] = {
         # Explicitly accept older/non-Xray client implementations. Newer
         # Xray releases changed the implicit default and broke clients when
         # this field was omitted.
-        "minClientVer": "0.0.0",
+        "minClientVer": "",
         "maxClientVer": "",
         "maxTimeDiff": 0,
         "shortIds": short_ids,
