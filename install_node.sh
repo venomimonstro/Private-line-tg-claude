@@ -341,7 +341,7 @@ config = {
             "security": "reality",
             "realitySettings": {
                 "show": False,
-                "dest": os.environ["REALITY_DEST_VAL"],
+                "target": os.environ["REALITY_DEST_VAL"],
                 "xver": 0,
                 "serverNames": [os.environ["REALITY_SNI_VAL"]],
                 "privateKey": os.environ["PRIVATE_KEY_VAL"],
