@@ -374,6 +374,13 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("/code/app/routers/user.py:ro", runtime)
         self.assertIn("docker-compose.override.yml", runtime)
 
+    def test_golden_converger_requires_both_sync_overrides_after_recreate(self):
+        golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn('/code/app/xray/operations.py', golden)
+        self.assertIn('/code/app/routers/user.py', golden)
+        self.assertIn("synchronous Xray operations override is not active", golden)
+        self.assertIn("synchronous user API override is not active", golden)
+
     def test_marzban_user_api_waits_for_live_xray_mutation(self):
         runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
         self.assertIn("PRIVATE_LINE_XRAY_MUTATION_SYNC_V2", runtime)
