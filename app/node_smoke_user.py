@@ -1,7 +1,8 @@
-"""Disposable Marzban user helper for end-to-end node smoke tests.
+"""Synthetic/canary Marzban user helper for end-to-end VPN tests.
 
-Stdout from create contains a temporary VLESS credential and must only be
-redirected to a mode-0600 temp file. No paid user credentials are touched.
+Supports a persistent read-only synthetic identity and a short-lived hot-add
+canary. Stdout may contain a VLESS credential and must only be redirected to a
+mode-0600 temporary file. Paid-user credentials are never printed or touched.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _make_client, _server_protocol
 from app.services.vpn_link import canonical_client_link
 
-_TEST_NAME = re.compile(r"pltest_[0-9a-f]{16}\Z")
+_TEST_NAME = re.compile(r"(?:pltest_[0-9a-f]{16}|plhot_[0-9a-f]{16}|plprobe_s[1-9][0-9]*)\\Z")
 
 
 async def run(action: str, server_id: int, name: str) -> int:
