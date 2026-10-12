@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+ARG PRIVATE_LINE_REVISION=unknown
+LABEL org.opencontainers.image.revision="$PRIVATE_LINE_REVISION"
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

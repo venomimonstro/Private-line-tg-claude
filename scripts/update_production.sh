@@ -48,6 +48,12 @@ flock -n 9 || fail "another production update is already running"
 
 HEAD="$(git rev-parse HEAD)"
 CODE_CHANGED="${PRIVATE_LINE_CODE_CHANGED:-1}"
+IMAGE_REVISION="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' private-line-app:runtime 2>/dev/null || true)"
+CURRENT_IMAGE_ID="$(docker image inspect -f '{{.Id}}' private-line-app:runtime 2>/dev/null || true)"
+ADMIN_CID="$(docker compose ps -q admin 2>/dev/null || true)"
+BOT_CID="$(docker compose ps -q bot 2>/dev/null || true)"
+ADMIN_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$ADMIN_CID" 2>/dev/null || true)"
+BOT_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$BOT_CID" 2>/dev/null || true)"
 
 echo "=== CONTROL PLANE ==="
 WINDOWS_SOURCE_HASH="$(
@@ -60,7 +66,13 @@ if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]]    && [[ "$(cat "$WINDOWS_
     WINDOWS_STALE=false
 fi
 
-if [[ "$CODE_CHANGED" == "1" || ( "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ) ]]; then
+if [[ "$CODE_CHANGED" == "1" || "$IMAGE_REVISION" != "$HEAD" || -z "$CURRENT_IMAGE_ID" \
+   || "$ADMIN_IMAGE_ID" != "$CURRENT_IMAGE_ID" || "$BOT_IMAGE_ID" != "$CURRENT_IMAGE_ID" \
+   || ( "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ) ]]; then
+    if [[ "$IMAGE_REVISION" != "$HEAD" || "$ADMIN_IMAGE_ID" != "$CURRENT_IMAGE_ID" \
+       || "$BOT_IMAGE_ID" != "$CURRENT_IMAGE_ID" ]]; then
+        echo "Running application image does not match checkout $HEAD; rebuilding before regression tests."
+    fi
     if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ]]; then
         echo "Windows installer is missing/stale; deployment is required."
     fi
@@ -68,12 +80,25 @@ if [[ "$CODE_CHANGED" == "1" || ( "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "
 else
     RUNNING_COUNT="$(docker compose ps --status running -q db admin bot nginx | sed '/^$/d' | wc -l)"
     if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1 && [[ "$RUNNING_COUNT" -eq 4 ]]; then
-        echo "PASS: no new control-plane commit; all four core services are healthy"
+        echo "PASS: running admin/bot image matches checkout; all four core services are healthy"
     else
         echo "Control plane is not fully healthy; running recovery deploy."
         bash scripts/deploy_low_memory.sh
     fi
 fi
+
+# Docker images are immutable. Verify the actual containers after deployment,
+# not only the image tag: an external git pull may have updated the checkout
+# while the already running admin and bot still serve the previous revision.
+LIVE_IMAGE_ID="$(docker image inspect -f '{{.Id}}' private-line-app:runtime 2>/dev/null || true)"
+LIVE_REVISION="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' private-line-app:runtime 2>/dev/null || true)"
+for service in admin bot; do
+    cid="$(docker compose ps -q "$service" 2>/dev/null || true)"
+    [[ -n "$cid" && -n "$LIVE_IMAGE_ID" \
+       && "$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)" == "$LIVE_IMAGE_ID" \
+       && "$LIVE_REVISION" == "$HEAD" ]] \
+        || fail "$service is not running the application image built from $HEAD"
+done
 
 echo "=== VPN REGRESSION GATE ==="
 docker compose exec -T admin python -m unittest \

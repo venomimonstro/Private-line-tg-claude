@@ -142,7 +142,11 @@ fi
 
 # Application source is baked into private-line-app:runtime; it is no longer
 # bind-mounted. A force-recreate without a build would silently keep old code.
-docker compose build admin || fail "application runtime image build failed"
+SOURCE_REVISION="$(git rev-parse HEAD)" || fail "cannot determine source revision"
+docker compose build --build-arg "PRIVATE_LINE_REVISION=$SOURCE_REVISION" admin \
+  || fail "application runtime image build failed"
+IMAGE_REVISION="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' private-line-app:runtime)"
+[[ "$IMAGE_REVISION" == "$SOURCE_REVISION" ]] || fail "built image revision does not match source"
 
 echo "[5/8] Database migrations with the newly built application image..."
 # Expand/nullable migrations are applied before the new admin process starts.

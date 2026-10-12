@@ -221,7 +221,18 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn('bash "$tmp/scripts/migrate_reality_target.sh"', orchestrator)
         self.assertIn("smoke_vpn_node.sh", orchestrator)
         self.assertIn("probe_vless_e2e.sh", orchestrator)
-        self.assertIn("docker compose build admin", deploy)
+        self.assertIn("docker compose build --build-arg", deploy)
+
+    def test_operator_git_pull_cannot_leave_old_admin_image_running(self):
+        updater = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts" / "deploy_low_memory.sh").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn('"$IMAGE_REVISION" != "$HEAD"', updater)
+        self.assertIn('"$ADMIN_IMAGE_ID" != "$CURRENT_IMAGE_ID"', updater)
+        self.assertIn('"$BOT_IMAGE_ID" != "$CURRENT_IMAGE_ID"', updater)
+        self.assertIn('"$LIVE_REVISION" == "$HEAD"', updater)
+        self.assertIn('--build-arg "PRIVATE_LINE_REVISION=$SOURCE_REVISION"', deploy)
+        self.assertIn('LABEL org.opencontainers.image.revision=', dockerfile)
 
     def test_legacy_xray_updater_delegates_to_golden_converger(self):
         source = (ROOT / "scripts" / "update_node_xray.sh").read_text(encoding="utf-8")
