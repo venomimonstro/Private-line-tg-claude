@@ -36,6 +36,10 @@ class VpnServer(Base):
     failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Data-plane admission proofs. API/DB health alone must never authorize
+    # new paid-user provisioning.
+    last_e2e_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_hot_add_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     city: Mapped[str | None] = mapped_column(String(64), nullable=True)
     country_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
     flag_emoji: Mapped[str | None] = mapped_column(String(10), nullable=True)
