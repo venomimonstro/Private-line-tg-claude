@@ -70,7 +70,13 @@ mapfile -t NODE_IDS <<<"$NODE_RAW"
 for server_id in "${NODE_IDS[@]}"; do
     [[ "$server_id" =~ ^[1-9][0-9]*$ ]] || fail "Invalid node ID from database"
     echo "--- disposable smoke: server $server_id ---"
-    bash scripts/smoke_vpn_node.sh "$server_id" --publish
+    if ! bash scripts/smoke_vpn_node.sh "$server_id"; then
+        docker compose exec -T admin python -m app.node_probe_state \
+            --server "$server_id" --failure \
+            --reason "production gate disposable VLESS Reality HTTPS probe failed" \
+            >/dev/null 2>&1 || true
+        fail "Disposable tunnel failed on server $server_id"
+    fi
 done
 
 CURRENT_STEP="8/11 node integrity"; echo "=== 8/11 Deep read-only node audit after publication ==="
@@ -85,7 +91,15 @@ mapfile -t SUB_NODE_IDS <<<"$SUB_NODE_RAW"
 for server_id in "${SUB_NODE_IDS[@]}"; do
     [[ "$server_id" =~ ^[1-9][0-9]*$ ]] || fail "Invalid subscription node ID"
     echo "--- paid-key E2E: subscription $SUB_ID / server $server_id ---"
-    bash scripts/probe_vless_e2e.sh "$SUB_ID" "$server_id"
+    if ! bash scripts/probe_vless_e2e.sh "$SUB_ID" "$server_id"; then
+        docker compose exec -T admin python -m app.node_probe_state \
+            --server "$server_id" --failure \
+            --reason "production gate paid customer VLESS Reality HTTPS probe failed" \
+            >/dev/null 2>&1 || true
+        fail "Paid-key tunnel failed on server $server_id"
+    fi
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$server_id" --success
 done
 
 CURRENT_STEP="11/11 post-test invariants"; echo "=== 11/11 Post-test invariants and fatal-log scan ==="
