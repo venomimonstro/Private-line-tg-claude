@@ -120,10 +120,26 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(httpx.HTTPStatusError):
             await client.create_key("u1s1")
 
-    async def test_wrong_uuid_link_rejected(self):
+    async def test_stale_panel_link_is_ignored_in_favour_of_authoritative_state(self):
         client, _ = await self.conflict(stale_link=True)
-        with self.assertRaises(MarzbanConfigError):
-            await client.create_key("u1s1")
+        key = await client.create_key("u1s1")
+        self.assertIn(UUID, key.access_url)
+        self.assertIn("@185.236.25.152:443", key.access_url)
+        self.assertIn("security=reality", key.access_url)
+        self.assertIn("flow=xtls-rprx-vision", key.access_url)
+        self.assertIn("sid=12", key.access_url)
+
+    async def test_panel_link_transport_fields_cannot_override_reality_profile(self):
+        client, _ = await self.conflict()
+        original = client._client
+
+        # The mock Marzban response may contain syntactically valid but stale
+        # share-link transport fields. create_key must still publish the
+        # authoritative node profile.
+        key = await client.create_key("u1s1")
+        self.assertIn("sni=example.org", key.access_url)
+        self.assertIn("pbk=" + "A" * 43, key.access_url)
+        self.assertIn("type=tcp", key.access_url)
 
     async def test_create_key_fails_closed_when_runtime_resync_fails(self):
         def handler(req):
