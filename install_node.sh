@@ -44,7 +44,25 @@ except ValueError:
 PY
 )"
 fi
-[[ -n "$MAIN_SERVER_IP" ]] || die "Не удалось определить MAIN_SERVER_IP из ADMIN_URL. Укажите MAIN_SERVER_IP вручную."
+if [[ -z "$MAIN_SERVER_IP" ]]; then
+    # For a domain control-plane, use the actual IPv4 peer of the same
+    # certificate-pinned HTTPS endpoint instead of trusting a second DNS-only
+    # resolution for the firewall allow-list.
+    MAIN_SERVER_IP="$(curl -4 --insecure --pinnedpubkey "$ADMIN_PIN" -fsS \
+        -o /dev/null -w '%{remote_ip}' \
+        "${ADMIN_URL}/admin/api/install-script" 2>/dev/null || true)"
+fi
+if ! MAIN_SERVER_IP="$MAIN_SERVER_IP" python3 -c '
+import ipaddress, os, sys
+try:
+    ip = ipaddress.IPv4Address(os.environ["MAIN_SERVER_IP"].strip())
+    if not ip.is_global:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+'; then
+    die "Не удалось безопасно определить публичный IPv4 control-plane."
+fi
 
 # ─── OS check ─────────────────────────────────────────────────────────────────
 OS_ID=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"' || true)
