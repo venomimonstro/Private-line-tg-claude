@@ -7,6 +7,14 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
+# Serialize all fleet-mutating/acceptance activity with update.sh and the
+# scheduled watchdog. This prevents two hot-add canaries from racing each other.
+exec 8>/var/lock/private-line-production-update.lock
+flock -n 8 || {
+    echo "PRODUCTION FAIL: another VPN deploy/health acceptance is running" >&2
+    exit 2
+}
+
 CURRENT_STEP="bootstrap"
 on_error() {
     rc=$?
