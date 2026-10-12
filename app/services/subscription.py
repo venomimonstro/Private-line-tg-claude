@@ -35,11 +35,16 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
         .order_by(VpnServer.current_users)
     )
     servers = result.scalars().all()
+    now = datetime.utcnow()
     available = [
         s for s in servers
         if vpn_key_service._server_protocol(s) == "marzban"
         and get_circuit_breaker(s.id).is_available()
         and (not s.max_users or s.current_users < s.max_users)
+        and s.last_e2e_success_at is not None
+        and s.last_e2e_success_at >= now - timedelta(minutes=10)
+        and s.last_hot_add_success_at is not None
+        and s.last_hot_add_success_at >= now - timedelta(minutes=45)
     ]
     return sorted(available, key=lambda s: s.current_users)
 
@@ -70,10 +75,21 @@ async def ensure_subscription_vpn_key(
     verified: list[VpnKey] = []
     verified_server_ids: set[int] = set()
 
-    # Existing paid credentials are preferred. is_selectable controls only new
-    # admission; it must not invalidate a credential already issued.
+    # Preserve every issued key, but count only keys on currently admitted,
+    # recently-proven nodes as healthy replicas. Quarantined keys remain
+    # deliverable for recovery but never suppress additive failover.
+    proof_now = datetime.utcnow()
     for key, server in rows:
         if vpn_key_service._server_protocol(server) != "marzban":
+            continue
+        if (
+            server.status != VpnServerStatus.active
+            or not server.is_selectable
+            or server.last_e2e_success_at is None
+            or server.last_e2e_success_at < proof_now - timedelta(minutes=10)
+            or server.last_hot_add_success_at is None
+            or server.last_hot_add_success_at < proof_now - timedelta(minutes=45)
+        ):
             continue
         try:
             from app.services.vpn_reconcile import reconcile_marzban_server
@@ -112,7 +128,7 @@ async def ensure_subscription_vpn_key(
                 subscription_id=subscription.id,
                 server=server,
                 traffic_limit_gb=tariff.traffic_limit_gb,
-                label=f"{server.flag_emoji or '🌍'} {server.country}",
+                label=f"{server.flag_emoji or '🌍'} {server.country} • Авто-резерв",
                 session=session,
                 ip_limit=getattr(tariff, "max_devices", 0) or 0,
             )
