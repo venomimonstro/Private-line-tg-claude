@@ -26,8 +26,10 @@ async def main():
         rows=(await db.execute(
             select(VpnServer)
             .where(
-                VpnServer.status == VpnServerStatus.active,
-                VpnServer.is_selectable.is_(True),
+                VpnServer.status.in_([
+                    VpnServerStatus.active,
+                    VpnServerStatus.unreachable,
+                ]),
                 VpnServer.provider != "private-line-primary",
             )
             .order_by(VpnServer.id.asc())
@@ -49,7 +51,7 @@ while IFS= read -r SERVER_ID; do
     if bash scripts/smoke_vpn_node.sh "$SERVER_ID"; then
         docker compose exec -T admin python -m app.node_probe_state \
             --server "$SERVER_ID" --success >/dev/null || true
-        echo "PASS node $SERVER_ID"
+        echo "PASS node $SERVER_ID (healthy/recovered)"
     else
         FAILED=$((FAILED + 1))
         docker compose exec -T admin python -m app.node_probe_state \
