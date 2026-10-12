@@ -261,6 +261,12 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn('@api_router.get("/marzban-runtime-script"', route)
         self.assertIn("secrets.compare_digest", route)
 
+    def test_installer_derives_domain_control_plane_ip_from_pinned_peer(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        self.assertIn("-w '%{remote_ip}'", installer)
+        self.assertIn("--pinnedpubkey", installer)
+        self.assertIn("Не удалось безопасно определить публичный IPv4 control-plane", installer)
+
     def test_node_management_has_no_socat_dependency(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         converger = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
