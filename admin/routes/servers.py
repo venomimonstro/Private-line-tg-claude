@@ -286,9 +286,10 @@ async def add_server(
         ssh_port=22 if ssh_default_host else None,
         ssh_username="root" if ssh_default_host else None,
         max_users=max_users,
-        # Manual entries are staging only. A node becomes customer-selectable
-        # only after the safe Reality reconciliation endpoint verifies it.
-        status=VpnServerStatus.disabled,
+        # Manual entries are staging, not administratively disabled.
+        # Maintenance nodes are included in operator convergence/E2E and become
+        # selectable only after the real fresh-user + HTTPS acceptance gate.
+        status=VpnServerStatus.maintenance,
         is_selectable=False,
     )
     session.add(server)
