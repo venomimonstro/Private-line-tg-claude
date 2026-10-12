@@ -64,6 +64,7 @@ for inbound in cfg.get("inbounds", []):
 if len(rows) != 1:
     raise SystemExit(1)
 inbound, reality = rows[0]
+stream = inbound.get("streamSettings", {})
 if inbound.get("port") != 443:
     raise SystemExit(1)
 if stream.get("network") not in ("tcp", "raw"):
