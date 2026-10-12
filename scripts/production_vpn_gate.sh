@@ -114,11 +114,25 @@ for server_id in "${SUB_NODE_IDS[@]}"; do
     [[ "$server_id" =~ ^[1-9][0-9]*$ ]] || fail "Invalid subscription node ID"
     echo "--- paid-key E2E: subscription $SUB_ID / server $server_id ---"
     if ! bash scripts/probe_vless_e2e.sh "$SUB_ID" "$server_id"; then
-        docker compose exec -T admin python -m app.node_probe_state \
-            --server "$server_id" --failure \
-            --reason "production gate paid customer VLESS Reality HTTPS probe failed" \
-            >/dev/null 2>&1 || true
-        fail "Paid-key tunnel failed on server $server_id"
+        echo "Paid key failed after fresh-user + synthetic probes passed."
+        echo "Running ONE bounded DB->live Xray resync for historical user drift..."
+        if ! docker compose exec -T admin python -m app.resync_vpn_node \
+            --server "$server_id" --apply; then
+            docker compose exec -T admin python -m app.node_probe_state \
+                --server "$server_id" --failure \
+                --reason "production gate emergency DB-user resync failed" \
+                >/dev/null 2>&1 || true
+            fail "Paid-key recovery resync failed on server $server_id"
+        fi
+        sleep 2
+        if ! bash scripts/probe_vless_e2e.sh "$SUB_ID" "$server_id"; then
+            docker compose exec -T admin python -m app.node_probe_state \
+                --server "$server_id" --failure \
+                --reason "paid key failed after one bounded DB-user resync" \
+                >/dev/null 2>&1 || true
+            fail "Paid-key tunnel still failed after bounded recovery on server $server_id"
+        fi
+        echo "PASS: historical paid key recovered after one bounded Xray DB-user resync."
     fi
     docker compose exec -T admin python -m app.node_probe_state \
         --server "$server_id" --success
