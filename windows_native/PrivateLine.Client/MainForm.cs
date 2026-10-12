@@ -147,7 +147,7 @@ public sealed class MainForm : Form
         return new HttpClient(handler){Timeout=TimeSpan.FromSeconds(12)};
     }
 
-    async Task<string> FetchProfileAsync(CancellationToken token)
+    async Task<List<string>> FetchProfilesAsync(CancellationToken token)
     {
         var d=ReadDevice();
         using var http=PinnedHttp(d.TlsPin);
@@ -157,12 +157,34 @@ public sealed class MainForm : Form
         if(!res.IsSuccessStatusCode)
             throw new InvalidOperationException("PROFILE_FETCH_FAILED");
         using var doc=JsonDocument.Parse(await res.Content.ReadAsStringAsync(token));
-        var url=doc.RootElement.GetProperty("vless_url").GetString();
+
+        var urls=new List<string>();
         if(
-            string.IsNullOrWhiteSpace(url)
-            || !url.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
-        ) throw new InvalidOperationException("PROFILE_INVALID");
-        return url;
+            doc.RootElement.TryGetProperty("vless_urls",out var many)
+            && many.ValueKind==JsonValueKind.Array
+        ) {
+            foreach(var item in many.EnumerateArray()) {
+                var value=item.GetString();
+                if(
+                    !string.IsNullOrWhiteSpace(value)
+                    && value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
+                    && !urls.Contains(value,StringComparer.Ordinal)
+                ) urls.Add(value);
+                if(urls.Count>=3)break;
+            }
+        }
+        if(
+            urls.Count==0
+            && doc.RootElement.TryGetProperty("vless_url",out var one)
+        ) {
+            var value=one.GetString();
+            if(
+                !string.IsNullOrWhiteSpace(value)
+                && value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
+            ) urls.Add(value);
+        }
+        if(urls.Count==0)throw new InvalidOperationException("PROFILE_INVALID");
+        return urls;
     }
 
     static Dictionary<string,string> Query(Uri uri)
@@ -445,39 +467,64 @@ public sealed class MainForm : Form
             if(!await XrayOkAsync(token))
                 throw new InvalidOperationException("XRAY_VERSION_INVALID");
 
-            socksPort=AllocateSocksPort();
             status.Text="Получаем актуальный VPN-профиль...";
-            var profile=await FetchProfileAsync(token);
+            var profiles=await FetchProfilesAsync(token);
             stages.Add(new("parse","ok","PROFILE_VALID"));
 
-            var config=BuildXrayConfig(profile);
-            AtomicWrite(ConfigPath,config);
-
-            xray=Process.Start(new ProcessStartInfo(
-                XrayPath,$"run -config \"{ConfigPath}\""
-            ){
-                UseShellExecute=false,
-                CreateNoWindow=true
-            });
-            if(xray is null)throw new InvalidOperationException("XRAY_START_FAILED");
-
-            var ready=false;
-            for(var i=0;i<30;i++) {
+            string? connectedIp=null;
+            Exception? lastFailure=null;
+            for(var endpoint=0;endpoint<profiles.Count;endpoint++) {
                 token.ThrowIfCancellationRequested();
-                await Task.Delay(250,token);
-                if(await SocksReadyAsync(token)){ready=true;break;}
-                if(xray.HasExited)break;
-            }
-            if(!ready)throw new InvalidOperationException("LOCAL_XRAY_FAILED");
-            stages.Add(new("socks","ok","SOCKS_LISTENER_OK"));
+                StopXrayOnly();
+                socksPort=AllocateSocksPort();
+                status.Text=profiles.Count>1
+                    ? $"Проверяем VPN-сервер {endpoint+1} из {profiles.Count}..."
+                    : "Проверяем VPN-сервер...";
 
-            var ip=await CheckEgressAsync(token);
-            token.ThrowIfCancellationRequested();
+                try {
+                    var config=BuildXrayConfig(profiles[endpoint]);
+                    AtomicWrite(ConfigPath,config);
+
+                    xray=Process.Start(new ProcessStartInfo(
+                        XrayPath,$"run -config \"{ConfigPath}\""
+                    ){
+                        UseShellExecute=false,
+                        CreateNoWindow=true
+                    });
+                    if(xray is null)
+                        throw new InvalidOperationException("XRAY_START_FAILED");
+
+                    var ready=false;
+                    for(var i=0;i<30;i++) {
+                        token.ThrowIfCancellationRequested();
+                        await Task.Delay(250,token);
+                        if(await SocksReadyAsync(token)){ready=true;break;}
+                        if(xray.HasExited)break;
+                    }
+                    if(!ready)
+                        throw new InvalidOperationException("LOCAL_XRAY_FAILED");
+
+                    connectedIp=await CheckEgressAsync(token);
+                    lastFailure=null;
+                    break;
+                } catch(OperationCanceledException) {
+                    throw;
+                } catch(Exception ex) {
+                    lastFailure=ex;
+                    StopXrayOnly();
+                }
+            }
+
+            if(connectedIp is null)
+                throw lastFailure??new InvalidOperationException("VPN_EGRESS_FAILED");
+
+            stages.Add(new("socks","ok","SOCKS_LISTENER_OK"));
             stages.Add(new("https","ok","VPN_EGRESS_VERIFIED"));
+            token.ThrowIfCancellationRequested();
 
             CaptureAndEnableProxy();
             stages.Add(new("proxy","ok","WINDOWS_PROXY_ENABLED"));
-            status.Text=$"Подключено. VPN IP: {ip}";
+            status.Text=$"Подключено. VPN IP: {connectedIp}";
         } catch(OperationCanceledException) {
             DisconnectCore(false);
             status.Text="Отключено.";
@@ -502,13 +549,18 @@ public sealed class MainForm : Form
             :s[..Math.Min(48,s.Length)];
     }
 
+    void StopXrayOnly()
+    {
+        try {if(xray is {HasExited:false})xray.Kill(true);} catch {}
+        try {xray?.Dispose();} catch {}
+        xray=null;
+    }
+
     void DisconnectCore(bool show)
     {
         try {connectCts?.Cancel();} catch {}
         RestoreProxy();
-        try {if(xray is {HasExited:false})xray.Kill(true);} catch {}
-        try {xray?.Dispose();} catch {}
-        xray=null;
+        StopXrayOnly();
         if(show)status.Text="Отключено.";
     }
 
