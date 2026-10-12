@@ -138,7 +138,7 @@ fi
 
 MARZBAN_DIR="/opt/marzban"
 MARZBAN_DATA="/var/lib/marzban"
-MARZBAN_PORT=8000
+MARZBAN_PORT=2096
 VPN_PORT=443
 PROXY_PORT=2096
 MARZBAN_USER="admin"
@@ -184,8 +184,18 @@ TMP_XRAY_CONTAINER=""
 chmod 755 "$XRAY_BIN"
 "$XRAY_BIN" version | head -1 | grep -q 'Xray 26.6.27' || die "Установлена неожиданная версия Xray."
 
-# Reality target must be reachable with TLS 1.3 from the node.
-timeout 12 openssl s_client -connect "$REALITY_DEST" -servername "$REALITY_SNI"     -tls1_3 </dev/null >/dev/null 2>&1     || die "Reality target $REALITY_DEST недоступен по TLS 1.3 с этой ноды."
+# Reality target must be a stable TLS 1.3 + HTTP/2 endpoint.
+TARGET_TLS_LOG="$(mktemp)"
+if ! timeout 15 openssl s_client -connect "$REALITY_DEST" -servername "$REALITY_SNI" \
+    -tls1_3 -alpn h2 </dev/null >"$TARGET_TLS_LOG" 2>&1; then
+    rm -f "$TARGET_TLS_LOG"
+    die "Reality target $REALITY_DEST недоступен по TLS 1.3 с этой ноды."
+fi
+grep -q 'ALPN protocol: h2' "$TARGET_TLS_LOG" || {
+    rm -f "$TARGET_TLS_LOG"
+    die "Reality target $REALITY_DEST не поддерживает HTTP/2 ALPN."
+}
+rm -f "$TARGET_TLS_LOG"
 
 # Temporary plain config — Reality keys generated after container starts
 cat > "$MARZBAN_DATA/xray_config.json" << XRAYEOF
@@ -224,14 +234,16 @@ services:
       - /var/lib/marzban:/var/lib/marzban
 DCEOF
 
-# Marzban env — localhost only, socat handles external access
+# Marzban API listens directly on 2096. UFW exposes it only to control-plane.
+# No socat/reverse-proxy process is required on a VPN node.
 cat > "$MARZBAN_DIR/.env" << EOF
-UVICORN_HOST=127.0.0.1
+UVICORN_HOST=0.0.0.0
 UVICORN_PORT=${MARZBAN_PORT}
 SUDO_USERNAME=${MARZBAN_USER}
 SUDO_PASSWORD=${MARZBAN_PASS}
 XRAY_JSON=/var/lib/marzban/xray_config.json
 XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray
+XRAY_ASSETS_PATH=/usr/local/share/xray
 EOF
 
 chmod 600 "$MARZBAN_DIR/.env"
@@ -295,19 +307,21 @@ config = {
         "sniffing": {"enabled": False},
         "streamSettings": {
             "network": "tcp",
+            "tcpSettings": {},
             "security": "reality",
             "realitySettings": {
                 "show": False,
                 "target": os.environ["REALITY_DEST_VAL"],
+                "xver": 0,
                 "serverNames": [os.environ["REALITY_SNI_VAL"]],
                 "privateKey": os.environ["PRIVATE_KEY_VAL"],
                 # Marzban 0.8.x expects publicKey metadata when its bundled
                 # x25519 output parser cannot understand newer Xray labels.
                 "publicKey": os.environ["PUBLIC_KEY_VAL"],
-                "minClientVer": "",
+                "minClientVer": "0.0.0",
                 "maxClientVer": "",
                 "maxTimeDiff": 0,
-                "shortIds": [os.urandom(8).hex() for _ in range(8)]
+                "shortIds": [os.urandom(8).hex()]
             }
         }
     }],
@@ -325,7 +339,10 @@ config = {
 print(json.dumps(config, indent=2))
 PYEOF
 
-success "XRay конфиг с Reality записан (порт $VPN_PORT, 8 shortIds)"
+success "XRay конфиг с Reality записан (порт $VPN_PORT, один стабильный shortId)"
+
+"$XRAY_BIN" run -test -config "$MARZBAN_DATA/xray_config.json" </dev/null >/dev/null \
+    || die "Xray отклонил финальный VLESS/REALITY конфиг."
 
 # Restart Marzban to apply Reality config
 info "Перезапускаю Marzban с Reality конфигом..."
@@ -387,41 +404,9 @@ PYEOF
         || die "Marzban /api/hosts не сохранил публичный VPN endpoint."
 fi
 
-# ─── Persist sudo admin in Marzban DB ────────────────────────────────────────
-# Marzban explicitly recommends DB-backed admins instead of SUDO_* env values.
-# Keeping the env-only pseudo-admin triggers a known DELETE/reporting bug in
-# Marzban 0.8.4 (the user can be deleted but the API returns HTTP 500).
-section "Фиксация Marzban admin в БД"
-
-info "Переношу bootstrap-admin из env в БД Marzban..."
-docker compose exec -T marzban marzban-cli admin import-from-env -y </dev/null     || die "Не удалось импортировать Marzban admin в БД."
-
-python3 - <<'PYEOF'
-from pathlib import Path
-import os, re
-path = Path("/opt/marzban/.env")
-lines = path.read_text().splitlines()
-lines = [
-    line for line in lines
-    if not re.match(r"^\s*(?:export\s+)?SUDO_(?:USERNAME|PASSWORD)\s*=", line)
-]
-tmp = path.with_name(".env.db-admin")
-tmp.write_text("\n".join(lines) + "\n")
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)
-PYEOF
-
-docker compose up -d --no-deps --force-recreate marzban </dev/null
-DB_ADMIN_READY=false
-for i in $(seq 1 24); do
-    if curl -sf -X POST "${API_URL}/api/admin/token"         -d "username=${MARZBAN_USER}&password=${MARZBAN_PASS}"         >/dev/null 2>&1; then
-        DB_ADMIN_READY=true
-        break
-    fi
-    sleep 2
-done
-[[ "$DB_ADMIN_READY" == true ]] || die "DB-backed Marzban admin не авторизуется после миграции."
-success "Marzban admin хранится в БД; SUDO_USERNAME/SUDO_PASSWORD удалены из runtime env."
+# Bootstrap admin remains in the root-only .env file. This is the standard
+# Marzban bootstrap path and avoids an unnecessary credential migration/restart.
+success "Marzban API admin готов; credentials сохранены в /opt/marzban/.env (0600)."
 
 # ─── Firewall ─────────────────────────────────────────────────────────────────
 section "Настройка файерволла"
@@ -436,28 +421,8 @@ success "API порт $PROXY_PORT доступен только с control-plane
 ufw --force enable >/dev/null 2>&1
 success "Открыты SSH 22 и VLESS Reality $VPN_PORT"
 
-# ─── Socat proxy: expose Marzban API externally ───────────────────────────────
-section "Настройка внешнего доступа к API"
-
-apt-get install -y -qq socat >/dev/null 2>&1
-
-cat > /etc/systemd/system/marzban-proxy.service << SVCEOF
-[Unit]
-Description=Marzban API external proxy
-After=network.target docker.service
-
-[Service]
-ExecStart=/usr/bin/socat TCP4-LISTEN:${PROXY_PORT},fork,reuseaddr TCP4:127.0.0.1:${MARZBAN_PORT}
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-systemctl daemon-reload
-systemctl enable marzban-proxy --now >/dev/null 2>&1
-success "API прокси запущен на порту $PROXY_PORT"
+# Marzban listens directly on the firewall-restricted API port; no socat layer.
+success "Marzban API напрямую слушает $PROXY_PORT; отдельный proxy-сервис не используется."
 
 # ─── Register node in admin panel ─────────────────────────────────────────────
 section "Регистрация ноды в Admin Panel"
@@ -513,7 +478,7 @@ IP:      $SERVER_IP
 === VLESS Reality ===
 SNI (маскировка): $REALITY_SNI
 Public Key:  $PUBLIC_KEY
-ShortIds:    8 случайных (см. /var/lib/marzban/xray_config.json)
+ShortIds:    1 стабильный (см. /var/lib/marzban/xray_config.json)
 VPN Port:    $VPN_PORT (443 — максимальная совместимость)
 
 === Marzban API ===
