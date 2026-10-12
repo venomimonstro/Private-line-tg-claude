@@ -45,3 +45,14 @@ def verify_sub_token(token: str, secret: str) -> int | None:
         return None
     except Exception:
         return None
+
+
+def make_subscription_url(telegram_id: int) -> str:
+    """Return the HTTPS auto-update subscription URL shown to the VPN user."""
+    from app.config import settings
+
+    base = settings.CONTROL_PLANE_PUBLIC_URL.strip().rstrip("/")
+    if not base.startswith("https://"):
+        raise ValueError("CONTROL_PLANE_PUBLIC_URL must be configured with HTTPS")
+    token = make_sub_token(telegram_id, settings.SECRET_KEY)
+    return f"{base}/sub/{token}"
