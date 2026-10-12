@@ -75,6 +75,15 @@ else
     fi
 fi
 
+echo "=== VPN REGRESSION GATE ==="
+docker compose exec -T admin python -m unittest \
+    tests.test_vpn_link \
+    tests.test_vless_probe_config \
+    tests.test_vpn_safety_guards \
+    tests.test_marzban_stability \
+    || fail "VPN regression suite failed; nodes were not modified"
+echo "PASS: VPN regression suite"
+
 # Install/refresh the host-level real data-plane watchdog. The current
 # production-update lock prevents it from racing this rollout.
 bash scripts/install_vpn_health_timer.sh
