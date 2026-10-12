@@ -565,8 +565,11 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
         self.assertIn('"cache-control": "no-store, private"', route)
         self.assertIn('"profile-update-interval": "6"', route)
-        self.assertIn('"\n".join(links)', route)
-        self.assertIn("make_sub_token", route)
+        self.assertIn('"\\n".join(links)', route)
+        self.assertIn("canonical_client_link", route)
+        self.assertIn("key.label", route)
+        self.assertIn("VpnServerStatus.unreachable", route)
+        self.assertIn("case((VpnServer.status == VpnServerStatus.active, 0)", route)
 
 
 if __name__ == "__main__":
