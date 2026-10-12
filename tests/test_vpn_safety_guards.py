@@ -230,6 +230,49 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn("StrictHostKeyChecking=accept-new", text)
         self.assertNotIn('"root@$NODE_HOST"', text)
 
+    def test_production_update_never_skips_runtime_vpn_e2e(self):
+        text = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        discovery = text.index("=== DISCOVER REGISTERED MARZBAN NODES ===")
+        e2e = text.index("Disposable-user real HTTPS tunnel", discovery)
+        success = text.rindex("PRODUCTION UPDATE PASS")
+        early = text[:discovery]
+        self.assertNotIn('echo "PRODUCTION UPDATE PASS"', early)
+        self.assertNotIn("exit 0", early)
+        self.assertLess(discovery, e2e)
+        self.assertLess(e2e, success)
+
+    def test_failed_real_tunnel_quarantines_node_without_deleting_credentials(self):
+        orchestrator = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
+        state = (ROOT / "app" / "node_probe_state.py").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
+        self.assertIn("quarantine_node", orchestrator)
+        self.assertIn("app.node_probe_state", orchestrator)
+        self.assertIn("paid customer VLESS Reality HTTPS probe failed", orchestrator)
+        self.assertIn("VpnServerStatus.unreachable", state)
+        self.assertIn("server.is_selectable = False", state)
+        self.assertNotIn("delete_key(", state)
+        self.assertNotIn("session.delete", state)
+        self.assertIn("app.node_probe_state", gate)
+
+    def test_reality_params_are_bound_to_exact_vless_reality_inbound(self):
+        source = (ROOT / "app" / "vpn" / "marzban.py").read_text(encoding="utf-8")
+        self.assertIn('inbound.get("protocol") == "vless"', source)
+        self.assertIn('get("security") == "reality"', source)
+        self.assertIn("if len(reality_inbounds) != 1:", source)
+
+    def test_paid_probe_skips_remote_limited_or_exhausted_credentials(self):
+        source = (ROOT / "app" / "stabilize_vless.py").read_text(encoding="utf-8")
+        self.assertIn('remote.get("status") != "active"', source)
+        self.assertIn("limit > 0 and used >= limit", source)
+        self.assertIn("no remotely active non-exhausted paid key", source)
+
+    def test_production_gate_republishes_disposable_verified_nodes(self):
+        text = (ROOT / "scripts" / "production_vpn_gate.sh").read_text(encoding="utf-8")
+        disposable = text.index('bash scripts/smoke_vpn_node.sh "$server_id"')
+        publish = text.index("--server", disposable)
+        self.assertIn("app.node_probe_state", text[disposable:publish + 300])
+        self.assertIn("--success", text[disposable:publish + 300])
+
     def test_direct_ipv4_repair_script_is_retired(self):
         text = (ROOT / "scripts" / "repair_registered_node_ipv4.sh").read_text(encoding="utf-8")
         self.assertIn("retired", text.lower())
