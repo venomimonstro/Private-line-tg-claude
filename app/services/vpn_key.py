@@ -131,39 +131,15 @@ async def create_vpn_key(
     if locked_server is None:
         raise ValueError("VPN server disappeared during provisioning")
     server = locked_server
+    # Provider identity is always required, but admission state applies only
+    # when minting/re-activating a credential. Existing access for an already
+    # active subscription must remain retrievable during quarantine.
     if (
-        server.status != VpnServerStatus.active
-        or not server.is_selectable
-        or server.provider == "private-line-primary"
+        server.provider == "private-line-primary"
         or _server_protocol(server) != "marzban"
     ):
-        raise ValueError("VPN server is not production-selectable")
+        raise ValueError("VPN server is not a dedicated Marzban node")
 
-    # Admission proof must be recent. A stale ACTIVE flag is not enough when
-    # the synthetic watchdog stopped or Marzban's HandlerService degraded.
-    now = datetime.utcnow()
-    if (
-        server.last_e2e_success_at is None
-        or server.last_e2e_success_at < now - timedelta(minutes=10)
-    ):
-        raise ValueError("VPN node real E2E health proof is stale")
-    if (
-        server.last_hot_add_success_at is None
-        or server.last_hot_add_success_at < now - timedelta(minutes=45)
-    ):
-        raise ValueError("VPN node fresh-user hot-add proof is stale")
-
-    actual_users = await session.scalar(
-        select(func.count(VpnKey.id)).where(
-            VpnKey.server_id == server.id,
-            VpnKey.status == VpnKeyStatus.active,
-        )
-    )
-    actual_users = int(actual_users or 0)
-    server.current_users = actual_users
-
-    # Idempotent creation: never delete a working key before a replacement exists.
-    # Activation retries and queue retries simply reuse the active key on this node.
     existing_active = (await session.execute(
         select(VpnKey).where(
             VpnKey.subscription_id == subscription_id,
@@ -174,10 +150,8 @@ async def create_vpn_key(
     )).scalars().all()
     if len(existing_active) > 1:
         raise ValueError("Multiple active keys on the same VPN node require reconciliation")
-    if existing_active:
-        # DB state alone is not proof that the remote Marzban user still exists.
-        # Reconcile the exact subscription first, preserving the UUID already
-        # issued to the customer. Only then may activation/retry reuse the row.
+
+    async def _reuse_existing() -> VpnKey:
         from app.services.vpn_reconcile import reconcile_marzban_server
         result = await reconcile_marzban_server(
             session,
@@ -195,6 +169,41 @@ async def create_vpn_key(
             existing_active[0].id, subscription_id, server.id,
         )
         return existing_active[0]
+
+    if existing_active and locked_sub.status in (
+        SubscriptionStatus.active,
+        SubscriptionStatus.expires_soon,
+    ):
+        return await _reuse_existing()
+
+    # New admission / recovery of a not-yet-active subscription requires a
+    # production-selectable node and fresh data-plane proofs.
+    if server.status != VpnServerStatus.active or not server.is_selectable:
+        raise ValueError("VPN server is not production-selectable")
+
+    now = datetime.utcnow()
+    if (
+        server.last_e2e_success_at is None
+        or server.last_e2e_success_at < now - timedelta(minutes=10)
+    ):
+        raise ValueError("VPN node real E2E health proof is stale")
+    if (
+        server.last_hot_add_success_at is None
+        or server.last_hot_add_success_at < now - timedelta(minutes=45)
+    ):
+        raise ValueError("VPN node fresh-user hot-add proof is stale")
+
+    if existing_active:
+        return await _reuse_existing()
+
+    actual_users = await session.scalar(
+        select(func.count(VpnKey.id)).where(
+            VpnKey.server_id == server.id,
+            VpnKey.status == VpnKeyStatus.active,
+        )
+    )
+    actual_users = int(actual_users or 0)
+    server.current_users = actual_users
 
     if server.max_users and actual_users >= server.max_users:
         raise ValueError("VPN server capacity exhausted")
