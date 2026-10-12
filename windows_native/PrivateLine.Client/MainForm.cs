@@ -442,8 +442,8 @@ public sealed class MainForm : Form
     )
     {
         var args=captureBody
-            ? $"--silent --show-error --ipv4 --socks5-hostname 127.0.0.1:{socksPort} --connect-timeout 6 --max-time 12 {url}"
-            : $"--silent --show-error --ipv4 --socks5-hostname 127.0.0.1:{socksPort} --connect-timeout 6 --max-time 12 -o NUL -w %{{http_code}} {url}";
+            ? $"--silent --show-error --ipv4 --noproxy \"\" --socks5-hostname 127.0.0.1:{socksPort} --connect-timeout 6 --max-time 12 {url}"
+            : $"--silent --show-error --ipv4 --noproxy \"\" --socks5-hostname 127.0.0.1:{socksPort} --connect-timeout 6 --max-time 12 -o NUL -w %{{http_code}} {url}";
         using var p=Process.Start(new ProcessStartInfo(
             Path.Combine(Environment.SystemDirectory,"curl.exe"),args
         ){
