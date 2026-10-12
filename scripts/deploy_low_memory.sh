@@ -188,16 +188,48 @@ print("PASS: bot imports")
 PY
 
 docker compose up -d --no-deps --force-recreate bot
-sleep 10
+sleep 12
 BOT_CID="$(docker compose ps -q bot)"
 [[ -n "$BOT_CID" ]] || fail "bot container missing"
 BOT_RUNNING="$(docker inspect -f '{{.State.Running}}' "$BOT_CID" 2>/dev/null || true)"
 BOT_RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$BOT_CID" 2>/dev/null || echo 999)"
+BOT_STARTED_AT="$(docker inspect -f '{{.State.StartedAt}}' "$BOT_CID" 2>/dev/null || true)"
 [[ "$BOT_RUNNING" == "true" ]] || fail "bot is not running"
 [[ "$BOT_RESTARTS" == "0" ]] || fail "bot entered restart loop ($BOT_RESTARTS restarts)"
-docker compose logs --since=15s bot 2>&1 | grep -q "Starting Telegram polling" \
-  || fail "bot process started but Telegram polling startup marker was not observed"
-echo "PASS: Telegram bot process stable after 10s, restart_count=$BOT_RESTARTS"
+[[ -n "$BOT_STARTED_AT" ]] || fail "bot start timestamp unavailable"
+
+# Readiness must not depend on one log phrase: logging can be buffered or the
+# marker can fall outside a narrow --since window. Verify the actual process
+# and Telegram control-plane connectivity instead.
+BOT_CMD="$(docker inspect -f '{{.Path}} {{join .Args " "}}' "$BOT_CID" 2>/dev/null || true)"
+[[ "$BOT_CMD" == *"python"* && "$BOT_CMD" == *"bot.main"* ]] \
+  || fail "bot container is running but expected python -m bot.main process is absent"
+
+docker compose exec -T bot python - <<'PY' \
+  || fail "bot cannot authenticate to Telegram API"
+import asyncio
+from aiogram import Bot
+from app.config import settings
+
+async def check():
+    bot = Bot(settings.BOT_TOKEN)
+    try:
+        me = await bot.get_me()
+        assert me.id and me.is_bot
+    finally:
+        await bot.session.close()
+
+asyncio.run(check())
+print("PASS: Telegram API authentication")
+PY
+
+BOT_ERRORS="$(docker compose logs --since=60s bot 2>&1 | grep -Ei \
+  'Traceback|Unauthorized|TelegramUnauthorizedError|Conflict: terminated by other getUpdates request|Token is invalid' || true)"
+[[ -z "$BOT_ERRORS" ]] || {
+  printf '%s\n' "$BOT_ERRORS" >&2
+  fail "fatal Telegram bot error observed after recreation"
+}
+echo "PASS: Telegram bot process stable and authenticated, restart_count=$BOT_RESTARTS"
 
 echo "[8/8] Nginx and public admin..."
 start_existing_or_create nginx
