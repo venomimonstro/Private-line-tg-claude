@@ -644,7 +644,10 @@ public sealed class MainForm : Form
                 candidates=availableServers.Where(s=>s.id==selection).ToList();
             } else {
                 candidates=availableServers.ToList();
-                if(candidates.Count==0 && !string.IsNullOrWhiteSpace(manualKey))
+                // One manually imported Telegram key is a last-resort fallback
+                // even when the control-plane list contains stale endpoints.
+                if(!string.IsNullOrWhiteSpace(manualKey)
+                    && candidates.All(s=>s.url!=manualKey))
                     candidates.Add(new ServerProfile(-1,"Ключ из Telegram","manual",manualKey));
             }
             if(candidates.Count==0)
