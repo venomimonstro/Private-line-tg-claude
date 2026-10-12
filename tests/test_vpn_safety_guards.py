@@ -229,17 +229,16 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("docker pull", source)
         self.assertNotIn("xray.next", source)
 
-    def test_server_uses_bundled_xray_and_probe_client_is_independently_pinned(self):
+    def test_server_and_probe_client_share_pinned_xray_26627_baseline(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
         smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
         paid = (ROOT / "scripts" / "probe_vless_e2e.sh").read_text(encoding="utf-8")
-        self.assertIn("XRAY_EXECUTABLE_PATH=/usr/local/bin/xray", installer)
-        self.assertNotIn("ghcr.io/xtls/xray-core", installer)
-        self.assertIn('CORE="/usr/local/bin/xray"', golden)
-        self.assertIn("EXPECTED_MARZBAN", golden)
-        self.assertNotIn("ghcr.io/xtls/xray-core", golden)
-        # 26.6.27 is intentionally only the independent external client probe.
+        self.assertIn("XRAY_EXECUTABLE_PATH=/var/lib/marzban/xray-core/26.6.27/xray", installer)
+        self.assertIn("XRAY_VERSION=26.6.27", golden)
+        self.assertIn("XRAY_VERSION=26.6.27", runtime)
+        self.assertIn("xray-core:26.6.27@", runtime)
         self.assertIn("xray-core:26.6.27@", smoke)
         self.assertIn("xray-core:26.6.27@", paid)
 
@@ -252,6 +251,15 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn('"port"] = 443', source)
         self.assertIn("credentials preserved", source)
         self.assertNotIn("os.urandom", source)
+
+    def test_install_fetches_runtime_preparer_over_pinned_control_plane(self):
+        installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
+        route = (ROOT / "admin" / "routes" / "servers.py").read_text(encoding="utf-8")
+        self.assertIn("/admin/api/marzban-runtime-script", installer)
+        self.assertIn("--pinnedpubkey", installer)
+        self.assertIn("X-Node-Token", installer)
+        self.assertIn('@api_router.get("/marzban-runtime-script"', route)
+        self.assertIn("secrets.compare_digest", route)
 
     def test_node_management_has_no_socat_dependency(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
@@ -316,6 +324,7 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         smoke = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
         helper = (ROOT / "app" / "node_smoke_user.py").read_text(encoding="utf-8")
         self.assertIn('CONTAINER="private-line-node-smoke-${SERVER_ID}-$"', smoke)
+        self.assertIn('s.bind(("127.0.0.1", 0))', smoke)
         self.assertIn("delete-live", smoke)
         self.assertIn("hot-remove reached live Xray WITHOUT restart", smoke)
         self.assertIn('restart_core=(action == "delete")', helper)
@@ -330,15 +339,17 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("restart_core", watch)
         self.assertIn("OnUnitActiveSec=5min", timer)
 
-    def test_golden_runtime_pins_marzban_image_and_uses_its_bundled_xray(self):
+    def test_runtime_pins_marzban_and_xray_and_patches_silent_hot_add_failure(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         golden = (ROOT / "scripts" / "converge_vpn_node.sh").read_text(encoding="utf-8")
+        runtime = (ROOT / "scripts" / "prepare_marzban_runtime.sh").read_text(encoding="utf-8")
         self.assertIn("marzban:v0.8.4@sha256:", installer)
         self.assertIn("EXPECTED_MARZBAN", golden)
-        self.assertIn('CORE="/usr/local/bin/xray"', golden)
-        self.assertIn("Bundled runtime:", golden)
-        self.assertNotIn("XRAY_VERSION=26.6.27", golden)
-        self.assertNotIn("ghcr.io/xtls/xray-core", golden)
+        self.assertIn("XRAY_VERSION=26.6.27", golden)
+        self.assertIn("PRIVATE_LINE_XRAY_HOTADD_RETRY_V1", runtime)
+        self.assertIn("Xray hot-add failed after", runtime)
+        self.assertIn("/code/app/xray/operations.py:ro", runtime)
+        self.assertIn("docker-compose.override.yml", runtime)
 
     def test_paid_provisioning_has_no_per-user_xray_restart(self):
         source = inspect.getsource(vpn_key.create_vpn_key)
