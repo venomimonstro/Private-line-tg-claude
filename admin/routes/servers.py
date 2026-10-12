@@ -80,6 +80,33 @@ async def get_install_script(request: Request) -> PlainTextResponse:
     return PlainTextResponse(content, media_type="text/x-sh")
 
 
+@api_router.get("/marzban-runtime-script", response_class=PlainTextResponse)
+async def get_marzban_runtime_script(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+) -> PlainTextResponse:
+    """Serve the pinned node runtime preparer only to an authenticated installer."""
+    client_ip = request.client.host if request.client else ""
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    stored_token = await _get_or_create_token(session)
+    incoming_token = request.headers.get("X-Node-Token", "")
+    if not incoming_token or not secrets.compare_digest(incoming_token, stored_token):
+        raise HTTPException(status_code=401, detail="Invalid registration token")
+    script_path = os.path.join(
+        settings.APP_DIR, "scripts", "prepare_marzban_runtime.sh"
+    )
+    if not os.path.isfile(script_path):
+        raise HTTPException(status_code=404, detail="runtime preparer not found")
+    with open(script_path) as fh:
+        content = fh.read()
+    return PlainTextResponse(
+        content,
+        media_type="text/x-sh",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @api_router.get("/fix-reality-script", response_class=PlainTextResponse)
 async def get_fix_reality_script(request: Request) -> PlainTextResponse:
     if not _check_rate_limit(request.client.host if request.client else ""):
