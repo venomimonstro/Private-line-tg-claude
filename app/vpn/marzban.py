@@ -382,18 +382,37 @@ class MarzbanClient:
         headers = await self._headers()
         safe_name = name[:32]
 
-        # ── 1. Resolve actual inbound tags ──────────────────────────────────
-        # get_inbounds() raises MarzbanConfigError if it can't determine the tags.
-        # This propagates up so the circuit breaker counts a failure and the
-        # operation is queued for retry — we never store a key with a broken URL.
-        inbounds_map = await self.get_inbounds()
-        vless_inbounds = inbounds_map.get("vless") or []
-        if not vless_inbounds:
+        # ── 1. Resolve the single production VLESS+REALITY inbound ─────────
+        # Do NOT assign a paid user to every VLESS inbound returned by Marzban.
+        # A second VLESS transport/fallback would make the panel generate an
+        # arbitrary share link and can pair a UUID with the wrong transport.
+        # The static Xray config is authoritative for the production endpoint.
+        config = await self._get_core_config()
+        reality_inbounds = [
+            item for item in (config or {}).get("inbounds", [])
+            if item.get("protocol") == "vless"
+            and item.get("streamSettings", {}).get("security") == "reality"
+        ]
+        if len(reality_inbounds) != 1:
             raise MarzbanConfigError(
-                f"No VLESS inbounds configured on {self._base}. "
-                "Check XRay configuration."
+                f"Expected exactly one VLESS Reality inbound on {self._base}; "
+                f"found {len(reality_inbounds)}"
             )
-        logger.info("Creating key %s with VLESS inbounds: %s", safe_name, vless_inbounds)
+        reality_inbound = reality_inbounds[0]
+        reality_tag = reality_inbound.get("tag")
+        reality_port = reality_inbound.get("port")
+        if (
+            not isinstance(reality_tag, str)
+            or not reality_tag
+            or not isinstance(reality_port, int)
+            or not (1 <= reality_port <= 65535)
+        ):
+            raise MarzbanConfigError("VLESS Reality inbound has invalid tag/port")
+        vless_inbounds = [reality_tag]
+        logger.info(
+            "Creating key %s on verified Reality inbound %s:%d",
+            safe_name, reality_tag, reality_port,
+        )
 
         # ── 2. Create / update user in Marzban ──────────────────────────────
         vless_proxy: dict = {"flow": "xtls-rprx-vision"}
@@ -501,11 +520,31 @@ class MarzbanClient:
             expected_uuid = str(UUID(expected_uuid))
         except (ValueError, TypeError, AttributeError):
             raise MarzbanConfigError("Marzban returned no valid VLESS UUID")
-        matching_links = [link for link in vless_links
-                          if urlparse(link).username == expected_uuid]
-        if not matching_links:
-            raise MarzbanConfigError("Marzban links do not match the user UUID")
-        access_url = self._fix_bind_address(matching_links[0])
+        matching_links = [
+            link for link in vless_links
+            if urlparse(link).username == expected_uuid
+        ]
+        if matching_links:
+            # Panel-generated links are advisory only. Marzban 0.8.x has had
+            # REALITY share-link regressions (notably shortId/public-key
+            # rendering), so this value is never trusted as the final client
+            # credential. It is retained here only for diagnostic logging.
+            access_url = self._fix_bind_address(matching_links[0])
+        else:
+            # A wrong/missing Marzban share URI must not invalidate an otherwise
+            # healthy user. Build a temporary URI from authoritative UUID +
+            # inbound endpoint; it will be replaced below from /api/hosts.
+            m = re.match(r'https?://([^:/]+)', self._base)
+            host = m.group(1) if m else self._base
+            access_url = (
+                f"vless://{expected_uuid}@{host}:{reality_port}"
+                f"?type=tcp&security=none#{safe_name}"
+            )
+            logger.warning(
+                "Marzban emitted no matching VLESS share URI for %s; "
+                "using authoritative UUID/config instead",
+                safe_name,
+            )
 
         # ── 4. Always inject Reality params (single source of truth) ────────
         reality = await self.get_reality_params()
@@ -571,17 +610,58 @@ class MarzbanClient:
         if len(public_hosts) != 1:
             raise MarzbanConfigError("Expected exactly one active globally routable Marzban host")
 
-        final = urlparse(access_url)
         expected_host = public_hosts[0].get("address")
         configured_port = public_hosts[0].get("port")
-        expected_port = inbound_port if configured_port in (None, "", 0, "0") else int(configured_port)
+        expected_port = (
+            inbound_port
+            if configured_port in (None, "", 0, "0")
+            else int(configured_port)
+        )
+
+        # IMPORTANT: construct the customer credential ourselves from the
+        # verified node facts. This deliberately bypasses Marzban's share-link
+        # renderer, which is not the source of truth for REALITY parameters.
+        authoritative_base = (
+            f"vless://{expected_uuid}@{expected_host}:{expected_port}"
+            f"?type=tcp&security=none#{safe_name}"
+        )
+        access_url = self._inject_reality(
+            authoritative_base, public_key, short_id, sni
+        )
+        final = urlparse(access_url)
         if final.hostname != expected_host or final.port != expected_port:
-            raise MarzbanConfigError("Generated VLESS endpoint differs from published Marzban host")
+            raise MarzbanConfigError(
+                "Authoritative VLESS endpoint differs from published Marzban host"
+            )
 
         # Marzban adds/updates Xray users in a background task and may swallow
         # runtime API connection errors. Do not return a paid credential until
         # the live core has been rebuilt from the authoritative Marzban DB.
         await self.restart_core_with_db_users(reason=f"provision {safe_name}")
+
+        # Re-read the user after the core rebuild. A successful POST/PUT alone
+        # is not enough with Marzban 0.8.x: the DB row may exist while the live
+        # Xray process still has stale user state.
+        verify_user = await self._client.get(
+            f"{self._base}/api/user/{safe_name}", headers=await self._headers()
+        )
+        if verify_user.status_code != 200:
+            raise MarzbanConfigError(
+                f"Marzban user disappeared after core restart (HTTP {verify_user.status_code})"
+            )
+        verified = verify_user.json()
+        verified_proxy = verified.get("proxies", {}).get("vless", {})
+        verified_inbounds = verified.get("inbounds", {}).get("vless", [])
+        if (
+            verified_proxy.get("id") != expected_uuid
+            or verified_proxy.get("flow") != "xtls-rprx-vision"
+            or reality_tag not in verified_inbounds
+            or verified.get("status") != "active"
+        ):
+            raise MarzbanConfigError(
+                "Marzban user is not active on the verified Reality/Vision inbound "
+                "after core restart"
+            )
 
         logger.info("Key ready for %s (credentials omitted)", safe_name)
         return MarzbanKey(
