@@ -77,6 +77,13 @@ class WindowsDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('@router.get("/admin/windows-diagnostics"',source)
         self.assertNotIn('@router.get("/admin/windows-client/download"',source)
 
+    def test_native_windows_diagnostics_is_manual_only(self):
+        source=(ROOT/"windows_native/PrivateLine.Client/MainForm.cs").read_text()
+        self.assertIn("diagnostics.Checked=false", source.replace(" ", ""))
+        self.assertIn("Отправить диагностику сейчас", source)
+        self.assertNotIn("_ = FlushPendingAsync()", source)
+        self.assertNotIn("await SendReportAsync();", source)
+
     def test_windows_script_does_not_auto_send(self):
         source=(ROOT/"windows_client/PrivateLine.ps1").read_text()
         self.assertIn("$send.Add_Click({Send-Diagnostics})",source)
