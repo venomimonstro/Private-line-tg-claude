@@ -46,12 +46,19 @@ async def run(server_id: int, state: str, reason: str | None) -> int:
             )
             return 0
 
+        if state == "hot-add-success":
+            server.last_hot_add_success_at = datetime.utcnow()
+            await session.commit()
+            print(f"HOT-ADD HEALTHY: node {server.id}; fresh-user live provisioning passed")
+            return 0
+
         if state == "success":
             server.status = VpnServerStatus.active
             server.is_selectable = True
             server.failure_count = 0
             server.last_error = None
             server.last_error_at = None
+            server.last_e2e_success_at = datetime.utcnow()
             await session.commit()
             print(f"HEALTHY: node {server.id}; external VPN tunnel acceptance passed")
             return 0
@@ -65,10 +72,14 @@ if __name__ == "__main__":
     parser.add_argument("--server", type=int, required=True)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--success", action="store_true")
+    group.add_argument("--hot-add-success", action="store_true")
     group.add_argument("--failure", action="store_true")
     parser.add_argument("--reason", default="")
     args = parser.parse_args()
     if args.server <= 0:
         parser.error("--server must be positive")
-    state = "success" if args.success else "failure"
+    if args.hot_add_success:
+        state = "hot-add-success"
+    else:
+        state = "success" if args.success else "failure"
     raise SystemExit(asyncio.run(run(args.server, state, args.reason)))
