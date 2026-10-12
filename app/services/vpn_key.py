@@ -250,6 +250,7 @@ async def create_vpn_key(
                     name=name,
                     traffic_limit_gb=traffic_limit_gb,
                     ip_limit=ip_limit,
+                    restart_core=False,
                 )
                 # Validate the exact link before the DB can consider it active.
                 from app.services.vpn_link import canonical_client_link
