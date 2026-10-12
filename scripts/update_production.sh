@@ -96,7 +96,7 @@ else
         echo "Previous node revision is unavailable locally; convergence required."
         NODE_UPDATE=true
     elif [[ "$NODE_STATE" != "$HEAD" ]]; then
-        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/converge_vpn_node.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
+        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/converge_vpn_node.sh             scripts/prepare_marzban_runtime.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
         if [[ -n "$NODE_CHANGED_FILES" ]]; then
             echo "Node/VPN changes since last successful node rollout:"
             printf '%s\\n' "$NODE_CHANGED_FILES" | sed 's/^/  - /'
@@ -162,6 +162,7 @@ if [[ "$NODE_UPDATE" == true ]]; then
     REMOTE_ARCHIVE="$(mktemp)"
     tar -czf "$REMOTE_ARCHIVE" \
         scripts/converge_vpn_node.sh \
+        scripts/prepare_marzban_runtime.sh \
         scripts/inspect_node_vless.sh
 fi
 
