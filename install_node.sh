@@ -248,6 +248,17 @@ EOF
 
 chmod 600 "$MARZBAN_DIR/.env"
 
+# Close management API before the first process ever binds it.
+# UFW rules are staged first, then enabled, so TCP/2096 is reachable only
+# from the control-plane IP from the first second of service life.
+ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
+ufw allow "${VPN_PORT}/tcp" comment "VLESS Reality VPN" >/dev/null 2>&1 || true
+ufw delete allow "${PROXY_PORT}/tcp" >/dev/null 2>&1 || true
+ufw allow from "$MAIN_SERVER_IP" to any port "$PROXY_PORT" proto tcp \
+    comment "Marzban API control plane" >/dev/null 2>&1 \
+    || die "Не удалось ограничить Marzban API по IP основного сервера."
+ufw --force enable >/dev/null 2>&1 || die "Не удалось включить UFW."
+
 info "Запускаю Marzban с Xray 26.6.27..."
 cd "$MARZBAN_DIR" && docker compose up -d
 
