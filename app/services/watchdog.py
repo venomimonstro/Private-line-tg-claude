@@ -8,7 +8,7 @@ to the user. Existing keys remain intact for later recovery.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +53,11 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
             VpnKey.status == VpnKeyStatus.active,
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider == "marzban",
+            VpnServer.provider != "private-line-primary",
+            VpnServer.last_e2e_success_at.is_not(None),
+            VpnServer.last_e2e_success_at >= now - timedelta(minutes=10),
+            VpnServer.last_hot_add_success_at.is_not(None),
+            VpnServer.last_hot_add_success_at >= now - timedelta(minutes=45),
         )
     )).all()
     valid_sub_ids = {row[0] for row in valid_rows}
@@ -91,15 +95,28 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
                 if not healthy_rows:
                     raise RuntimeError("failover key was not persisted on a healthy node")
 
-                user = await session.get(User, sub.user_id)
-                if user is not None and user.telegram_id:
-                    await send_key_to_user(user.telegram_id, list(healthy_rows))
+                # Persist access before any external notification. A Telegram
+                # outage must never roll back a successfully-created remote key.
+                await session.commit()
                 results["recovered"] += 1
                 logger.warning(
                     "watchdog: additive failover restored subscription %d with %d healthy key(s)",
                     sub.id, len(healthy_rows),
                 )
+
+                user = await session.get(User, sub.user_id)
+                if user is not None and user.telegram_id:
+                    try:
+                        await send_key_to_user(user.telegram_id, list(healthy_rows))
+                    except Exception:
+                        logger.error(
+                            "watchdog: failover key persisted but Telegram delivery failed "
+                            "for subscription %d",
+                            sub.id,
+                            exc_info=True,
+                        )
             except Exception as exc:
+                await session.rollback()
                 results["recovery_failed"] += 1
                 results["errors"].append(
                     f"sub#{sub.id}:{type(exc).__name__}"
@@ -109,7 +126,6 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
                     sub.id, type(exc).__name__, exc_info=True,
                 )
 
-        await session.commit()
         ids = ", ".join(str(sub.id) for sub in missing[:20])
         message = (
             f"⚠️ VPN watchdog: degraded subscriptions={len(missing)}, "
@@ -133,7 +149,7 @@ async def _find_best_server(session: AsyncSession) -> VpnServer | None:
         .where(
             VpnServer.status == VpnServerStatus.active,
             VpnServer.is_selectable.is_(True),
-            VpnServer.provider == "marzban",
+            VpnServer.provider != "private-line-primary",
         )
         .order_by(VpnServer.failure_count.asc(), VpnServer.current_users.asc())
     )).scalars().all()
