@@ -27,12 +27,24 @@ CORE_DIR="/var/lib/marzban/xray-core/$XRAY_VERSION"
 CORE="$CORE_DIR/xray"
 TARGET_HOST="${REALITY_TARGET_HOST:-dl.google.com}"
 TARGET="${TARGET_HOST}:443"
+API_PORT=2096
+CONTROL_IP="${MAIN_SERVER_IP:-${SSH_CONNECTION%% *}}"
 
 case "$TARGET_HOST" in
     ""|*[!A-Za-z0-9.-]*) echo "FAIL: invalid REALITY target hostname" >&2; exit 2 ;;
 esac
 
+CONTROL_IP="$CONTROL_IP" python3 - <<'PY' >/dev/null || {
+import ipaddress, os
+ip=ipaddress.ip_address(os.environ["CONTROL_IP"])
+assert ip.version == 4 and ip.is_global
+PY
+    echo "FAIL: cannot determine public control-plane IPv4 from MAIN_SERVER_IP/SSH_CONNECTION" >&2
+    exit 2
+}
+
 echo "=== PRIVATE LINE GOLDEN NODE CONVERGENCE ==="
+echo "Control plane: $CONTROL_IP; Marzban API: TCP/$API_PORT (firewall-restricted)"
 
 # REALITY depends on sane TLS time. Enable the OS time service when available.
 if command -v timedatectl >/dev/null 2>&1; then
@@ -210,6 +222,8 @@ ENV_CHANGED=0
 grep -qxF "XRAY_JSON=/var/lib/marzban/xray_config.json" .env || ENV_CHANGED=1
 grep -qxF "XRAY_EXECUTABLE_PATH=$CORE" .env || ENV_CHANGED=1
 grep -qxF "XRAY_ASSETS_PATH=/usr/local/share/xray" .env || ENV_CHANGED=1
+grep -qxF "UVICORN_HOST=0.0.0.0" .env || ENV_CHANGED=1
+grep -qxF "UVICORN_PORT=$API_PORT" .env || ENV_CHANGED=1
 
 python3 - <<PY
 from pathlib import Path
@@ -220,6 +234,8 @@ updates={
     "XRAY_JSON": "/var/lib/marzban/xray_config.json",
     "XRAY_EXECUTABLE_PATH": "$CORE",
     "XRAY_ASSETS_PATH": "/usr/local/share/xray",
+    "UVICORN_HOST": "0.0.0.0",
+    "UVICORN_PORT": "$API_PORT",
 }
 out=[]
 seen=set()
@@ -240,16 +256,32 @@ os.chmod(tmp, 0o600)
 os.replace(tmp, p)
 PY
 
-echo "[4/7] Ensure host firewall permits public TCP/443"
+echo "[4/7] Ensure firewall: public VPN/443; API/$API_PORT only from control plane"
 if command -v ufw >/dev/null 2>&1; then
-    if ufw status 2>/dev/null | head -1 | grep -q 'Status: active'; then
-        ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW' || \
-            ufw allow 443/tcp comment "VLESS Reality VPN" >/dev/null
-        ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW' || {
-            echo "FAIL: UFW does not allow TCP/443" >&2
+    # Preserve existing rules/defaults. Never reset UFW over SSH.
+    ufw allow 443/tcp comment "VLESS Reality VPN" >/dev/null 2>&1 || true
+    # Delete only an old broad API rule; then add the narrow control-plane rule.
+    ufw delete allow "$API_PORT/tcp" >/dev/null 2>&1 || true
+    ufw allow from "$CONTROL_IP" to any port "$API_PORT" proto tcp \
+        comment "Marzban API control plane" >/dev/null 2>&1 || {
+            echo "FAIL: cannot add restricted Marzban API firewall rule" >&2
             exit 2
         }
-    fi
+    ufw --force enable >/dev/null 2>&1 || true
+    ufw status 2>/dev/null | grep -Eq '^443/tcp[[:space:]]+ALLOW' || {
+        echo "FAIL: UFW does not allow public TCP/443" >&2
+        exit 2
+    }
+    ufw status 2>/dev/null | grep -F "$CONTROL_IP" | grep -q "$API_PORT" || {
+        echo "FAIL: UFW does not allow control plane to Marzban API/$API_PORT" >&2
+        exit 2
+    }
+fi
+
+# Legacy installs used a localhost Marzban API plus socat. Direct Uvicorn on
+# the firewall-restricted port removes that extra process and failure mode.
+if systemctl list-unit-files 2>/dev/null | grep -q '^marzban-proxy.service'; then
+    systemctl disable --now marzban-proxy.service >/dev/null 2>&1 || true
 fi
 
 echo "[5/7] Restart only when the canonical runtime changed"
@@ -268,7 +300,7 @@ import socket
 import urllib.request
 with socket.create_connection(("127.0.0.1", 443), timeout=2):
     pass
-with urllib.request.urlopen("http://127.0.0.1:8000/openapi.json", timeout=3) as r:
+with urllib.request.urlopen("http://127.0.0.1:2096/openapi.json", timeout=3) as r:
     assert r.status == 200
 PY
     then
