@@ -171,6 +171,28 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertIn('r.get("privateKey")', text)
         self.assertIn('r.get("shortIds")', text)
 
+    def test_reality_target_is_health_checked_even_when_already_configured(self):
+        text = (ROOT / "scripts" / "migrate_reality_target.sh").read_text(encoding="utf-8")
+        validate = text.index('validate_target "$TARGET_HOST"')
+        already = text.index('if python3 - "$CONFIG" "$TARGET_HOST"')
+        self.assertLess(validate, already)
+        self.assertIn("-tls1_3 -alpn h2", text)
+
+    def test_disposable_e2e_uses_multiple_independent_https_destinations(self):
+        text = (ROOT / "scripts" / "smoke_vpn_node.sh").read_text(encoding="utf-8")
+        self.assertIn('probe "ipify"', text)
+        self.assertIn('probe "cloudflare"', text)
+        self.assertIn('probe "google"', text)
+        self.assertIn("SUCCESS < 2", text)
+        self.assertIn("Checking public VPN endpoint TCP reachability", text)
+
+    def test_paid_e2e_separates_public_tcp_from_reality_tunnel(self):
+        text = (ROOT / "scripts" / "probe_vless_e2e.sh").read_text(encoding="utf-8")
+        tcp = text.index("Checking public VPN endpoint TCP reachability")
+        xray = text.index("Starting ephemeral Xray client")
+        self.assertLess(tcp, xray)
+        self.assertIn("VLESS/REALITY tunnel", text)
+
     def test_marzban_node_installer_migrates_env_admin_to_db(self):
         installer = (ROOT / "install_node.sh").read_text(encoding="utf-8")
         self.assertIn("marzban-cli admin import-from-env -y", installer)
