@@ -200,6 +200,7 @@ async def download_personal_windows_client(request: Request, user_id: int | None
             "Content-Length": str(total_size),
             "Cache-Control": "private, no-store",
             "X-Content-Type-Options": "nosniff",
+            "X-Accel-Buffering": "no",
         },
     )
 
