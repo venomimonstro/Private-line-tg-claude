@@ -159,7 +159,8 @@ async def activate_subscription(
     for server in servers:
         if len(created_keys) >= desired_keys:
             break
-        label = f"{server.flag_emoji or '🌍'} {server.country}"
+        role = "Основной" if not created_keys else f"Резерв {len(created_keys)}"
+        label = f"{server.flag_emoji or '🌍'} {server.country} • {role}"
         try:
             key = await vpn_key_service.create_vpn_key(
                 user_id=subscription.user_id,
