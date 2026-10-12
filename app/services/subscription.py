@@ -67,6 +67,9 @@ async def ensure_subscription_vpn_key(
         .order_by(VpnKey.id.asc())
     )).all()
 
+    verified: list[VpnKey] = []
+    verified_server_ids: set[int] = set()
+
     # Existing paid credentials are preferred. is_selectable controls only new
     # admission; it must not invalidate a credential already issued.
     for key, server in rows:
@@ -82,18 +85,25 @@ async def ensure_subscription_vpn_key(
             )
             if result.errors == 0:
                 await session.refresh(key)
-                return key
+                verified.append(key)
+                verified_server_ids.add(server.id)
         except Exception as exc:
             logger.warning(
                 "Existing renewal key %d failed reconciliation on server %d: %s",
                 key.id, server.id, type(exc).__name__,
             )
 
-    # Preserve old rows and add a new key only on a fully production-selectable
-    # node. create_vpn_key performs the full Xray/Reality/hosts preflight.
-    for server in await _get_available_servers(session):
+    available = await _get_available_servers(session)
+    desired_keys = min(max(1, int(tariff.max_keys or 1)), len(available))
+    # Fill missing redundant keys without rotating or removing any valid
+    # credential. Each backup is created on a different healthy node.
+    for server in available:
+        if len(verified) >= desired_keys:
+            break
+        if server.id in verified_server_ids:
+            continue
         try:
-            return await vpn_key_service.create_vpn_key(
+            key = await vpn_key_service.create_vpn_key(
                 user_id=subscription.user_id,
                 subscription_id=subscription.id,
                 server=server,
@@ -102,12 +112,20 @@ async def ensure_subscription_vpn_key(
                 session=session,
                 ip_limit=getattr(tariff, "max_devices", 0) or 0,
             )
+            verified.append(key)
+            verified_server_ids.add(server.id)
         except Exception as exc:
             logger.warning(
                 "Renewal fallback server %d failed for subscription %d: %s",
                 server.id, subscription.id, type(exc).__name__,
             )
-    return None
+
+    if verified and len(verified) < desired_keys:
+        await notify_admin(
+            f"⚠️ Renewal subscription #{subscription.id}: redundancy degraded "
+            f"({len(verified)}/{desired_keys} VPN keys)."
+        )
+    return verified[0] if verified else None
 
 
 async def activate_subscription(
@@ -129,10 +147,14 @@ async def activate_subscription(
 
     created_keys: list[VpnKey] = []
     last_exc: Exception | None = None
+    desired_keys = min(max(1, int(tariff.max_keys or 1)), len(servers))
 
-    # Try other healthy nodes if the first fails. Do not mark a paid
-    # subscription broken while an alternative provider is available.
+    # Provision across distinct healthy nodes up to the tariff's key allowance.
+    # This was historically stopped after the first success, which silently
+    # disabled the project's existing multi-node redundancy model.
     for server in servers:
+        if len(created_keys) >= desired_keys:
+            break
         label = f"{server.flag_emoji or '🌍'} {server.country}"
         try:
             key = await vpn_key_service.create_vpn_key(
@@ -145,10 +167,12 @@ async def activate_subscription(
                 ip_limit=getattr(tariff, "max_devices", 0) or 0,
             )
             created_keys.append(key)
-            break
         except Exception as exc:
             last_exc = exc
-            logger.warning("Server %d failed for subscription %d: %s", server.id, subscription.id, exc)
+            logger.warning(
+                "Server %d failed for subscription %d while building %d-key redundancy: %s",
+                server.id, subscription.id, desired_keys, exc,
+            )
 
     if not created_keys:
         subscription.status = SubscriptionStatus.activation_error
@@ -168,6 +192,12 @@ async def activate_subscription(
         except Exception as notify_exc:
             logger.warning("Could not notify user of activation failure: %s", notify_exc)
         return None
+
+    if len(created_keys) < desired_keys:
+        await notify_admin(
+            f"⚠️ Subscription #{subscription.id}: service activated, but redundancy "
+            f"is degraded ({len(created_keys)}/{desired_keys} VPN keys)."
+        )
 
     subscription.status = SubscriptionStatus.active
     subscription.last_activation_error = None
