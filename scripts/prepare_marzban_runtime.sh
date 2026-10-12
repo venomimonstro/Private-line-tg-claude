@@ -96,10 +96,10 @@ def replace_function(text: str, name: str, replacement: str) -> str:
 
 add = f'''# {marker}
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
-    delays = (0.10, 0.30, 0.80, 1.50)
+    delays = (0.10, 0.35, 0.80)
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.add_inbound_user(tag=inbound_tag, user=account, timeout=10)
+            api.add_inbound_user(tag=inbound_tag, user=account, timeout=3)
             return
         except xray.exc.EmailExistsError:
             return
@@ -110,10 +110,10 @@ def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
 '''
 
 remove = '''def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
-    delays = (0.10, 0.30, 0.80, 1.50)
+    delays = (0.10, 0.35, 0.80)
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.remove_inbound_user(tag=inbound_tag, email=email, timeout=10)
+            api.remove_inbound_user(tag=inbound_tag, email=email, timeout=3)
             return
         except xray.exc.EmailNotFoundError:
             return
@@ -124,10 +124,10 @@ remove = '''def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email:
 '''
 
 alter = '''def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
-    delays = (0.10, 0.30, 0.80, 1.50)
+    delays = (0.10, 0.35, 0.80)
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=10)
+            api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=3)
             break
         except xray.exc.EmailNotFoundError:
             break
@@ -138,7 +138,7 @@ alter = '''def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Acco
 
     for attempt, delay in enumerate(delays, start=1):
         try:
-            api.add_inbound_user(tag=inbound_tag, user=account, timeout=10)
+            api.add_inbound_user(tag=inbound_tag, user=account, timeout=3)
             return
         except xray.exc.EmailExistsError:
             return
