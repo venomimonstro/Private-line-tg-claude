@@ -203,6 +203,18 @@ if modify_old not in src:
     raise RuntimeError("upstream PUT /user mutation hook changed")
 src = src.replace(modify_old, modify_new, 1)
 
+delete_old = '''    crud.remove_user(db, dbuser)
+    bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+'''
+delete_new = '''    crud.remove_user(db, dbuser)
+    # PRIVATE_LINE_XRAY_MUTATION_SYNC_V2:
+    # deletion is acknowledged only after live Xray accepted hot-remove.
+    xray.operations.remove_user(dbuser=dbuser)
+'''
+if delete_old not in src:
+    raise RuntimeError("upstream DELETE /user mutation hook changed")
+src = src.replace(delete_old, delete_new, 1)
+
 ast.parse(src, filename="user.py")
 Path(os.environ["DEST"]).write_text(src)
 PY
