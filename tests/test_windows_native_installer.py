@@ -33,6 +33,72 @@ class NativeWindowsInstallerTests(unittest.TestCase):
         finally:
             native.BASE_INSTALLER = old
 
+
+    def test_streaming_personalization_does_not_require_full_installer_copy(self):
+        old = native.BASE_INSTALLER
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                base = Path(td) / "PrivateLineSetup.exe"
+                base.write_bytes(b"MZ" + b"A" * (3 * 1024 * 1024))
+                native.BASE_INSTALLER = base
+                overlay = native.build_personalization_overlay(
+                    base_url="https://198.51.100.10",
+                    pairing_code="x" * 48,
+                    tls_pin="sha256//" + "A" * 44,
+                )
+                chunks = list(native.iter_personal_windows_exe(
+                    overlay=overlay, chunk_size=256 * 1024
+                ))
+                self.assertGreater(len(chunks), 2)
+                self.assertTrue(all(len(x) <= 256 * 1024 for x in chunks[:-1]))
+                self.assertEqual(chunks[-1], overlay)
+                self.assertEqual(
+                    sum(map(len, chunks)),
+                    base.stat().st_size + len(overlay),
+                )
+        finally:
+            native.BASE_INSTALLER = old
+
+    def test_native_installer_is_single_instance_atomic_and_low_load(self):
+        root = Path("/app")
+        installer = (root / "windows_native/PrivateLine.Installer/Program.cs").read_text(encoding="utf-8")
+        route = (root / "admin/routes/windows_diagnostics.py").read_text(encoding="utf-8")
+        self.assertIn("PrivateLineSetupV2", installer)
+        self.assertIn("PrivateLineClientV2", installer)
+        self.assertIn("CLIENT_RUNNING_CLOSE_FIRST", installer)
+        self.assertIn("InstallEmbeddedXrayAsync", installer)
+        self.assertIn("File.Move(temp,destination,true)", installer)
+        self.assertIn("/api/windows/enroll", installer)
+        pair_block = installer[installer.index("static async Task PairAsync"):]
+        self.assertNotIn("/api/windows/profile", pair_block)
+        self.assertIn("iter_personal_windows_exe", route)
+        self.assertIn("Content-Length", route)
+        self.assertNotIn("BytesIO(payload)", route)
+
+    def test_native_client_recovers_proxy_and_uses_local_failover(self):
+        root = Path("/app/windows_native")
+        client = (root / "PrivateLine.Client/MainForm.cs").read_text(encoding="utf-8")
+        program = (root / "PrivateLine.Client/Program.cs").read_text(encoding="utf-8")
+        self.assertIn("PrivateLineClientV2", program)
+        self.assertIn("FetchProfilesAsync", client)
+        self.assertIn("vless_urls", client)
+        self.assertIn("AllocateSocksPort", client)
+        self.assertIn("RecoverStaleProxy", client)
+        self.assertIn("CleanupOrphanXray", client)
+        self.assertIn("ProxyState", client)
+        self.assertIn("success<2", client.replace(" ", ""))
+        self.assertIn("diagnostics.Checked=false", client.replace(" ", ""))
+        self.assertNotIn("_ = FlushPendingAsync()", client)
+
+    def test_windows_build_verifies_official_xray_digest_and_reuses_cache(self):
+        build = Path("/app/windows_native/build.sh").read_text(encoding="utf-8")
+        self.assertIn("Xray-windows-64.zip.dgst", build)
+        self.assertIn("EXPECTED_SHA256", build)
+        self.assertIn("sha256sum", build)
+        self.assertIn("windows_cache", build)
+        self.assertIn("dotnet build", build)
+        self.assertIn("dotnet publish", build)
+
     def test_native_sources_do_not_require_manual_credentials(self):
         root = Path("/app/windows_native")
         client = (root / "PrivateLine.Client/MainForm.cs").read_text(encoding="utf-8")
