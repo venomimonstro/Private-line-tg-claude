@@ -43,7 +43,7 @@ esac
 
 XRAY_VERSION=26.6.27
 CORE="/var/lib/marzban/xray-core/$XRAY_VERSION/xray"
-PATCH_MARKER="PRIVATE_LINE_XRAY_HOTADD_RETRY_V1"
+PATCH_MARKER="PRIVATE_LINE_XRAY_MUTATION_SYNC_V2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 docker image inspect "$MARZBAN_IMAGE" >/dev/null 2>&1 || docker pull "$MARZBAN_IMAGE" >/dev/null
@@ -90,7 +90,7 @@ grep -q 'ALPN protocol: h2' "$TLS_LOG" || {
 rm -f "$TLS_LOG"
 trap - EXIT
 
-echo "[2/7] Prepare pinned Xray $XRAY_VERSION + Marzban hot-add retry override"
+echo "[2/7] Prepare pinned Xray $XRAY_VERSION + synchronous Marzban/Xray mutations"
 RUNTIME_CHANGED=0
 if ! docker compose ps --status running -q marzban | grep -q .; then
     RUNTIME_CHANGED=1
@@ -113,6 +113,10 @@ PY
     fi
     if ! docker compose exec -T marzban grep -q "$PATCH_MARKER" \
         /code/app/xray/operations.py >/dev/null 2>&1; then
+        RUNTIME_CHANGED=1
+    fi
+    if ! docker compose exec -T marzban grep -q "$PATCH_MARKER" \
+        /code/app/routers/user.py >/dev/null 2>&1; then
         RUNTIME_CHANGED=1
     fi
 fi
