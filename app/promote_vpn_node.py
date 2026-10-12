@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime, timedelta
 
 from app.database import async_session_maker
 from app.enums import VpnServerStatus
@@ -25,6 +26,16 @@ async def run(server_id: int) -> int:
             or server.status != VpnServerStatus.active
         ):
             print("STOP: server is not an active dedicated Marzban node")
+            return 2
+
+        now = datetime.utcnow()
+        if (
+            server.last_e2e_success_at is None
+            or server.last_e2e_success_at < now - timedelta(minutes=10)
+            or server.last_hot_add_success_at is None
+            or server.last_hot_add_success_at < now - timedelta(minutes=45)
+        ):
+            print("STOP: node has no fresh E2E/hot-add admission proof")
             return 2
 
         result = await reconcile_marzban_server(session, server_id, apply=False)
