@@ -34,7 +34,19 @@ async def run(action: str, server_id: int, name: str) -> int:
             if not await client.check_connection():
                 print("STOP: Marzban authentication failed")
                 return 2
-            if action == "create":
+            if action in ("create", "ensure"):
+                if action == "ensure":
+                    headers = await client._headers()
+                    existing = await client._client.get(
+                        f"{client._base}/api/user/{name}", headers=headers
+                    )
+                    if existing.status_code == 200:
+                        key = await client.get_key(name)
+                        print(canonical_client_link(key.access_url, "Private Line VPN"))
+                        return 0
+                    if existing.status_code != 404:
+                        print(f"STOP: probe user lookup HTTP {existing.status_code}")
+                        return 2
                 key = await client.create_key(name=name)
                 print(canonical_client_link(key.access_url, "Private Line VPN"))
                 return 0
@@ -56,7 +68,7 @@ async def run(action: str, server_id: int, name: str) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["create", "delete"])
+    parser.add_argument("action", choices=["create", "ensure", "delete"])
     parser.add_argument("--server", required=True, type=int)
     parser.add_argument("--name", required=True)
     args = parser.parse_args()
