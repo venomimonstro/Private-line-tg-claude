@@ -294,8 +294,8 @@ PUBLIC_KEY=$(printf '%s\n' "$XRAY_KEYS" | awk -F ':[[:space:]]*' 'tolower($1) ~ 
 success "Reality Public Key: $PUBLIC_KEY"
 
 # Write final XRay config with Reality via Python:
-#  - 8 random shortIds (defeats Reality handshake fingerprinting)
-#  - plain UDP DNS (1.1.1.1, 8.8.8.8)
+#  - one stable random shortId;
+#  - explicit DNS for deterministic node egress.
 VPN_PORT_VAL=$VPN_PORT \
 PRIVATE_KEY_VAL="$PRIVATE_KEY" \
 PUBLIC_KEY_VAL="$PUBLIC_KEY" \
@@ -320,7 +320,7 @@ config = {
             "security": "reality",
             "realitySettings": {
                 "show": False,
-                "target": os.environ["REALITY_DEST_VAL"],
+                "dest": os.environ["REALITY_DEST_VAL"],
                 "xver": 0,
                 "serverNames": [os.environ["REALITY_SNI_VAL"]],
                 "privateKey": os.environ["PRIVATE_KEY_VAL"],
