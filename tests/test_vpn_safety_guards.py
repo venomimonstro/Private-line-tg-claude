@@ -547,5 +547,27 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn("Marzban image is not the tested digest-pinned", golden)
 
 
+    def test_telegram_delivery_prefers_subscription_but_preserves_raw_key_fallback(self):
+        notify = (ROOT / "app" / "services" / "user_notifications.py").read_text(encoding="utf-8")
+        access = (ROOT / "bot" / "handlers" / "access.py").read_text(encoding="utf-8")
+        token = (ROOT / "app" / "services" / "sub_token.py").read_text(encoding="utf-8")
+        self.assertIn("make_subscription_url", notify)
+        self.assertIn("subscription_url = """, notify)
+        self.assertIn("get_client_access_url", notify)
+        self.assertIn("make_subscription_url", access)
+        self.assertIn("subscription_block", access)
+        self.assertIn("get_client_access_url", access)
+        self.assertIn("CONTROL_PLANE_PUBLIC_URL", token)
+        self.assertIn('base.startswith("https://")', token)
+        self.assertIn('return f"{base}/sub/{token}"', token)
+
+    def test_subscription_endpoint_is_private_no_store_and_keeps_multiple_links(self):
+        route = (ROOT / "admin" / "routes" / "vpn_subscription.py").read_text(encoding="utf-8")
+        self.assertIn('"cache-control": "no-store, private"', route)
+        self.assertIn('"profile-update-interval": "6"', route)
+        self.assertIn('"\n".join(links)', route)
+        self.assertIn("make_sub_token", route)
+
+
 if __name__ == "__main__":
     unittest.main()
