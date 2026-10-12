@@ -49,6 +49,7 @@ from app.audit_data_integrity import audit as audit_data
 from app.verify_control_plane import main as verify_control
 from app.node_smoke_user import run as smoke_user
 from app.promote_vpn_node import run as promote_node
+from app.resync_vpn_node import run as resync_vpn_node
 from app.payments.services import recover_paid_unfulfilled_payments
 from app.services.promo import activate_tariff_trial
 print("PASS: production backend imports")
