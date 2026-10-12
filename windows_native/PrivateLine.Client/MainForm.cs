@@ -28,8 +28,14 @@ public sealed class MainForm : Form
     readonly Button connect = new();
     readonly Button disconnect = new();
     readonly Button send = new();
+    readonly Button refresh = new();
+    readonly Button pasteKey = new();
+    readonly ComboBox serverSelector = new();
     readonly CheckBox diagnostics = new();
     readonly List<Stage> stages = new();
+    readonly List<ServerProfile> availableServers = new();
+    string? manualKey;
+    readonly string manualKeyPath;
     readonly SemaphoreSlim connectionGate = new(1,1);
     readonly System.Windows.Forms.Timer tunnelWatchdog = new() { Interval=2000 };
 
@@ -49,46 +55,64 @@ public sealed class MainForm : Form
         ConfigPath = Path.Combine(BaseDir, "client.json");
         StatePath = Path.Combine(BaseDir, "state.json");
         PendingPath = Path.Combine(BaseDir, "pending-reports.json");
+        manualKeyPath = Path.Combine(BaseDir, "telegram-key.dpapi");
 
         Text = "Private Line";
-        Width = 560;
-        Height = 430;
+        Width = 590;
+        Height = 490;
         StartPosition = FormStartPosition.CenterScreen;
         MaximizeBox = false;
         FormBorderStyle = FormBorderStyle.FixedSingle;
 
         var title = new Label {
-            Left=24,Top=22,Width=480,Height=32,Text="PRIVATE LINE",
+            Left=24,Top=18,Width=530,Height=32,Text="PRIVATE LINE",
             Font=new Font("Segoe UI",18,FontStyle.Bold)
         };
         var subtitle = new Label {
-            Left=24,Top=62,Width=485,Height=44,
-            Text="Профиль VPN загружается автоматически. IP, ключ и токен вводить не нужно."
+            Left=24,Top=57,Width=530,Height=39,
+            Text="Выберите сервер и нажмите «Подключить». Ключ можно получить в Telegram."
         };
-        status.Left=24;status.Top=120;status.Width=485;status.Height=60;
+        serverSelector.Left=24;serverSelector.Top=113;serverSelector.Width=320;
+        serverSelector.Height=32;serverSelector.DropDownStyle=ComboBoxStyle.DropDownList;
+        serverSelector.Items.Add("Автоматически (лучший доступный)");
+        serverSelector.SelectedIndex=0;
+
+        refresh.Left=355;refresh.Top=113;refresh.Width=95;refresh.Height=30;
+        refresh.Text="Обновить";
+        pasteKey.Left=458;pasteKey.Top=113;pasteKey.Width=106;pasteKey.Height=30;
+        pasteKey.Text="Ключ из TG";
+
+        status.Left=24;status.Top=158;status.Width=540;status.Height=62;
         status.Text="Не подключено.";
-
-        connect.Left=24;connect.Top=195;connect.Width=235;connect.Height=44;
+        connect.Left=24;connect.Top=235;connect.Width=260;connect.Height=45;
         connect.Text="Подключить VPN";
-        disconnect.Left=274;disconnect.Top=195;disconnect.Width=235;
-        disconnect.Height=44;disconnect.Text="Отключить";
-        diagnostics.Left=24;diagnostics.Top=260;diagnostics.Width=485;
-        diagnostics.Height=44;
-        diagnostics.Text="Разрешить отправку обезличенной диагностики вручную";
-        diagnostics.Checked=false;
-        send.Left=24;send.Top=315;send.Width=485;send.Height=36;
-        send.Text="Отправить диагностику сейчас";
+        disconnect.Left=304;disconnect.Top=235;disconnect.Width=260;
+        disconnect.Height=45;disconnect.Text="Отключить";
 
-        Controls.AddRange([title,subtitle,status,connect,disconnect,diagnostics,send]);
+        diagnostics.Left=24;diagnostics.Top=303;diagnostics.Width=540;
+        diagnostics.Height=42;
+        diagnostics.Text="Разрешить ручную отправку обезличенной диагностики";
+        diagnostics.Checked=false;
+        send.Left=24;send.Top=363;send.Width=540;send.Height=37;
+        send.Text="Отправить диагностику";
+
+        Controls.AddRange([
+            title,subtitle,serverSelector,refresh,pasteKey,
+            status,connect,disconnect,diagnostics,send
+        ]);
         connect.Click += async (_,_) => await ConnectAsync();
         disconnect.Click += (_,_) => Disconnect();
+        refresh.Click += async (_,_) => await RefreshServersAsync();
+        pasteKey.Click += (_,_) => PasteTelegramKey();
         send.Click += async (_,_) => status.Text = await SendReportAsync();
+        Shown += async (_,_) => await RefreshServersAsync();
         FormClosing += (_,_) => {
             tunnelWatchdog.Stop();
             DisconnectCore(false);
         };
 
         Directory.CreateDirectory(BaseDir);
+        LoadSavedManualKey();
         CleanupOrphanXray();
         RecoverStaleProxy();
 
@@ -111,6 +135,7 @@ public sealed class MainForm : Form
     record Device(string api_base,string token_dpapi,string tls_pin);
     record Stage(string stage,string result,string code);
     record ProxyState(int proxy_enable,string proxy_server,int socks_port);
+    record ServerProfile(int id,string name,string health,string url);
 
     (string BaseUrl,string Token,string TlsPin) ReadDevice()
     {
@@ -162,44 +187,144 @@ public sealed class MainForm : Form
         return new HttpClient(handler){Timeout=TimeSpan.FromSeconds(12)};
     }
 
-    async Task<List<string>> FetchProfilesAsync(CancellationToken token)
+    async Task<List<ServerProfile>> FetchProfilesAsync(CancellationToken token)
     {
         var d=ReadDevice();
         using var http=PinnedHttp(d.TlsPin);
-        using var req=new HttpRequestMessage(HttpMethod.Get,d.BaseUrl+"/api/windows/profile");
+        using var req=new HttpRequestMessage(
+            HttpMethod.Get,d.BaseUrl+"/api/windows/profile"
+        );
         req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",d.Token);
-        using var res=await http.SendAsync(req,HttpCompletionOption.ResponseHeadersRead,token);
+        using var res=await http.SendAsync(
+            req,HttpCompletionOption.ResponseHeadersRead,token
+        );
         if(!res.IsSuccessStatusCode)
             throw new InvalidOperationException("PROFILE_FETCH_FAILED");
         using var doc=JsonDocument.Parse(await res.Content.ReadAsStringAsync(token));
-
-        var urls=new List<string>();
+        var result=new List<ServerProfile>();
         if(
-            doc.RootElement.TryGetProperty("vless_urls",out var many)
-            && many.ValueKind==JsonValueKind.Array
+            doc.RootElement.TryGetProperty("servers",out var servers)
+            && servers.ValueKind==JsonValueKind.Array
         ) {
-            foreach(var item in many.EnumerateArray()) {
-                var value=item.GetString();
+            foreach(var item in servers.EnumerateArray()) {
                 if(
-                    !string.IsNullOrWhiteSpace(value)
-                    && value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
-                    && !urls.Contains(value,StringComparer.Ordinal)
-                ) urls.Add(value);
-                if(urls.Count>=3)break;
+                    !item.TryGetProperty("vless_url",out var urlProp)
+                    || urlProp.ValueKind!=JsonValueKind.String
+                )continue;
+                var link=urlProp.GetString();
+                if(string.IsNullOrWhiteSpace(link)||
+                   !link.StartsWith("vless://",StringComparison.OrdinalIgnoreCase))continue;
+                var id=item.TryGetProperty("id",out var idProp)
+                    && idProp.ValueKind==JsonValueKind.Number
+                    ? idProp.GetInt32() : result.Count+1;
+                var name=item.TryGetProperty("name",out var nameProp)
+                    && nameProp.ValueKind==JsonValueKind.String
+                    ? nameProp.GetString()??"Сервер" : "Сервер";
+                var health=item.TryGetProperty("status",out var healthProp)
+                    && healthProp.ValueKind==JsonValueKind.String
+                    ? healthProp.GetString()??"unchecked" : "unchecked";
+                if(result.All(x=>x.id!=id))
+                    result.Add(new ServerProfile(id,name,health,link));
+                if(result.Count>=20)break;
             }
         }
-        if(
-            urls.Count==0
-            && doc.RootElement.TryGetProperty("vless_url",out var one)
-        ) {
-            var value=one.GetString();
-            if(
-                !string.IsNullOrWhiteSpace(value)
-                && value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
-            ) urls.Add(value);
+        if(result.Count==0 && doc.RootElement.TryGetProperty("vless_urls",out var urls)
+            && urls.ValueKind==JsonValueKind.Array) {
+            foreach(var item in urls.EnumerateArray()) {
+                if(item.ValueKind!=JsonValueKind.String)continue;
+                var link=item.GetString();
+                if(!string.IsNullOrWhiteSpace(link)
+                    && link.StartsWith("vless://",StringComparison.OrdinalIgnoreCase))
+                    result.Add(new ServerProfile(result.Count+1,
+                        $"Сервер {result.Count+1}","unchecked",link));
+                if(result.Count>=20)break;
+            }
         }
-        if(urls.Count==0)throw new InvalidOperationException("PROFILE_INVALID");
-        return urls;
+        return result;
+    }
+
+    void RefreshSelector(int selectedId=0)
+    {
+        serverSelector.Items.Clear();
+        serverSelector.Items.Add("Автоматически (лучший доступный)");
+        foreach(var item in availableServers) {
+            var suffix=item.health=="healthy"?" ✓":" · проверить";
+            serverSelector.Items.Add(item.name+suffix);
+        }
+        if(!string.IsNullOrWhiteSpace(manualKey))
+            serverSelector.Items.Add("Ключ из Telegram (локально)");
+
+        var ix=selectedId==-1
+            ? serverSelector.Items.Count-1
+            : selectedId==0
+                ? 0
+                : availableServers.FindIndex(x=>x.id==selectedId)+1;
+        serverSelector.SelectedIndex=ix>=0&&ix<serverSelector.Items.Count?ix:0;
+    }
+
+    async Task RefreshServersAsync()
+    {
+        var wasSelected=SelectedServerId();
+        refresh.Enabled=false;
+        try {
+            if(File.Exists(DevicePath)) {
+                using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                var updated=await FetchProfilesAsync(timeout.Token);
+                availableServers.Clear();
+                availableServers.AddRange(updated);
+                status.Text=$"Серверов по подписке: {availableServers.Count}. Выберите и подключитесь.";
+            } else {
+                status.Text="Укажите ключ из Telegram или установите персональный клиент.";
+            }
+        } catch {
+            status.Text="Список недоступен. Можно вставить ключ из Telegram напрямую.";
+        } finally {
+            RefreshSelector(wasSelected);
+            refresh.Enabled=true;
+        }
+    }
+
+    int SelectedServerId()
+    {
+        var idx=serverSelector.SelectedIndex;
+        if(idx<=0)return 0;
+        if(idx<=availableServers.Count)return availableServers[idx-1].id;
+        return -1;
+    }
+
+    void LoadSavedManualKey()
+    {
+        try {
+            if(!File.Exists(manualKeyPath))return;
+            var sealedBytes=Convert.FromBase64String(File.ReadAllText(manualKeyPath));
+            var raw=ProtectedData.Unprotect(
+                sealedBytes,null,DataProtectionScope.CurrentUser
+            );
+            var value=Encoding.UTF8.GetString(raw);
+            if(value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase))
+                manualKey=value;
+        } catch {}
+    }
+
+    void PasteTelegramKey()
+    {
+        try {
+            var value=Clipboard.GetText().Trim();
+            if(!value.StartsWith("vless://",StringComparison.OrdinalIgnoreCase)
+                || !Uri.TryCreate(value,UriKind.Absolute,out _))
+                throw new InvalidOperationException("PROFILE_INVALID");
+            manualKey=value;
+            File.WriteAllText(
+                manualKeyPath,
+                Convert.ToBase64String(ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(value),null,DataProtectionScope.CurrentUser
+                ))
+            );
+            RefreshSelector(-1);
+            status.Text="Ключ Telegram сохранён для этого Windows-пользователя. Нажмите «Подключить VPN».";
+        } catch {
+            status.Text="Скопируйте полный VLESS-ключ из Telegram, затем нажмите «Ключ из TG».";
+        }
     }
 
     static Dictionary<string,string> Query(Uri uri)
@@ -478,22 +603,41 @@ public sealed class MainForm : Form
             if(!await XrayOkAsync(token))
                 throw new InvalidOperationException("XRAY_VERSION_INVALID");
 
-            status.Text="Получаем актуальный VPN-профиль...";
-            var profiles=await FetchProfilesAsync(token);
+            status.Text="Готовим VPN-подключение...";
+            var selection=SelectedServerId();
+            if(availableServers.Count==0 && selection!=-1
+                && File.Exists(DevicePath)) {
+                var fresh=await FetchProfilesAsync(token);
+                availableServers.Clear();
+                availableServers.AddRange(fresh);
+                RefreshSelector(selection);
+            }
+            List<ServerProfile> candidates;
+            if(selection==-1 && !string.IsNullOrWhiteSpace(manualKey)) {
+                candidates=[new ServerProfile(-1,"Ключ из Telegram","manual",manualKey)];
+            } else if(selection>0) {
+                candidates=availableServers.Where(s=>s.id==selection).ToList();
+            } else {
+                candidates=availableServers.ToList();
+                if(candidates.Count==0 && !string.IsNullOrWhiteSpace(manualKey))
+                    candidates.Add(new ServerProfile(-1,"Ключ из Telegram","manual",manualKey));
+            }
+            if(candidates.Count==0)
+                throw new InvalidOperationException("NO_VPN_SERVERS");
             stages.Add(new("parse","ok","PROFILE_VALID"));
 
             string? connectedIp=null;
             Exception? lastFailure=null;
-            for(var endpoint=0;endpoint<profiles.Count;endpoint++) {
+            for(var endpoint=0;endpoint<candidates.Count;endpoint++) {
                 token.ThrowIfCancellationRequested();
                 StopXrayOnly();
                 socksPort=AllocateSocksPort();
-                status.Text=profiles.Count>1
-                    ? $"Проверяем VPN-сервер {endpoint+1} из {profiles.Count}..."
-                    : "Проверяем VPN-сервер...";
+                status.Text=candidates.Count>1
+                    ? $"Подключаемся: {candidates[endpoint].name} ({endpoint+1}/{candidates.Count})"
+                    : $"Подключаемся: {candidates[endpoint].name}";
 
                 try {
-                    var config=BuildXrayConfig(profiles[endpoint]);
+                    var config=BuildXrayConfig(candidates[endpoint].url);
                     AtomicWrite(ConfigPath,config);
 
                     xray=Process.Start(new ProcessStartInfo(
