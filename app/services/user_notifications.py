@@ -9,6 +9,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     """Send all access keys to user after activation, then send onboarding."""
     from app.bot_instance import get_bot
     from app.services.vpn_key import get_client_access_url
+    from app.services.sub_token import make_subscription_url
 
     bot = get_bot()
     temporary_bot = False
@@ -27,6 +28,14 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     try:
         first_url: str = ""
 
+        subscription_url = make_subscription_url(user_id)
+        _subscription_hint = (
+            "🔄 <b>Рекомендуется: подписка с автообновлением</b>\n"
+            f"<code>{escape(subscription_url)}</code>\n"
+            "Добавьте этот URL как Subscription/Подписку. "
+            "Список доступных серверов будет обновляться автоматически.\n\n"
+        )
+
         _app_hint = (
             "📱 <b>Приложения для подключения:</b>\n"
             "• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -44,11 +53,17 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
             first_url = url
             text = (
                 "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
-                f"<code>{escape(url)}</code>\n\n"
+                + _subscription_hint
+                + "🔑 <b>Ручной ключ:</b>\n"
+                + f"<code>{escape(url)}</code>\n\n"
                 + _app_hint
             )
         else:
-            lines = ["✅ <b>Ваши VPN-ключи готовы!</b>\n"]
+            lines = [
+                "✅ <b>Ваш VPN-доступ готов!</b>\n",
+                _subscription_hint,
+                "🔑 <b>Ручные ключи (резервный способ):</b>\n",
+            ]
             for key in vpn_keys:
                 url = get_client_access_url(key)  # type: ignore[arg-type]
                 if not first_url:
