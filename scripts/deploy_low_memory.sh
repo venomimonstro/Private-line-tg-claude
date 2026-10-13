@@ -138,8 +138,8 @@ fi
 if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" ]]; then
   if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
     FREE_MB="$(df -Pm . | awk 'NR==2 {print $4}')"
-    if (( FREE_MB < 3500 )); then
-      fail "Windows build requested but only ${FREE_MB} MiB free; need at least 3500 MiB. Normal update.sh does not require a Windows build"
+    if (( FREE_MB < 2200 )); then
+      fail "Windows build requested but only ${FREE_MB} MiB free; need at least 2200 MiB for the isolated SDK build"
     fi
     echo "Windows build explicitly requested; building once..."
     WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
