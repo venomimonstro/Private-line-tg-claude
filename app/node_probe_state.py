@@ -28,9 +28,9 @@ async def run(server_id: int, state: str, reason: str | None) -> int:
         if (
             server is None
             or server.provider == "private-line-primary"
-            or _server_protocol(server) != "marzban"
+            or _server_protocol(server) not in ("marzban", "direct_xray")
         ):
-            print("STOP: dedicated Marzban node not found")
+            print("STOP: dedicated VPN node not found")
             return 2
 
         if state == "maintenance":
