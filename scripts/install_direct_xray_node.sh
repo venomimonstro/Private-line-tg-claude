@@ -102,15 +102,21 @@ systemctl disable --now marzban-proxy.service >/dev/null 2>&1 || true
 # Manager file is installed by the rollout before this script runs.
 [[ -s "$MANAGER" ]] || { echo "FAIL: $MANAGER missing" >&2; exit 2; }
 chmod 700 "$MANAGER"
-"$MANAGER" sync e30= >/dev/null
+
+systemctl daemon-reload
+systemctl enable private-line-xray.service >/dev/null
+
+# First installation needs one rendered config. Repeated updates must NEVER
+# clear the durable user list; migration/sync runs explicitly from control-plane.
+if [[ ! -s "$DATA/xray.json" ]]; then
+  "$MANAGER" sync e30= >/dev/null
+fi
 
 ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
 ufw allow 443/tcp comment "Private Line VLESS Reality" >/dev/null 2>&1 || true
 ufw delete allow 2096/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
-systemctl daemon-reload
-systemctl enable private-line-xray.service >/dev/null
 systemctl restart private-line-xray.service
 sleep 1
 systemctl is-active --quiet private-line-xray.service || { journalctl -u private-line-xray -n 40 --no-pager >&2; exit 2; }
