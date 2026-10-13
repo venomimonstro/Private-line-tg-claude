@@ -25,11 +25,11 @@ EOF
 
 cat >/etc/systemd/system/private-line-vpn-health.timer <<'EOF'
 [Unit]
-Description=Run Private Line VPN health check every minute
+Description=Run Private Line VPN health check every 5 minutes
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=1min
+OnBootSec=2min
+OnUnitActiveSec=5min
 RandomizedDelaySec=20s
 Persistent=true
 Unit=private-line-vpn-health.service
@@ -41,4 +41,4 @@ EOF
 systemctl daemon-reload
 systemctl enable --now private-line-vpn-health.timer >/dev/null
 systemctl is-enabled private-line-vpn-health.timer >/dev/null
-echo "PASS: Private Line real VPN health timer enabled (1m)"
+echo "PASS: Private Line real VPN health timer enabled (5m)"
