@@ -70,7 +70,7 @@ async def active_user_servers(session: AsyncSession, user_id: int) -> list[dict]
     )).all()
     found: dict[int, dict] = {}
     for key, server in rows:
-        if server.id in found or _server_protocol(server) != "marzban":
+        if server.id in found or _server_protocol(server) != "direct_xray":
             continue
         try:
             link = get_client_access_url(key)
