@@ -33,6 +33,7 @@ fi
 
 for script in \
     scripts/update_production.sh \
+    scripts/install_direct_xray.sh \
     windows_native/build.sh \
     scripts/converge_vpn_node.sh \
     scripts/prepare_marzban_runtime.sh \

@@ -108,6 +108,7 @@ docker compose exec -T admin python -m unittest \
     tests.test_marzban_stability \
     tests.test_node_selection \
     tests.test_marzban_runtime_patch \
+    tests.test_direct_xray \
     || fail "VPN regression suite failed; nodes were not modified"
 echo "PASS: VLESS regression suite"
 
@@ -204,7 +205,9 @@ if [[ "$NODE_UPDATE" == true ]]; then
     tar -czf "$REMOTE_ARCHIVE" \
         scripts/converge_vpn_node.sh \
         scripts/prepare_marzban_runtime.sh \
-        scripts/inspect_node_vless.sh
+        scripts/inspect_node_vless.sh \
+        scripts/install_direct_xray.sh \
+        node/agent.py node/migrate.py node/selftest.py
 fi
 
 while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
@@ -262,23 +265,35 @@ for key in ("host","port","username","auth_type","secret_b64"):
             -o StrictHostKeyChecking=accept-new
             -o NumberOfPasswordPrompts=1
         )
+        # Credential payload is never logged and is removed by the EXIT trap.
+        docker compose exec -T admin python -m app.node_management_credentials \
+            --server "$SERVER_ID" > "$NODE_CRED_DIR/node-credentials.json" \
+            || fail "cannot prepare node API credentials"
+        tar -czf "$REMOTE_ARCHIVE" \
+            scripts/converge_vpn_node.sh scripts/prepare_marzban_runtime.sh \
+            scripts/inspect_node_vless.sh scripts/install_direct_xray.sh \
+            node/agent.py node/migrate.py node/selftest.py \
+            -C "$NODE_CRED_DIR" node-credentials.json
         REMOTE_COMMAND='set -Eeuo pipefail
              tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
              trap '"'"'rm -rf "$tmp"'"'"' EXIT
              tar -xzf - -C "$tmp"
-             if ! MAIN_SERVER_IP=194.146.223.104 bash "$tmp/scripts/converge_vpn_node.sh"; then
+             if ! MAIN_SERVER_IP=194.146.223.104 bash "$tmp/scripts/install_direct_xray.sh"; then
                  echo "=== AUTOMATIC NODE DIAGNOSTICS: GOLDEN CONVERGENCE FAILED ===" >&2
                  bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
                  exit 1
              fi
              echo "REMOTE NODE PASS"'
 
+        docker compose exec -T admin python -m app.node_probe_state \
+            --server "$SERVER_ID" --maintenance \
+            || fail "cannot pause new assignments before node migration"
         echo "[1/4] Remote node convergence (stored SSH access; no terminal prompt)"
         if [[ "$SSH_AUTH" == "private_key" ]]; then
             cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
                 -o BatchMode=yes -i "$SECRET_FILE" \
                 "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); VPN admission state was not changed because SSH is not a data-plane proof"
+                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); node remains in planned maintenance until external VPN acceptance passes"
         elif [[ "$SSH_AUTH" == "password" ]]; then
             ASKPASS="$NODE_CRED_DIR/askpass"
             cat > "$ASKPASS" <<EOF
@@ -297,7 +312,7 @@ EOF
                     -o PreferredAuthentications=password,keyboard-interactive \
                     -o PubkeyAuthentication=no \
                     "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); VPN admission state was not changed because SSH is not a data-plane proof"
+                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); node remains in planned maintenance until external VPN acceptance passes"
         else
             fail "unsupported SSH auth type for node $SERVER_ID"
         fi
@@ -305,7 +320,7 @@ EOF
         unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
     fi
 
-    echo "[2/5] Reconcile Marzban DB/runtime/host metadata"
+    echo "[2/5] Reconcile user UUIDs and public VLESS endpoint"
     docker compose exec -T admin python -m app.stabilize_vless --node "$NODE_HOST" \
         || { quarantine_node "$SERVER_ID" "Marzban/runtime reconciliation failed"; fail "reconciliation failed for node $SERVER_ID"; }
 
@@ -369,7 +384,7 @@ echo
 echo "========================================"
 echo "PRODUCTION UPDATE PASS"
 echo "Control plane: updated/healthy"
-echo "Marzban nodes: converged from main server"
+echo "Direct Xray nodes: migrated/converged from main server"
 echo "VPN E2E: passed"
 echo "Node revision: $HEAD"
 echo "========================================"

@@ -33,6 +33,16 @@ async def run(server_id: int, state: str, reason: str | None) -> int:
             print("STOP: dedicated Marzban node not found")
             return 2
 
+        if state == "maintenance":
+            server.is_selectable = False
+            server.status = VpnServerStatus.maintenance
+            server.last_e2e_success_at = None
+            server.last_hot_add_success_at = None
+            server.last_error = "Planned direct Xray rollout; external acceptance pending"
+            await session.commit()
+            print(f"MAINTENANCE: node {server.id}; existing credentials preserved")
+            return 0
+
         if state == "failure":
             server.is_selectable = False
             server.status = VpnServerStatus.unreachable
@@ -74,11 +84,14 @@ if __name__ == "__main__":
     group.add_argument("--success", action="store_true")
     group.add_argument("--hot-add-success", action="store_true")
     group.add_argument("--failure", action="store_true")
+    group.add_argument("--maintenance", action="store_true")
     parser.add_argument("--reason", default="")
     args = parser.parse_args()
     if args.server <= 0:
         parser.error("--server must be positive")
-    if args.hot_add_success:
+    if args.maintenance:
+        state = "maintenance"
+    elif args.hot_add_success:
         state = "hot-add-success"
     else:
         state = "success" if args.success else "failure"

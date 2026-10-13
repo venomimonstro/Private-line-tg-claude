@@ -19,6 +19,13 @@ echo
 echo "=== VPN LISTENER / FIREWALL ==="
 ss -ltnp '( sport = :443 )' 2>/dev/null || true
 ufw status 2>/dev/null | head -n 14 || true
+if [[ -f /var/lib/private-line-node/state.json ]]; then
+    echo "=== DIRECT XRAY SUPERVISOR ==="
+    systemctl is-active private-line-node.service || true
+    /opt/private-line-node/xray version | head -n 1
+    journalctl -u private-line-node.service -n 15 --no-pager 2>/dev/null | \
+        sed -E 's/[A-Za-z0-9_-]{32,}/[REDACTED]/g' || true
+fi
 echo "=== MARZBAN CONTAINER / XRAY CORE VERSION ==="
 docker ps --filter name=marzban --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || true
 docker exec marzban-marzban-1 python -c 'import os, subprocess; subprocess.run([os.environ.get("XRAY_EXECUTABLE_PATH", "/usr/local/bin/xray"), "version"], check=True)' 2>/dev/null | head -n 1 || true
@@ -35,7 +42,9 @@ if not p.exists():
     print("FAIL: Xray config file missing")
     raise SystemExit(0)
 try:
-    config = json.loads(p.read_text())
+    native = Path("/var/lib/private-line-node/state.json")
+    config = (json.loads(native.read_text())["config"] if native.exists()
+              else json.loads(p.read_text()))
     for i in config.get("inbounds", []):
         s = i.get("streamSettings", {})
         r = s.get("realitySettings", {})

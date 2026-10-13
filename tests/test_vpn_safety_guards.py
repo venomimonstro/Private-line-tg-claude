@@ -308,9 +308,10 @@ class ProductionVpnSafetyTests(unittest.TestCase):
         self.assertNotIn('bash "$tmp/scripts/migrate_reality_target.sh"', source)
         self.assertIn("runtime/firewall drift", source)
 
-    def test_ssh_management_failure_does_not_quarantine_data_plane(self):
+    def test_direct_rollout_pauses_admission_until_external_acceptance(self):
         source = (ROOT / "scripts" / "update_production.sh").read_text(encoding="utf-8")
-        self.assertIn("VPN admission state was not changed because SSH is not a data-plane proof", source)
+        self.assertIn("node remains in planned maintenance until external VPN acceptance passes", source)
+        self.assertIn('--server "$SERVER_ID" --maintenance', source)
         ssh_area = source[source.index('if [[ "$SSH_AUTH" == "private_key" ]]'):source.index('echo "[2/5]')]
         self.assertNotIn('quarantine_node "$SERVER_ID" "remote node convergence failed"', ssh_area)
 

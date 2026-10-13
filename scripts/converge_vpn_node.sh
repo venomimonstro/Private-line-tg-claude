@@ -12,6 +12,10 @@ set -Eeuo pipefail
 umask 077
 
 [[ "$(id -u)" -eq 0 ]] || { echo "FAIL: run as root" >&2; exit 2; }
+if [[ -f /var/lib/private-line-node/state.json ]]; then
+    echo "FAIL: node uses direct Xray; update it through /opt/private-line/update.sh on the main server" >&2
+    exit 2
+fi
 cd /opt/marzban
 [[ -f .env && -f docker-compose.yml ]] || {
     echo "FAIL: /opt/marzban is not an installed Marzban node" >&2
