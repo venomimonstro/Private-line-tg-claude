@@ -17,6 +17,23 @@ TARGET="${SNI}:443"
 mkdir -p "$ROOT" "$DATA"
 chmod 700 "$ROOT" "$DATA"
 
+# Stop the older experimental direct-agent service if it ever existed. Only one
+# process may own public TCP/443.
+systemctl disable --now private-line-node.service >/dev/null 2>&1 || true
+
+# Its state schema is intentionally different. Preserve it for audit, then let
+# this installer rebuild the minimal state from the existing REALITY identity.
+if [[ -s "$DATA/state.json" ]] && ! python3 - "$DATA/state.json" <<'PY' >/dev/null 2>&1
+import json, sys
+s=json.load(open(sys.argv[1]))
+required={"host","port","sni","target","private_key","public_key","short_id","users"}
+raise SystemExit(0 if required.issubset(s) and isinstance(s.get("users"),dict) else 1)
+PY
+then
+  mv "$DATA/state.json" "$DATA/state.legacy.$(date -u +%Y%m%dT%H%M%SZ).json"
+  rm -f "$DATA/xray.json"
+fi
+
 # Reuse the already installed official Xray first. Avoid downloads during migration.
 if [[ -x /var/lib/marzban/xray-core/26.6.27/xray ]]; then
   install -m 755 /var/lib/marzban/xray-core/26.6.27/xray "$XRAY"
