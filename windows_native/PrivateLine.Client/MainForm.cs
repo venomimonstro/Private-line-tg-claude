@@ -94,7 +94,7 @@ public sealed class MainForm : Form
         diagnostics.Text="Разрешить ручную отправку обезличенной диагностики";
         diagnostics.Checked=false;
         send.Left=24;send.Top=363;send.Width=540;send.Height=37;
-        send.Text="Отправить диагностику";
+        send.Text="Отправить диагностику сейчас";
 
         Controls.AddRange([
             title,subtitle,serverSelector,refresh,pasteKey,
