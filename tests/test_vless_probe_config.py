@@ -33,6 +33,24 @@ class VlessProbeConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_config_from_url(self.good().replace("fp=chrome", "fp=none"), 19580)
 
+    def test_duplicate_parameter_is_rejected_before_fragment(self):
+        raw = self.good().replace('#Private', '&sni=other.example#Private')
+        with self.assertRaises(ValueError):
+            build_config_from_url(raw, 19580)
+
+    def test_exact_link_comparison_ignores_only_label(self):
+        from app.check_exact_vless import signature
+        self.assertEqual(signature(self.good()), signature(self.good().split('#')[0] + '#Other'))
+        self.assertNotEqual(signature(self.good()), signature(self.good().replace('sid=abcdef', 'sid=012345')))
+
+    def test_exact_link_rejects_html_and_ignored_parameters(self):
+        from app.check_exact_vless import signature
+        for raw in (self.good().replace('&', '&amp;'),
+                    self.good().replace('#Private', '&alpn=h2#Private'),
+                    self.good().replace('vless://', 'vless:// ')):
+            with self.assertRaises(ValueError):
+                signature(raw)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,8 +12,8 @@ if [[ -n "$SERVER_ID" ]]; then
     [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid server ID" >&2; exit 2; }
     SERVER_ARGS=(--server "$SERVER_ID")
 fi
-[[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Usage: bash scripts/probe_vless_e2e.sh SUBSCRIPTION_ID" >&2
+[[ "$SUB_ID" == "--telegram-url" || "$SUB_ID" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Usage: bash scripts/probe_vless_e2e.sh SUBSCRIPTION_ID [SERVER_ID] | --telegram-url SERVER_ID" >&2
     exit 2
 }
 cd "$(dirname "$0")/.."
@@ -33,6 +33,8 @@ PY
 }
 RUN_ID="$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
 PROBE_NAME="private-line-vless-probe-${SERVER_ID:-any}-${RUN_ID}"
+EXPECTED_NODE_IP=""
+EXIT_IP=""
 WORKDIR="$(mktemp -d -t private-line-vless-XXXXXXXX)"
 CONFIG="$WORKDIR/xray-client.json"
 
@@ -60,6 +62,21 @@ then
     exit 1
 fi
 
+if [[ "$SUB_ID" == "--telegram-url" ]]; then
+    [[ -n "$SERVER_ID" ]] || { echo "Server ID required" >&2; exit 2; }
+    printf 'Paste the EXACT vless:// link copied from Telegram (input hidden): ' > /dev/tty
+    VLESS_URL=""
+    IFS= read -r -s VLESS_URL < /dev/tty || { echo "No input received" >&2; exit 2; }
+    printf '\n' > /dev/tty
+    echo "[2/5] Comparing supplied Telegram key with node settings (read-only)..."
+    # Run current host source with the existing application environment. No
+    # image build, service restart, key repair or mutation is involved.
+    printf '%s\n' "$VLESS_URL" | docker compose exec -T admin python -c \
+        "$(cat app/check_exact_vless.py)" --server "$SERVER_ID" || exit 2
+    printf '%s\n' "$VLESS_URL" | docker compose exec -T admin python -c \
+        "$(cat app/vless_e2e_probe_config.py)" --stdin-url --socks-port "$SOCKS_PORT" > "$CONFIG" || exit 2
+    unset VLESS_URL
+else
 echo "[2/5] Preparing confidential Xray config for subscription $SUB_ID..."
 if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
     --subscription "$SUB_ID" "${SERVER_ARGS[@]}" --socks-port "$SOCKS_PORT" >"$CONFIG"; then
@@ -85,8 +102,10 @@ if ! docker compose exec -T admin python -m app.vless_e2e_probe_config \
     fi
     unset VLESS_URL
 fi
+fi
 python3 -m json.tool "$CONFIG" >/dev/null
 
+EXPECTED_NODE_IP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["outbounds"][0]["settings"]["vnext"][0]["address"])' "$CONFIG")"
 echo "[3/5] Checking public VPN endpoint TCP reachability..."
 if ! python3 - "$CONFIG" <<'PY'
 import json, socket, sys
@@ -175,6 +194,10 @@ probe "Cloudflare HTTP (IP)" "http://1.1.1.1/cdn-cgi/trace"
 probe "Google HTTP" "http://connectivitycheck.gstatic.com/generate_204"
 
 echo "RESULT: $SUCCESS/5 destinations returned HTTP responses through the VPN."
+if [[ "$SUB_ID" == "--telegram-url" && "$EXIT_IP" != "$EXPECTED_NODE_IP" ]]; then
+    echo "FAIL: exact-key test could not verify node egress IP (expected $EXPECTED_NODE_IP)."
+    exit 1
+fi
 if (( SUCCESS >= 3 )); then
     echo "PASS: tunnel has functional internet egress on multiple destinations."
     exit 0

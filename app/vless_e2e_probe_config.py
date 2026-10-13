@@ -38,7 +38,9 @@ def build_config_from_url(raw: str, socks_port: int) -> dict:
         raise ValueError("VLESS destination must be a public IP")
     if parsed.port is None or not (1 <= parsed.port <= 65535):
         raise ValueError("Invalid VLESS port")
-    args = parse_qs(parsed.query)
+    args = parse_qs(parsed.query, keep_blank_values=True)
+    if any(len(values) != 1 for values in args.values()):
+        raise ValueError("Ambiguous duplicate VLESS query parameter")
     get = lambda name: args.get(name, [""])[0]
     pub, sid, sni = get("pbk"), get("sid"), get("sni")
     if (
