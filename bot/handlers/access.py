@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session_maker
-from app.encryption import decrypt
+from app.encryption import decrypt, encrypt
 from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
 from app.models.tariff import Tariff
