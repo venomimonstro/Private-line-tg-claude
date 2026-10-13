@@ -38,13 +38,11 @@ async def _get_available_servers(session: AsyncSession) -> list[VpnServer]:
     now = datetime.utcnow()
     available = [
         s for s in servers
-        if vpn_key_service._server_protocol(s) == "marzban"
+        if vpn_key_service._server_protocol(s) == "direct_xray"
         and get_circuit_breaker(s.id).is_available()
         and (not s.max_users or s.current_users < s.max_users)
         and s.last_e2e_success_at is not None
-        and s.last_e2e_success_at >= now - timedelta(minutes=3)
-        and s.last_hot_add_success_at is not None
-        and s.last_hot_add_success_at >= now - timedelta(minutes=45)
+        and s.last_e2e_success_at >= now - timedelta(minutes=15)
     ]
     return sorted(available, key=lambda s: s.current_users)
 
@@ -80,32 +78,27 @@ async def ensure_subscription_vpn_key(
     # deliverable for recovery but never suppress additive failover.
     proof_now = datetime.utcnow()
     for key, server in rows:
-        if vpn_key_service._server_protocol(server) != "marzban":
+        if vpn_key_service._server_protocol(server) != "direct_xray":
             continue
         if (
             server.status != VpnServerStatus.active
             or not server.is_selectable
             or server.last_e2e_success_at is None
-            or server.last_e2e_success_at < proof_now - timedelta(minutes=3)
-            or server.last_hot_add_success_at is None
-            or server.last_hot_add_success_at < proof_now - timedelta(minutes=45)
+            or server.last_e2e_success_at < proof_now - timedelta(minutes=15)
         ):
             continue
         try:
-            from app.services.vpn_reconcile import reconcile_marzban_server
-            result = await reconcile_marzban_server(
-                session,
-                server.id,
-                apply=True,
-                only_subscription_id=subscription.id,
-            )
-            if result.errors == 0:
-                await session.refresh(key)
-                verified.append(key)
-                verified_server_ids.add(server.id)
+            client = vpn_key_service._make_client(server)
+            try:
+                remote = await client.get_key(key.outline_key_id)
+                if remote.access_url.startswith("vless://"):
+                    verified.append(key)
+                    verified_server_ids.add(server.id)
+            finally:
+                await client.aclose()
         except Exception as exc:
             logger.warning(
-                "Existing renewal key %d failed reconciliation on server %d: %s",
+                "Existing direct Xray renewal key %d failed verification on server %d: %s",
                 key.id, server.id, type(exc).__name__,
             )
 
