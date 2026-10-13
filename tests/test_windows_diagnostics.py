@@ -83,7 +83,8 @@ class WindowsDiagnosticsTests(unittest.TestCase):
         self.assertIn("diagnostics.Checked=false", source.replace(" ", ""))
         self.assertIn("Отправить диагностику сейчас", source)
         self.assertNotIn("_ = FlushPendingAsync()", source)
-        self.assertNotIn("await SendReportAsync();", source)
+        self.assertIn("send.Click += async", source)
+        self.assertEqual(source.count("SendReportAsync()"), 2)
 
     def test_windows_script_does_not_auto_send(self):
         source=(ROOT/"windows_client/PrivateLine.ps1").read_text()
