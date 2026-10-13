@@ -115,7 +115,13 @@ docker compose exec -T db pg_isready -U privateline -d privateline >/dev/null 2>
 echo "[4/8] TLS identity + native Windows installer + immutable application runtime..."
 bash scripts/ensure_control_plane_tls.sh || fail "control-plane HTTPS identity setup failed"
 
-WINDOWS_SOURCE_HASH="$(find windows_native -type f ! -path '*/bin/*' ! -path '*/obj/*' ! -path '*/out-client/*' ! -path '*/out-installer/*' ! -path '*/Payload/*.exe' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+WINDOWS_SOURCE_HASH="$(
+    find windows_native -type f \
+      ! -path '*/bin/*' ! -path '*/obj/*' \
+      ! -path '*/out-client/*' ! -path '*/out-installer/*' \
+      ! -path '*/Payload/*.exe' -print0 2>/dev/null \
+    | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | awk '{print $1}'
+)"
 WINDOWS_HASH_FILE="data/windows_dist/.source.sha256"
 WINDOWS_EXE="data/windows_dist/PrivateLineSetup.exe"
 WINDOWS_BUILD_NEEDED=true
@@ -124,34 +130,64 @@ if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]] \
    && [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]]; then
   WINDOWS_BUILD_NEEDED=false
 fi
-# Emergency operator escape hatch only. Normal deploys rebuild automatically
-# when Windows sources changed, and otherwise reuse the already-published EXE.
-if [[ "${PRIVATE_LINE_SKIP_WINDOWS_BUILD:-0}" == "1" ]]; then
-  WINDOWS_BUILD_NEEDED=false
-fi
 
-if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
-  echo "Windows sources changed or installer missing; building once..."
-  WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
-  docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
-  rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
-  mkdir -p data/windows_dist
-  docker run --rm --user 0:0 --cpus=1.0 --memory=1024m --pids-limit=256 \
-    -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
-    -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" \
-    bash windows_native/build.sh \
-    || fail "native Windows installer build failed"
-  [[ -s "$WINDOWS_EXE" ]] || fail "PrivateLineSetup.exe was not produced"
-  [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]] || fail "PrivateLineSetup.exe is not a PE executable"
-  printf '%s\n' "$WINDOWS_SOURCE_HASH" > "$WINDOWS_HASH_FILE"
-  rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Client/bin windows_native/PrivateLine.Client/obj windows_native/PrivateLine.Installer/bin windows_native/PrivateLine.Installer/obj windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
-  docker image rm "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1 || true
-  docker builder prune -af >/dev/null 2>&1 || true
-  echo "PASS: native Windows PrivateLineSetup.exe built and build cache released"
+# Windows is intentionally NOT part of the normal production control-plane deploy.
+# Building a self-contained .NET/WinForms EXE requires gigabytes of temporary
+# SDK/NuGet space and previously exhausted the VPS disk, making admin unhealthy.
+# Normal update.sh preserves the last good EXE and continues.
+if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" ]]; then
+  if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
+    FREE_MB="$(df -Pm . | awk 'NR==2 {print $4}')"
+    if (( FREE_MB < 3500 )); then
+      fail "Windows build requested but only ${FREE_MB} MiB free; need at least 3500 MiB. Normal update.sh does not require a Windows build"
+    fi
+    echo "Windows build explicitly requested; building once..."
+    WINDOWS_SDK_IMAGE="mcr.microsoft.com/dotnet/sdk:8.0"
+    docker pull "$WINDOWS_SDK_IMAGE" >/dev/null \
+      || fail "could not pull .NET SDK image for Windows installer build"
+    rm -rf \
+      windows_native/out-client \
+      windows_native/out-installer \
+      windows_native/PrivateLine.Client/bin \
+      windows_native/PrivateLine.Client/obj \
+      windows_native/PrivateLine.Installer/bin \
+      windows_native/PrivateLine.Installer/obj \
+      windows_native/PrivateLine.Installer/Payload/PrivateLine.exe \
+      windows_native/PrivateLine.Installer/Payload/xray.exe
+    mkdir -p data/windows_dist
+    docker run --rm --user 0:0 --cpus=1.0 --memory=1024m --pids-limit=256 \
+      -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+      -e DOTNET_NOLOGO=1 \
+      -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" \
+      bash windows_native/build.sh \
+      || fail "native Windows installer build failed"
+    [[ -s "$WINDOWS_EXE" ]] || fail "PrivateLineSetup.exe was not produced"
+    [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]] \
+      || fail "PrivateLineSetup.exe is not a PE executable"
+    printf '%s\n' "$WINDOWS_SOURCE_HASH" > "$WINDOWS_HASH_FILE"
+    rm -rf \
+      windows_native/out-client \
+      windows_native/out-installer \
+      windows_native/PrivateLine.Client/bin \
+      windows_native/PrivateLine.Client/obj \
+      windows_native/PrivateLine.Installer/bin \
+      windows_native/PrivateLine.Installer/obj \
+      windows_native/PrivateLine.Installer/Payload/PrivateLine.exe \
+      windows_native/PrivateLine.Installer/Payload/xray.exe
+    docker image rm "$WINDOWS_SDK_IMAGE" >/dev/null 2>&1 || true
+    docker builder prune -af >/dev/null 2>&1 || true
+    echo "PASS: native Windows installer built explicitly and build cache released"
+  else
+    echo "PASS: published Windows installer already matches current sources"
+  fi
 else
-  echo "PASS: published Windows installer already matches current sources; rebuild skipped"
+  if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
+    echo "SKIP: Windows installer is stale/missing; production deploy will not compile it."
+    echo "      VPN/admin/bot update continues safely. Build Windows separately only with PRIVATE_LINE_BUILD_WINDOWS=1 on a host with >=3500 MiB free."
+  else
+    echo "PASS: existing Windows installer retained; no Windows build requested"
+  fi
 fi
-
 # Application source is baked into private-line-app:runtime; it is no longer
 # bind-mounted. A force-recreate without a build would silently keep old code.
 SOURCE_REVISION="$(git rev-parse HEAD)" || fail "cannot determine source revision"
