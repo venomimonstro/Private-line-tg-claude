@@ -138,7 +138,7 @@ else
         echo "Previous node revision is unavailable locally; convergence required."
         NODE_UPDATE=true
     elif [[ "$NODE_STATE" != "$HEAD" ]]; then
-        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/converge_vpn_node.sh             scripts/prepare_marzban_runtime.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
+        NODE_CHANGED_FILES="$(git diff --name-only "$NODE_STATE" "$HEAD" --             install_node.sh             scripts/converge_vpn_node.sh             scripts/prepare_marzban_runtime.sh             scripts/smoke_vpn_node.sh             scripts/probe_vless_e2e.sh             scripts/inspect_node_vless.sh             scripts/direct_xray_node.py             scripts/install_direct_xray_node.sh             app/vpn/direct_xray.py             app/direct_xray_migrate.py             app/direct_xray_canary.py             app/vless_e2e_probe_config.py             app/node_smoke_user.py             app/vpn/marzban.py             app/services/vpn_reconcile.py || true)"
         if [[ -n "$NODE_CHANGED_FILES" ]]; then
             echo "Node/VPN changes since last successful node rollout:"
             printf '%s\n' "$NODE_CHANGED_FILES" | sed 's/^/  - /'
@@ -156,10 +156,9 @@ fi
 NODE_UPDATE=true
 
 echo
-echo "=== DISCOVER REGISTERED MARZBAN NODES ==="
+echo "=== DISCOVER DEDICATED VPN NODES ==="
 NODE_ROWS="$(docker compose exec -T admin python - <<'PY'
 import asyncio
-from urllib.parse import urlsplit
 from sqlalchemy import select
 from app.database import async_session_maker
 from app.enums import VpnServerStatus
@@ -178,57 +177,47 @@ async def main():
         )).scalars().all()
         found=0
         for server in rows:
-            if _server_protocol(server) != "marzban":
+            if _server_protocol(server) not in ("marzban", "direct_xray"):
                 continue
-            host=urlsplit(server.api_url).hostname
-            if not host:
+            if not server.ssh_host:
                 continue
-            print(f"{server.id}\t{host}")
+            print(f"{server.id}\t{server.ssh_host}")
             found += 1
         if not found:
             raise SystemExit(3)
 
 asyncio.run(main())
 PY
-)" || fail "could not discover a registered Marzban node"
+)" || fail "could not discover a dedicated VPN node with SSH access"
 
-[[ -n "$NODE_ROWS" ]] || fail "no Marzban nodes returned"
+[[ -n "$NODE_ROWS" ]] || fail "no dedicated VPN nodes returned"
 printf '%s\n' "$NODE_ROWS" | sed 's/^/  /'
 
-REMOTE_ARCHIVE=""
+REMOTE_ARCHIVE="$(mktemp)"
 CRED_ROOT="$(mktemp -d)"
 chmod 700 "$CRED_ROOT"
-trap '[[ -n "$REMOTE_ARCHIVE" ]] && rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"' EXIT
+trap 'rm -f "$REMOTE_ARCHIVE"; rm -rf "$CRED_ROOT"' EXIT
 
-if [[ "$NODE_UPDATE" == true ]]; then
-    REMOTE_ARCHIVE="$(mktemp)"
-    tar -czf "$REMOTE_ARCHIVE" \
-        scripts/converge_vpn_node.sh \
-        scripts/prepare_marzban_runtime.sh \
-        scripts/inspect_node_vless.sh \
-        scripts/install_direct_xray.sh \
-        node/agent.py node/migrate.py node/selftest.py
-fi
+tar -czf "$REMOTE_ARCHIVE" \
+    scripts/direct_xray_node.py \
+    scripts/install_direct_xray_node.sh
 
 while IFS=$'\t' read -r SERVER_ID NODE_HOST; do
     [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || fail "invalid server id: $SERVER_ID"
     [[ -n "$NODE_HOST" ]] || fail "empty node host for server $SERVER_ID"
 
     echo
-    echo "=== NODE $SERVER_ID / $NODE_HOST ==="
+    echo "=== DIRECT XRAY NODE $SERVER_ID / $NODE_HOST ==="
 
-    if [[ "$NODE_UPDATE" == true ]]; then
-        SSH_JSON=""
-        set +e
-        SSH_JSON="$(docker compose exec -T admin python -m app.node_ssh_access --server "$SERVER_ID" 2>/dev/null)"
-        SSH_RC=$?
-        set -e
-        if [[ "$SSH_RC" -ne 0 ]]; then
-            fail "SSH access is not configured for node $SERVER_ID. Open Admin -> VPN-серверы -> SSH-доступ and save it once."
-        fi
+    SSH_JSON=""
+    set +e
+    SSH_JSON="$(docker compose exec -T admin python -m app.node_ssh_access --server "$SERVER_ID" 2>/dev/null)"
+    SSH_RC=$?
+    set -e
+    [[ "$SSH_RC" -eq 0 ]] || fail "SSH access is not configured for node $SERVER_ID"
 
-        mapfile -t SSH_FIELDS < <(
-            SSH_JSON_VALUE="$SSH_JSON" python3 -c '
+    mapfile -t SSH_FIELDS < <(
+        SSH_JSON_VALUE="$SSH_JSON" python3 -c '
 import json, os
 data=json.loads(os.environ["SSH_JSON_VALUE"])
 for key in ("host","port","username","auth_type","secret_b64"):
@@ -237,130 +226,129 @@ for key in ("host","port","username","auth_type","secret_b64"):
         raise SystemExit(2)
     print(value)
 '
-        )
-        [[ "${#SSH_FIELDS[@]}" -eq 5 ]] || fail "invalid stored SSH access for node $SERVER_ID"
-        SSH_HOST="${SSH_FIELDS[0]}"
-        SSH_PORT="${SSH_FIELDS[1]}"
-        SSH_USER="${SSH_FIELDS[2]}"
-        SSH_AUTH="${SSH_FIELDS[3]}"
-        SSH_SECRET_B64="${SSH_FIELDS[4]}"
-        unset SSH_FIELDS SSH_JSON
+    )
+    [[ "${#SSH_FIELDS[@]}" -eq 5 ]] || fail "invalid stored SSH access for node $SERVER_ID"
+    SSH_HOST="${SSH_FIELDS[0]}"
+    SSH_PORT="${SSH_FIELDS[1]}"
+    SSH_USER="${SSH_FIELDS[2]}"
+    SSH_AUTH="${SSH_FIELDS[3]}"
+    SSH_SECRET_B64="${SSH_FIELDS[4]}"
+    unset SSH_FIELDS SSH_JSON
 
-        [[ "$SSH_PORT" =~ ^[1-9][0-9]*$ && "$SSH_PORT" -le 65535 ]] \
-            || fail "invalid SSH port stored for node $SERVER_ID"
+    NODE_CRED_DIR="$CRED_ROOT/node-$SERVER_ID"
+    mkdir -m 700 "$NODE_CRED_DIR"
+    SECRET_FILE="$NODE_CRED_DIR/secret"
+    printf '%s' "$SSH_SECRET_B64" | base64 -d > "$SECRET_FILE" \
+        || fail "cannot decode stored SSH secret for node $SERVER_ID"
+    unset SSH_SECRET_B64
+    chmod 600 "$SECRET_FILE"
 
-        NODE_CRED_DIR="$CRED_ROOT/node-$SERVER_ID"
-        mkdir -m 700 "$NODE_CRED_DIR"
-        SECRET_FILE="$NODE_CRED_DIR/secret"
-        printf '%s' "$SSH_SECRET_B64" | base64 -d > "$SECRET_FILE" \
-            || fail "cannot decode stored SSH secret for node $SERVER_ID"
-        unset SSH_SECRET_B64
-        chmod 600 "$SECRET_FILE"
+    SSH_COMMON=(
+        -p "$SSH_PORT"
+        -o ConnectTimeout=10
+        -o ServerAliveInterval=15
+        -o ServerAliveCountMax=3
+        -o StrictHostKeyChecking=accept-new
+        -o NumberOfPasswordPrompts=1
+    )
 
-        SSH_COMMON=(
-            -p "$SSH_PORT"
-            -o ConnectTimeout=10
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=3
-            -o StrictHostKeyChecking=accept-new
-            -o NumberOfPasswordPrompts=1
-        )
-        # Credential payload is never logged and is removed by the EXIT trap.
-        docker compose exec -T admin python -m app.node_management_credentials \
-            --server "$SERVER_ID" > "$NODE_CRED_DIR/node-credentials.json" \
-            || fail "cannot prepare node API credentials"
-        tar -czf "$REMOTE_ARCHIVE" \
-            scripts/converge_vpn_node.sh scripts/prepare_marzban_runtime.sh \
-            scripts/inspect_node_vless.sh scripts/install_direct_xray.sh \
-            node/agent.py node/migrate.py node/selftest.py \
-            -C "$NODE_CRED_DIR" node-credentials.json
-        REMOTE_COMMAND='set -Eeuo pipefail
-             tmp="$(mktemp -d /var/tmp/private-line-rollout-XXXXXXXX)"
-             trap '"'"'rm -rf "$tmp"'"'"' EXIT
-             tar -xzf - -C "$tmp"
-             if ! MAIN_SERVER_IP=194.146.223.104 bash "$tmp/scripts/install_direct_xray.sh"; then
-                 echo "=== AUTOMATIC NODE DIAGNOSTICS: GOLDEN CONVERGENCE FAILED ===" >&2
-                 bash "$tmp/scripts/inspect_node_vless.sh" >&2 || true
-                 exit 1
-             fi
-             echo "REMOTE NODE PASS"'
+    docker compose exec -T admin python -m app.node_probe_state \
+        --server "$SERVER_ID" --maintenance \
+        || fail "cannot pause node $SERVER_ID before direct Xray cutover"
 
-        docker compose exec -T admin python -m app.node_probe_state \
-            --server "$SERVER_ID" --maintenance \
-            || fail "cannot pause new assignments before node migration"
-        echo "[1/4] Remote node convergence (stored SSH access; no terminal prompt)"
-        if [[ "$SSH_AUTH" == "private_key" ]]; then
-            cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
-                -o BatchMode=yes -i "$SECRET_FILE" \
-                "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); node remains in planned maintenance until external VPN acceptance passes"
-        elif [[ "$SSH_AUTH" == "password" ]]; then
-            ASKPASS="$NODE_CRED_DIR/askpass"
-            cat > "$ASKPASS" <<EOF
+    NODE_HOST_Q="$(printf '%q' "$NODE_HOST")"
+    REMOTE_COMMAND="set -Eeuo pipefail
+tmp=\$(mktemp -d /var/tmp/private-line-direct-XXXXXXXX)
+trap 'rm -rf \\"\$tmp\\"' EXIT
+tar -xzf - -C \\"\$tmp\\"
+mkdir -p /opt/private-line-node
+install -m 700 \\"\$tmp/scripts/direct_xray_node.py\\" /opt/private-line-node/manage.py
+VPN_PUBLIC_HOST=$NODE_HOST_Q bash \\"\$tmp/scripts/install_direct_xray_node.sh\\"
+echo DIRECT_XRAY_REMOTE_PASS"
+
+    echo "[1/5] Install/converge standalone Xray over stored SSH"
+    if [[ "$SSH_AUTH" == "private_key" ]]; then
+        cat "$REMOTE_ARCHIVE" | ssh "${SSH_COMMON[@]}" \
+            -o BatchMode=yes -i "$SECRET_FILE" \
+            "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
+            || fail "direct Xray installation failed for node $SERVER_ID"
+    elif [[ "$SSH_AUTH" == "password" ]]; then
+        ASKPASS="$NODE_CRED_DIR/askpass"
+        cat > "$ASKPASS" <<EOF
 #!/bin/sh
 cat "$SECRET_FILE"
 EOF
-            chmod 700 "$ASKPASS"
-            command -v setsid >/dev/null 2>&1 \
-                || fail "setsid is required for non-interactive SSH password authentication"
-            cat "$REMOTE_ARCHIVE" | \
-                DISPLAY=:private-line \
-                SSH_ASKPASS_REQUIRE=force \
-                SSH_ASKPASS="$ASKPASS" \
-                setsid -w ssh "${SSH_COMMON[@]}" \
-                    -o BatchMode=no \
-                    -o PreferredAuthentications=password,keyboard-interactive \
-                    -o PubkeyAuthentication=no \
-                    "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
-                || fail "remote management convergence failed for node $SERVER_ID ($SSH_HOST); node remains in planned maintenance until external VPN acceptance passes"
-        else
-            fail "unsupported SSH auth type for node $SERVER_ID"
-        fi
-        rm -rf "$NODE_CRED_DIR"
-        unset SECRET_FILE SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND
-    fi
-
-    echo "[2/5] Reconcile user UUIDs and public VLESS endpoint"
-    docker compose exec -T admin python -m app.stabilize_vless --node "$NODE_HOST" \
-        || { quarantine_node "$SERVER_ID" "Marzban/runtime reconciliation failed"; fail "reconciliation failed for node $SERVER_ID"; }
-
-    echo "[3/5] Fresh-user hot-add E2E WITHOUT Xray restart"
-    bash scripts/smoke_vpn_node.sh "$SERVER_ID" --hot-add \
-        || { quarantine_node "$SERVER_ID" "fresh Marzban user did not hot-add into live Xray"; fail "zero-restart user provisioning failed for node $SERVER_ID"; }
-    docker compose exec -T admin python -m app.node_probe_state \
-        --server "$SERVER_ID" --hot-add-success \
-        || fail "could not persist hot-add health proof for node $SERVER_ID"
-
-    echo "[4/5] Persistent synthetic real HTTPS tunnel"
-    bash scripts/smoke_vpn_node.sh "$SERVER_ID" \
-        || { quarantine_node "$SERVER_ID" "synthetic VLESS Reality HTTPS probe failed"; fail "synthetic E2E smoke failed for node $SERVER_ID"; }
-
-    echo "[5/5] Existing paid-key E2E when available"
-    set +e
-    SUB_ID="$(docker compose exec -T admin python -m app.stabilize_vless \
-        --node "$NODE_HOST" --probe-subscription 2>/dev/null | tr -d '\r' | tail -n 1)"
-    SUB_RC=$?
-    set -e
-    if [[ "$SUB_RC" -eq 0 && "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
-        if ! bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID"; then
-            echo "Paid key failed while fresh-user + synthetic probes passed."
-            echo "Running ONE emergency DB->live Xray resync for historical runtime drift..."
-            docker compose exec -T admin python -m app.resync_vpn_node \
-                --server "$SERVER_ID" --apply \
-                || { quarantine_node "$SERVER_ID" "emergency Xray DB-user resync failed"; fail "paid-key recovery resync failed on node $SERVER_ID"; }
-            sleep 2
-            bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
-                || { quarantine_node "$SERVER_ID" "paid key still failed after one DB-user resync"; fail "paid-key E2E failed after bounded recovery: subscription $SUB_ID / node $SERVER_ID"; }
-            echo "PASS: historical paid key recovered after one bounded Xray DB-user resync."
-        fi
+        chmod 700 "$ASKPASS"
+        command -v setsid >/dev/null 2>&1 || fail "setsid is required"
+        cat "$REMOTE_ARCHIVE" | \
+            DISPLAY=:private-line SSH_ASKPASS_REQUIRE=force SSH_ASKPASS="$ASKPASS" \
+            setsid -w ssh "${SSH_COMMON[@]}" \
+                -o BatchMode=no \
+                -o PreferredAuthentications=password,keyboard-interactive \
+                -o PubkeyAuthentication=no \
+                "$SSH_USER@$SSH_HOST" "$REMOTE_COMMAND" \
+            || fail "direct Xray installation failed for node $SERVER_ID"
     else
-        echo "No active paid key on node $SERVER_ID; fresh-user + synthetic E2E is sufficient."
+        fail "unsupported SSH auth type for node $SERVER_ID"
+    fi
+    rm -rf "$NODE_CRED_DIR"
+
+    echo "[2/5] Synchronize active DB UUIDs into standalone Xray"
+    docker compose exec -T admin python -m app.direct_xray_migrate --server "$SERVER_ID" \
+        || { quarantine_node "$SERVER_ID" "direct Xray DB UUID sync failed"; fail "direct Xray migration failed for node $SERVER_ID"; }
+
+    echo "[3/5] Real disposable VLESS/REALITY HTTPS tunnel"
+    CANARY_FILE="$(mktemp)"
+    chmod 600 "$CANARY_FILE"
+    docker compose exec -T admin python -m app.direct_xray_canary create \
+        --server "$SERVER_ID" > "$CANARY_FILE" \
+        || { rm -f "$CANARY_FILE"; quarantine_node "$SERVER_ID" "cannot create direct Xray canary"; fail "direct Xray canary creation failed"; }
+    if ! bash scripts/probe_vless_e2e.sh --stdin-url "$SERVER_ID" < "$CANARY_FILE"; then
+        docker compose exec -T admin python -m app.direct_xray_canary delete --server "$SERVER_ID" >/dev/null 2>&1 || true
+        rm -f "$CANARY_FILE"
+        quarantine_node "$SERVER_ID" "direct Xray canary tunnel failed"
+        fail "direct Xray real tunnel acceptance failed for node $SERVER_ID"
+    fi
+    rm -f "$CANARY_FILE"
+    docker compose exec -T admin python -m app.direct_xray_canary delete --server "$SERVER_ID" \
+        || fail "direct Xray canary cleanup failed"
+
+    echo "[4/5] Existing paid key E2E"
+    SUB_ID="$(docker compose exec -T admin python - "$SERVER_ID" <<'PY'
+import asyncio, sys
+from sqlalchemy import select
+from app.database import async_session_maker
+from app.enums import VpnKeyStatus
+from app.models.vpn_key import VpnKey
+
+async def main():
+    sid=int(sys.argv[1])
+    async with async_session_maker() as db:
+        value=(await db.execute(
+            select(VpnKey.subscription_id)
+            .where(VpnKey.server_id==sid, VpnKey.status==VpnKeyStatus.active)
+            .order_by(VpnKey.id.asc()).limit(1)
+        )).scalar_one_or_none()
+        print(value or "")
+
+asyncio.run(main())
+PY
+)"
+    if [[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
+        bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
+            || { quarantine_node "$SERVER_ID" "existing paid direct-Xray key E2E failed"; fail "paid key E2E failed for subscription $SUB_ID"; }
+    else
+        echo "No paid key yet; disposable real tunnel already passed."
     fi
 
+    echo "[5/5] Publish node"
     docker compose exec -T admin python -m app.node_probe_state \
         --server "$SERVER_ID" --success \
-        || fail "could not publish healthy node $SERVER_ID after successful E2E"
-    echo "PASS: node $SERVER_ID ($NODE_HOST)"
+        || fail "could not publish direct Xray node $SERVER_ID"
+
+    rm -f "$SECRET_FILE" 2>/dev/null || true
+    unset SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND SECRET_FILE
+    echo "PASS: standalone direct Xray node $SERVER_ID ($NODE_HOST)"
 done <<< "$NODE_ROWS"
 
 echo "=== RECOVER PAID ORDERS AFTER VPN ACCEPTANCE ==="
