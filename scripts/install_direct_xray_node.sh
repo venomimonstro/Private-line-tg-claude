@@ -10,6 +10,23 @@ DATA=/var/lib/private-line-node
 XRAY="$ROOT/xray"
 MANAGER="$ROOT/manage.py"
 PORT=443
+CUTOVER=0
+SUCCESS=0
+MARZBAN_WAS_RUNNING=0
+
+rollback() {
+  rc=$?
+  if [[ "$SUCCESS" -ne 1 && "$CUTOVER" -eq 1 ]]; then
+    echo "ROLLBACK: standalone Xray failed; restoring previous Marzban runtime" >&2
+    systemctl disable --now private-line-xray.service >/dev/null 2>&1 || true
+    if [[ "$MARZBAN_WAS_RUNNING" -eq 1 && -f /opt/marzban/docker-compose.yml ]]; then
+      (cd /opt/marzban && docker compose up -d) >/dev/null 2>&1 || true
+    fi
+  fi
+  exit "$rc"
+}
+trap rollback EXIT
+
 HOST="${VPN_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
 SNI="${REALITY_TARGET_HOST:-dl.google.com}"
 TARGET="${SNI}:443"
@@ -110,8 +127,13 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-# Disable Marzban completely; it is no longer in the customer traffic path.
+# Cut over only after all files/config inputs above are prepared. If the new
+# runtime fails, the EXIT trap brings the previous Marzban container back.
 if [[ -f /opt/marzban/docker-compose.yml ]]; then
+  if (cd /opt/marzban && docker compose ps --status running -q marzban 2>/dev/null | grep -q .); then
+    MARZBAN_WAS_RUNNING=1
+  fi
+  CUTOVER=1
   (cd /opt/marzban && docker compose down --remove-orphans) >/dev/null 2>&1 || true
 fi
 systemctl disable --now marzban-proxy.service >/dev/null 2>&1 || true
@@ -138,3 +160,6 @@ systemctl restart private-line-xray.service
 sleep 1
 systemctl is-active --quiet private-line-xray.service || { journalctl -u private-line-xray -n 40 --no-pager >&2; exit 2; }
 "$MANAGER" status
+SUCCESS=1
+trap - EXIT
+echo "DIRECT XRAY NODE INSTALL PASS"
