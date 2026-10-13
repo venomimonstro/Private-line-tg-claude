@@ -104,12 +104,8 @@ echo "=== VPN REGRESSION GATE ==="
 docker compose exec -T admin python -m unittest \
     tests.test_vpn_link \
     tests.test_vless_probe_config \
-    tests.test_vpn_safety_guards \
-    tests.test_marzban_stability \
-    tests.test_node_selection \
-    tests.test_marzban_runtime_patch \
-    tests.test_direct_xray \
-    || fail "VPN regression suite failed; nodes were not modified"
+    tests.test_standalone_xray \
+    || fail "standalone Xray regression suite failed; nodes were not modified"
 echo "PASS: VLESS regression suite"
 
 if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" ]]; then
