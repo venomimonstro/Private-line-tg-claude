@@ -77,7 +77,7 @@ async def _get_active_subscription(
         active_keys = []
         for key in candidate_keys:
             server = await session.get(VpnServer, key.server_id)
-            if server is not None and _server_protocol(server) == "marzban":
+            if server is not None and _server_protocol(server) == "direct_xray":
                 active_keys.append(key)
 
         tariff = await session.get(Tariff, sub.tariff_id)
@@ -388,7 +388,7 @@ async def on_reissue_key(callback: CallbackQuery, db_user: User) -> None:
 
     await callback.message.answer(  # type: ignore[union-attr]
         f"🔄 <b>Проверить и восстановить VPN-профиль?</b>\n\n"
-        f"Система проверит Marzban, Reality-параметры и ссылку профиля.\n"
+        f"Система проверит прямой Xray-профиль и актуальную ссылку.\n"
         f"UUID и действующий ключ не будут заменены без необходимости.\n\n"
         f"📊 Использовано обновлений сегодня: <b>{used}/{_MAX_DAILY_REISSUES}</b>",
         parse_mode="HTML",
@@ -454,18 +454,17 @@ async def on_reissue_confirm(callback: CallbackQuery, db_user: User) -> None:
             return
 
         try:
-            # User-facing "refresh" is preserve-first: reconcile Marzban and
-            # regenerate the client profile without rotating UUID/Reality keys.
-            from app.services.vpn_reconcile import reconcile_marzban_server
-            result = await reconcile_marzban_server(
-                session,
-                server.id,
-                apply=True,
-                only_subscription_id=sub.id,
-            )
-            if result.errors:
-                raise RuntimeError(f"reconcile errors={result.errors}")
-            await session.refresh(active_key)
+            # Preserve the UUID. Read the authoritative profile directly from
+            # standalone Xray state over the node's existing SSH channel.
+            from app.services.vpn_key import _make_client
+            client = _make_client(server)
+            try:
+                remote = await client.get_key(active_key.outline_key_id)
+            finally:
+                await client.aclose()
+            from app.services.vpn_link import canonical_client_link
+            checked = canonical_client_link(remote.access_url, "Private Line VPN")
+            active_key.access_url_encrypted = encrypt(checked)
             active_key.reissue_count_today = used + 1
             active_key.reissue_date = today
             active_key.last_reissued_at = _dt.utcnow()
