@@ -170,8 +170,7 @@ function Connect-Client {
     }catch{
         $code="$($_.Exception.Message)"
         Stop-Client
-        $report=Send-Diagnostics -Automatic
-        Show-Info ("VPN не подключён: " + $code + ". " + $report)
+        Show-Info ("VPN не подключён: " + $code + ". Диагностика отправляется только вручную по кнопке.")
     }
 }
 function Get-PairedDevice {
@@ -211,7 +210,7 @@ function Save-PendingReport([object]$item) {
     [IO.File]::WriteAllText($file,(ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress),
         (New-Object Text.UTF8Encoding($false)))
 }
-function Send-Diagnostics([switch]$Automatic) {
+function Send-Diagnostics {
     if(-not $Consent.Checked) {return "Отправка диагностики отключена."}
     $items=@($script:Stage.ToArray())
     if($items.Count -eq 0){$items=@(@{stage="install";result="ok";code="GUI_STARTED"})}
@@ -286,8 +285,8 @@ $form.Controls.Add($Status)
 $Consent=New-Object Windows.Forms.CheckBox
 $Consent.Location=New-Object Drawing.Point(20,321)
 $Consent.Size=New-Object Drawing.Size(510,82)
-$Consent.Text="Автоматически отправлять коды ошибок на сервер без VPN-ключей, UUID, IP и сырых логов."
-$Consent.Checked=$true
+$Consent.Text="Разрешить ручную отправку кодов ошибок без VPN-ключей, UUID, IP и сырых логов."
+$Consent.Checked=$false
 $form.Controls.Add($Consent)
 $send=New-Object Windows.Forms.Button
 $send.Text="Отправить диагностику сейчас"
@@ -325,9 +324,6 @@ try {
     Show-Info "Клиент привязан к вашей VPN-подписке. Нажмите «Подключить»."
 } catch {
     Show-Info "Привязка не найдена. Скачайте персональный установщик в админке → Диагностика Windows."
-}
-if(Test-Path -LiteralPath (Join-Path $Base "pending-reports.json")) {
-    Flush-PendingReports
 }
 $connect.Add_Click({Connect-Client})
 $disconnect.Add_Click({Stop-Client;Add-Stage "disconnect" "ok" "USER_DISCONNECTED";Show-Info "Отключено. Предыдущие настройки прокси восстановлены."})
