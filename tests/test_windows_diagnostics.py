@@ -20,9 +20,10 @@ class WindowsDiagnosticsTests(unittest.TestCase):
                 "INSTALL-WINDOWS.cmd", "Install-PrivateLine.ps1",
                 "PrivateLine.ps1", "README_RU.md",
                 "CHECK-INSTALL.cmd", "Check-Install.ps1",
+                "Pair-PrivateLine.ps1",
             })
             self.assertIsNone(archive.testzip())
-            for source in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1"):
+            for source in ("Install-PrivateLine.ps1", "PrivateLine.ps1", "Check-Install.ps1", "Pair-PrivateLine.ps1"):
                 self.assertTrue(archive.read(source).startswith(bytes((0xEF,0xBB,0xBF))))
             self.assertNotIn("profile.json", archive.namelist())
             self.assertNotIn("xray.exe", archive.namelist())
@@ -86,8 +87,11 @@ class WindowsDiagnosticsTests(unittest.TestCase):
 
     def test_windows_script_does_not_auto_send(self):
         source=(ROOT/"windows_client/PrivateLine.ps1").read_text()
-        self.assertIn("$send.Add_Click({Send-Diagnostics})",source)
+        self.assertIn("$send.Add_Click(", source)
+        self.assertIn("Send-Diagnostics", source)
         self.assertIn("if(-not $Consent.Checked)",source)
+        self.assertIn("$Consent.Checked=$false", source)
+        self.assertNotIn("Send-Diagnostics -Automatic", source)
         self.assertNotIn("Invoke-WebRequest -Uri $endpoint",source)
 
 
