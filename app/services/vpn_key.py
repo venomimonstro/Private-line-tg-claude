@@ -17,6 +17,7 @@ from app.models.vpn_server import VpnServer
 from app.services.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from app.vpn.outline import OutlineClient
 from app.vpn.marzban import MarzbanClient, MarzbanConfigError, MarzbanKey
+from app.vpn.direct_xray import DirectXrayClient, DirectXrayError, DirectXrayKey
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def _key_url_needs_repair(access_url: str) -> bool:
         return True  # Can't parse → assume broken
 _START_TARIFF_SLUG = "start"
 
-AnyClient = Union[OutlineClient, MarzbanClient]
+AnyClient = Union[OutlineClient, MarzbanClient, DirectXrayClient]
 
 
 def _server_protocol(server: VpnServer) -> str:
@@ -68,13 +69,15 @@ def _server_protocol(server: VpnServer) -> str:
     try:
         data = json.loads(decrypt(server.api_secret_encrypted))
         protocol = data.get("protocol")
-        return protocol if protocol in ("marzban", "outline") else "invalid"
+        return protocol if protocol in ("direct_xray", "marzban", "outline") else "invalid"
     except Exception:
         return "invalid"
 
 
 def _make_client(server: VpnServer) -> AnyClient:
     protocol = _server_protocol(server)
+    if protocol == "direct_xray":
+        return DirectXrayClient(server)
     if protocol == "marzban":
         creds = json.loads(decrypt(server.api_secret_encrypted))
         username = creds.get("username")
@@ -136,9 +139,9 @@ async def create_vpn_key(
     # active subscription must remain retrievable during quarantine.
     if (
         server.provider == "private-line-primary"
-        or _server_protocol(server) != "marzban"
+        or _server_protocol(server) != "direct_xray"
     ):
-        raise ValueError("VPN server is not a dedicated Marzban node")
+        raise ValueError("VPN server is not a standalone direct Xray node")
 
     existing_active = (await session.execute(
         select(VpnKey).where(
@@ -152,23 +155,26 @@ async def create_vpn_key(
         raise ValueError("Multiple active keys on the same VPN node require reconciliation")
 
     async def _reuse_existing() -> VpnKey:
-        from app.services.vpn_reconcile import reconcile_marzban_server
-        result = await reconcile_marzban_server(
-            session,
-            server.id,
-            apply=True,
-            only_subscription_id=subscription_id,
-        )
-        if result.errors:
-            raise ValueError(
-                f"Existing VPN key failed remote reconciliation ({result.errors} error(s))"
+        existing = existing_active[0]
+        protocol = _server_protocol(server)
+        if protocol == "direct_xray":
+            client = DirectXrayClient(server)
+            try:
+                remote = await client.get_key(existing.outline_key_id)
+                from app.services.vpn_link import canonical_client_link
+                checked = canonical_client_link(remote.access_url, "Private Line VPN")
+                stored = get_client_access_url(existing)
+                if checked != stored:
+                    existing.access_url_encrypted = encrypt(checked)
+                    await session.flush()
+            finally:
+                await client.aclose()
+            logger.info(
+                "Reusing verified direct Xray key %d for subscription %d on server %d",
+                existing.id, subscription_id, server.id,
             )
-        await session.refresh(existing_active[0])
-        logger.info(
-            "Reusing verified VPN key %d for subscription %d on server %d",
-            existing_active[0].id, subscription_id, server.id,
-        )
-        return existing_active[0]
+            return existing
+        raise ValueError("Existing key backend is not direct Xray")
 
     if existing_active and locked_sub.status in (
         SubscriptionStatus.active,
@@ -217,90 +223,34 @@ async def create_vpn_key(
 
     try:
         async def _create():
-            if protocol == "marzban":
-                assert isinstance(client, MarzbanClient)
-
-                # Fail closed BEFORE creating a paid user's remote credential.
-                # A healthy API is not sufficient: Xray must be running and
-                # Marzban must publish exactly one public host matching the
-                # node's API IP and Reality inbound port.
-                if not await client.check_connection():
-                    raise MarzbanConfigError("Marzban authentication unavailable")
-                headers = await client._headers()
-                core = await client._client.get(
-                    f"{client._base}/api/core", headers=headers
-                )
-                if core.status_code != 200 or core.json().get("started") is not True:
-                    raise MarzbanConfigError("Xray core is not running")
-                config = await client._get_core_config()
-                reality = await client.get_reality_params()
-                if not isinstance(config, dict) or reality is None:
-                    raise MarzbanConfigError("Reality configuration unavailable")
-                inbounds = [
-                    item for item in config.get("inbounds", [])
-                    if item.get("protocol") == "vless"
-                    and item.get("streamSettings", {}).get("security") == "reality"
-                ]
-                if len(inbounds) != 1:
-                    raise MarzbanConfigError("Expected exactly one VLESS Reality inbound")
-                inbound = inbounds[0]
-                tag = inbound.get("tag")
-                port = inbound.get("port")
-                if not tag or not isinstance(port, int) or not (1 <= port <= 65535):
-                    raise MarzbanConfigError("Invalid VLESS Reality inbound")
-                api_host = urlparse(server.api_url).hostname or ""
-                hosts_resp = await client._client.get(
-                    f"{client._base}/api/hosts", headers=headers
-                )
-                if hosts_resp.status_code != 200 or not isinstance(hosts_resp.json(), dict):
-                    raise MarzbanConfigError("Marzban public hosts API unavailable")
-                entries = hosts_resp.json().get(tag, [])
-                valid_hosts = [
-                    h for h in entries
-                    if isinstance(h, dict)
-                    and h.get("address") == api_host
-                    and h.get("port") in (None, "", 0, "0", port, str(port))
-                    and h.get("is_disabled") not in (True, "true", "True")
-                    and h.get("security") in (None, "", "inbound_default", "reality")
-                ]
-                if len(valid_hosts) != 1:
-                    raise MarzbanConfigError(
-                        "Marzban does not publish exactly one valid public VLESS host"
-                    )
-
-                name = _marzban_username(user_id, subscription_id)
-                created = await client.create_key(
-                    name=name,
-                    traffic_limit_gb=traffic_limit_gb,
-                    ip_limit=ip_limit,
-                    restart_core=False,
-                )
-                # Validate the exact link before the DB can consider it active.
-                from app.services.vpn_link import canonical_client_link
-                checked = canonical_client_link(created.access_url, "Private Line VPN")
-                parsed_created = urlparse(checked)
-                if parsed_created.hostname != api_host or parsed_created.port != port:
-                    raise MarzbanConfigError(
-                        "Generated VLESS endpoint differs from verified public node endpoint"
-                    )
-                return created
-            else:
-                assert isinstance(client, OutlineClient)
-                key_name = f"user_{user_id}_sub_{subscription_id}"
-                if label:
-                    key_name = f"{key_name}_{label}"
-                outline_key = await client.create_key(name=key_name)
-                if traffic_limit_gb is not None and traffic_limit_gb > 0:
-                    await client.set_data_limit(outline_key.id, traffic_limit_gb * 1024 ** 3)
-                return outline_key
+            if protocol != "direct_xray" or not isinstance(client, DirectXrayClient):
+                raise DirectXrayError("Paid provisioning requires direct Xray backend")
+            if not await client.check_connection():
+                raise DirectXrayError("Standalone Xray node is not reachable/listening")
+            name = _marzban_username(user_id, subscription_id)
+            created = await client.create_key(
+                name=name,
+                traffic_limit_gb=traffic_limit_gb,
+                ip_limit=ip_limit,
+            )
+            from app.services.vpn_link import canonical_client_link
+            checked = canonical_client_link(created.access_url, "Private Line VPN")
+            if not checked.startswith("vless://"):
+                raise DirectXrayError("Standalone Xray returned invalid VLESS URL")
+            return DirectXrayKey(
+                id=created.id,
+                name=created.name,
+                access_url=checked,
+                port=created.port,
+            )
 
         raw_key = await cb.call(_create())
     except Exception as exc:
-        if not isinstance(exc, (CircuitOpenError, MarzbanConfigError)):
+        if not isinstance(exc, (CircuitOpenError, MarzbanConfigError, DirectXrayError)):
             server.failure_count += 1
             server.last_error = str(exc)[:500]
             server.last_error_at = datetime.utcnow()
-        elif isinstance(exc, MarzbanConfigError):
+        elif isinstance(exc, (MarzbanConfigError, DirectXrayError)):
             # Configuration errors count as server failures too
             server.failure_count += 1
             server.last_error = str(exc)[:500]
@@ -325,9 +275,9 @@ async def create_vpn_key(
             f"VPN client returned empty access_url for subscription {subscription_id} "
             f"on server {server.id}. Key NOT stored."
         )
-    if protocol == "marzban" and not raw_key.access_url.startswith("vless://"):
+    if protocol == "direct_xray" and not raw_key.access_url.startswith("vless://"):
         raise ValueError(
-            f"Marzban returned unexpected access_url prefix for subscription "
+            f"Direct Xray returned unexpected access_url prefix for subscription "
             f"{subscription_id}: {raw_key.access_url[:60]}"
         )
 
@@ -391,20 +341,10 @@ async def disable_vpn_key(
 
     client = _make_client(server)
     try:
-        if isinstance(client, MarzbanClient):
-            # Avoid a node-wide Xray restart when the same live HandlerService
-            # mutation path has recently passed a fresh hot-add + hot-remove
-            # acceptance test. If that proof is stale, fail conservative and
-            # rebuild the core so revocation cannot remain DB-only.
-            hot_remove_proven = bool(
-                server.last_hot_add_success_at
-                and server.last_hot_add_success_at
-                >= datetime.utcnow() - timedelta(minutes=45)
-            )
-            await client.disable_key(
-                vpn_key.outline_key_id,
-                restart_core=not hot_remove_proven,
-            )
+        if isinstance(client, DirectXrayClient):
+            await client.disable_key(vpn_key.outline_key_id)
+        elif isinstance(client, MarzbanClient):
+            await client.disable_key(vpn_key.outline_key_id, restart_core=True)
         else:
             await client.delete_key(vpn_key.outline_key_id)
     except Exception as exc:
