@@ -118,11 +118,15 @@ bash scripts/ensure_control_plane_tls.sh || fail "control-plane HTTPS identity s
 WINDOWS_SOURCE_HASH="$(find windows_native -type f ! -path '*/bin/*' ! -path '*/obj/*' ! -path '*/out-client/*' ! -path '*/out-installer/*' ! -path '*/Payload/*.exe' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
 WINDOWS_HASH_FILE="data/windows_dist/.source.sha256"
 WINDOWS_EXE="data/windows_dist/PrivateLineSetup.exe"
-WINDOWS_BUILD_NEEDED=false
-if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" ]]; then
-  WINDOWS_BUILD_NEEDED=true
+WINDOWS_BUILD_NEEDED=true
+if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]] \
+   && [[ "$(cat "$WINDOWS_HASH_FILE")" == "$WINDOWS_SOURCE_HASH" ]] \
+   && [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]]; then
+  WINDOWS_BUILD_NEEDED=false
 fi
-if [[ -s "$WINDOWS_EXE" && -s "$WINDOWS_HASH_FILE" ]] && [[ "$(cat "$WINDOWS_HASH_FILE")" == "$WINDOWS_SOURCE_HASH" ]] && [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]]; then
+# Emergency operator escape hatch only. Normal deploys rebuild automatically
+# when Windows sources changed, and otherwise reuse the already-published EXE.
+if [[ "${PRIVATE_LINE_SKIP_WINDOWS_BUILD:-0}" == "1" ]]; then
   WINDOWS_BUILD_NEEDED=false
 fi
 
@@ -145,7 +149,7 @@ if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
   docker builder prune -af >/dev/null 2>&1 || true
   echo "PASS: native Windows PrivateLineSetup.exe built and build cache released"
 else
-  echo "VLESS mode: Windows installer build skipped (optional PRIVATE_LINE_BUILD_WINDOWS=1)"
+  echo "PASS: published Windows installer already matches current sources; rebuild skipped"
 fi
 
 # Application source is baked into private-line-app:runtime; it is no longer
