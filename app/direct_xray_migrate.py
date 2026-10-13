@@ -93,15 +93,16 @@ async def migrate(server_id: int) -> int:
             "public_key":meta["public_key"],
             "short_id":meta["short_id"],
         },separators=(",",":")))
-        server.status=VpnServerStatus.active
-        server.is_selectable=True
+        # Migration only proves durable state + local listener. Keep admission
+        # closed until update_production.sh passes the external REALITY/HTTPS
+        # canary and (when present) an existing paid-key E2E.
+        server.status=VpnServerStatus.maintenance
+        server.is_selectable=False
         server.failure_count=0
-        server.last_error=None
+        server.last_error="Direct Xray synchronized; external E2E acceptance pending"
         server.last_error_at=None
-        # Listener/config validation is proven by the direct manager. External
-        # HTTPS E2E can refresh this timestamp later without blocking service.
         server.last_hot_add_success_at=None
-        server.last_e2e_success_at=datetime.utcnow()
+        server.last_e2e_success_at=None
         await db.commit()
         print(
             f"DIRECT_XRAY_MIGRATION_PASS server={server.id} users={len(users)} "
