@@ -187,17 +187,10 @@ async def create_vpn_key(
     if server.status != VpnServerStatus.active or not server.is_selectable:
         raise ValueError("VPN server is not production-selectable")
 
-    now = datetime.utcnow()
-    if (
-        server.last_e2e_success_at is None
-        or server.last_e2e_success_at < now - timedelta(minutes=3)
-    ):
-        raise ValueError("VPN node real E2E health proof is stale")
-    if (
-        server.last_hot_add_success_at is None
-        or server.last_hot_add_success_at < now - timedelta(minutes=45)
-    ):
-        raise ValueError("VPN node fresh-user hot-add proof is stale")
+    # Direct Xray validates the full candidate config and 443 listener on every
+    # user mutation and rolls back on failure. It does not depend on a separate
+    # panel hot-add proof. External E2E health remains monitoring/admission data,
+    # not a reason to strand an already-paid activation behind a stale timer.
 
     if existing_active:
         return await _reuse_existing()
