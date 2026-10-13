@@ -253,14 +253,17 @@ for key in ("host","port","username","auth_type","secret_b64"):
         || fail "cannot pause node $SERVER_ID before direct Xray cutover"
 
     NODE_HOST_Q="$(printf '%q' "$NODE_HOST")"
-    REMOTE_COMMAND="set -Eeuo pipefail
-tmp=\$(mktemp -d /var/tmp/private-line-direct-XXXXXXXX)
-trap 'rm -rf \\"\$tmp\\"' EXIT
-tar -xzf - -C \\"\$tmp\\"
+    REMOTE_COMMAND="$(cat <<EOF_REMOTE
+set -Eeuo pipefail
+tmp="\$(mktemp -d /var/tmp/private-line-direct-XXXXXXXX)"
+trap 'rm -rf "\$tmp"' EXIT
+tar -xzf - -C "\$tmp"
 mkdir -p /opt/private-line-node
-install -m 700 \\"\$tmp/scripts/direct_xray_node.py\\" /opt/private-line-node/manage.py
-VPN_PUBLIC_HOST=$NODE_HOST_Q bash \\"\$tmp/scripts/install_direct_xray_node.sh\\"
-echo DIRECT_XRAY_REMOTE_PASS"
+install -m 700 "\$tmp/scripts/direct_xray_node.py" /opt/private-line-node/manage.py
+VPN_PUBLIC_HOST=$NODE_HOST_Q bash "\$tmp/scripts/install_direct_xray_node.sh"
+echo DIRECT_XRAY_REMOTE_PASS
+EOF_REMOTE
+)"
 
     echo "[1/5] Install/converge standalone Xray over stored SSH"
     if [[ "$SSH_AUTH" == "private_key" ]]; then
