@@ -33,7 +33,7 @@ fi
 
 for script in \
     scripts/update_production.sh \
-    scripts/install_direct_xray.sh \
+    scripts/install_direct_xray_node.sh \
     windows_native/build.sh \
     scripts/converge_vpn_node.sh \
     scripts/prepare_marzban_runtime.sh \
@@ -50,6 +50,8 @@ for script in \
         exit 2
     }
 done
+python3 -m py_compile scripts/direct_xray_node.py app/vpn/direct_xray.py app/direct_xray_migrate.py app/direct_xray_canary.py
+echo "PASS: direct Xray Python syntax"
 echo "PASS: VPN rollout shell syntax"
 
 exec bash scripts/update_production.sh "$@"
