@@ -168,6 +168,11 @@ class DirectXrayClient:
         payload = base64.urlsafe_b64encode(raw).decode().rstrip("=")
         return await self._run("sync", payload, timeout=60)
 
+    async def get_transfer_stats(self) -> dict:
+        # Static standalone mode intentionally keeps no second accounting API.
+        # Callers fall back to the last persisted value instead of inventing 0.
+        raise DirectXrayError("traffic statistics are not exposed by standalone mode")
+
     async def disable_key(self, name: str, **_: object) -> None:
         await self._run("remove", name)
 
