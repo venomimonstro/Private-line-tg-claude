@@ -12,8 +12,8 @@ if [[ -n "$SERVER_ID" ]]; then
     [[ "$SERVER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid server ID" >&2; exit 2; }
     SERVER_ARGS=(--server "$SERVER_ID")
 fi
-[[ "$SUB_ID" == "--telegram-url" || "$SUB_ID" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Usage: bash scripts/probe_vless_e2e.sh SUBSCRIPTION_ID [SERVER_ID] | --telegram-url SERVER_ID" >&2
+[[ "$SUB_ID" == "--telegram-url" || "$SUB_ID" == "--stdin-url" || "$SUB_ID" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Usage: bash scripts/probe_vless_e2e.sh SUBSCRIPTION_ID [SERVER_ID] | --stdin-url SERVER_ID | --telegram-url SERVER_ID" >&2
     exit 2
 }
 cd "$(dirname "$0")/.."
@@ -62,7 +62,11 @@ then
     exit 1
 fi
 
-if [[ "$SUB_ID" == "--telegram-url" ]]; then
+if [[ "$SUB_ID" == "--stdin-url" ]]; then
+    [[ -n "$SERVER_ID" ]] || { echo "Server ID required" >&2; exit 2; }
+    echo "[2/5] Preparing supplied direct-Xray canary profile..."
+    docker compose exec -T admin python -m app.vless_e2e_probe_config         --stdin-url --socks-port "$SOCKS_PORT" > "$CONFIG" || exit 2
+elif [[ "$SUB_ID" == "--telegram-url" ]]; then
     [[ -n "$SERVER_ID" ]] || { echo "Server ID required" >&2; exit 2; }
     printf 'Paste the EXACT vless:// link copied from Telegram (input hidden): ' > /dev/tty
     VLESS_URL=""
