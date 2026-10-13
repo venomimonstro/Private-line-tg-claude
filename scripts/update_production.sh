@@ -43,8 +43,18 @@ quarantine_node() {
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
-exec 9>/var/lock/private-line-production-update.lock
-flock -n 9 || fail "another production update is already running"
+LOCK_FILE=/var/lock/private-line-production-update.lock
+exec 9>"$LOCK_FILE"
+echo "Waiting for production lock (health-watch may be finishing)..."
+if ! flock -w 300 9; then
+    HOLDER="$(command -v fuser >/dev/null 2>&1 && fuser "$LOCK_FILE" 2>/dev/null || true)"
+    if [[ -n "$HOLDER" ]]; then
+        fail "production lock stayed busy for 300s; holder PID(s): $HOLDER"
+    fi
+    fail "production lock stayed busy for 300s"
+fi
+printf 'pid=%s started=%s head=%s\n' "$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" >&9
+echo "PASS: production lock acquired"
 
 HEAD="$(git rev-parse HEAD)"
 CODE_CHANGED="${PRIVATE_LINE_CODE_CHANGED:-1}"
