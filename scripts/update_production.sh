@@ -86,14 +86,14 @@ if [[ "$CODE_CHANGED" == "1" || "$IMAGE_REVISION" != "$HEAD" || -z "$CURRENT_IMA
     if [[ "${PRIVATE_LINE_BUILD_WINDOWS:-0}" == "1" && "$WINDOWS_STALE" == true ]]; then
         echo "Windows installer is missing/stale; deployment is required."
     fi
-    bash scripts/deploy_low_memory.sh
+    PRIVATE_LINE_BUILD_WINDOWS=0 bash scripts/deploy_low_memory.sh
 else
     RUNNING_COUNT="$(docker compose ps --status running -q db admin bot nginx | sed '/^$/d' | wc -l)"
     if curl -q -fsS --max-time 5 http://127.0.0.1:8000/_health >/dev/null 2>&1 && [[ "$RUNNING_COUNT" -eq 4 ]]; then
         echo "PASS: running admin/bot image matches checkout; all four core services are healthy"
     else
         echo "Control plane is not fully healthy; running recovery deploy."
-        bash scripts/deploy_low_memory.sh
+        PRIVATE_LINE_BUILD_WINDOWS=0 bash scripts/deploy_low_memory.sh
     fi
 fi
 
