@@ -132,7 +132,11 @@ if [[ "$WINDOWS_BUILD_NEEDED" == true ]]; then
   docker pull "$WINDOWS_SDK_IMAGE" >/dev/null || fail "could not pull .NET SDK image for Windows installer build"
   rm -rf windows_native/out-client windows_native/out-installer windows_native/PrivateLine.Installer/Payload/PrivateLine.exe windows_native/PrivateLine.Installer/Payload/xray.exe
   mkdir -p data/windows_dist
-  docker run --rm --cpus=1.0 --memory=1024m --pids-limit=256 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" bash windows_native/build.sh || fail "native Windows installer build failed"
+  docker run --rm --user 0:0 --cpus=1.0 --memory=1024m --pids-limit=256 \
+    -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
+    -v "$PWD:/src" -w /src "$WINDOWS_SDK_IMAGE" \
+    bash windows_native/build.sh \
+    || fail "native Windows installer build failed"
   [[ -s "$WINDOWS_EXE" ]] || fail "PrivateLineSetup.exe was not produced"
   [[ "$(head -c2 "$WINDOWS_EXE")" == "MZ" ]] || fail "PrivateLineSetup.exe is not a PE executable"
   printf '%s\n' "$WINDOWS_SOURCE_HASH" > "$WINDOWS_HASH_FILE"
