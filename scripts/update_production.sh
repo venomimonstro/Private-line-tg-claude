@@ -116,6 +116,25 @@ if [[ -z "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
     ss -H -ltnp '( sport = :443 )' 2>/dev/null | sed -n '1,3p' >&2 || true
 fi
 
+# The previous gate used curl -k and declared success even while real browsers
+# received a certificate-validation 502. For IP-only ingress, verify the exact
+# public identity against the system trust store before touching VPN nodes.
+PUBLIC_URL="$(sed -n 's/^CONTROL_PLANE_PUBLIC_URL=//p' .env | tail -1)"
+PUBLIC_IP="$(PUBLIC_URL="$PUBLIC_URL" python3 - <<'PY'
+import ipaddress, os
+from urllib.parse import urlsplit
+host = urlsplit(os.environ['PUBLIC_URL']).hostname or ''
+try:
+    print(ipaddress.IPv4Address(host))
+except ValueError:
+    pass
+PY
+)"
+if [[ -n "$PUBLIC_IP" ]] && ! curl -q --noproxy '*' -fsS --max-time 8 \
+    --resolve "$PUBLIC_IP:443:127.0.0.1" "$PUBLIC_URL/admin/login" >/dev/null 2>&1; then
+    fail "public admin certificate is not trusted; run bash scripts/admin_public_tls.sh install"
+fi
+
 echo "=== VPN REGRESSION GATE ==="
 docker compose exec -T admin python -m unittest \
     tests.test_vpn_link \

@@ -313,9 +313,15 @@ docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || {
 }
 wait_http http://127.0.0.1:29148/admin/login 20 || fail "admin proxy on :29148 is not healthy"
 if [[ -n "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
-  curl -q -kfsS --max-time 8 https://127.0.0.1/admin/login >/dev/null \
-    || fail "public HTTPS/443 admin route is not healthy"
-  echo "PASS: HTTPS/443 published and admin route responds"
+  PUBLIC_URL="$(sed -n 's/^CONTROL_PLANE_PUBLIC_URL=//p' .env | tail -1)"
+  PUBLIC_HOST="$(PUBLIC_URL="$PUBLIC_URL" python3 -c 'from urllib.parse import urlsplit; import os; print(urlsplit(os.environ["PUBLIC_URL"]).hostname or "")')"
+  if [[ -n "$PUBLIC_HOST" ]] && curl -q --noproxy '*' -fsS --max-time 8 \
+      --resolve "$PUBLIC_HOST:443:127.0.0.1" "$PUBLIC_URL/admin/login" >/dev/null 2>&1; then
+    echo "PASS: HTTPS/443 admin route has a trusted public certificate"
+  else
+    echo "WARN: public HTTPS/443 does not pass browser-grade TLS verification." >&2
+    echo "      For an IP-only control plane run: bash scripts/admin_public_tls.sh install" >&2
+  fi
 fi
 
 docker compose ps db admin bot nginx

@@ -86,7 +86,7 @@ fi
 # A short-lived public IP certificate must never be replaced by a self-signed
 # one during a routine app deploy. The renewal timer handles its expiry.
 if [[ "$VALID" != true && -s "$CERT" ]] \
-   && openssl verify -purpose sslserver -CApath /etc/ssl/certs "$CERT" >/dev/null 2>&1; then
+   && openssl verify -purpose sslserver -untrusted "$CERT" -CApath /etc/ssl/certs "$CERT" >/dev/null 2>&1; then
   echo "FAIL: trusted control-plane certificate is near expiry; repair its renewal first" >&2
   exit 2
 fi
