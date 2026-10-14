@@ -291,10 +291,29 @@ echo "PASS: Telegram bot process stable and authenticated, restart_count=$BOT_RE
 echo "[8/8] Nginx and public admin..."
 start_existing_or_create nginx
 docker compose exec -T nginx nginx -t >/dev/null 2>&1 || fail "nginx config is invalid"
+if [[ -z "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
+  # Docker cannot add a published port to an existing container. The old
+  # container has kept serving only :80/:29148 across application updates.
+  # Never stop it if another host service owns :443.
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "WARN: cannot verify who owns HTTPS/443 (ss unavailable); leaving Nginx intact." >&2
+  elif [[ -n "$(ss -H -ltn '( sport = :443 )' 2>/dev/null)" ]]; then
+    echo "WARN: HTTPS/443 belongs to another host service; leaving the running Nginx container intact." >&2
+  else
+    echo "Recreating Nginx once to publish HTTPS/443 from current Compose config..."
+    docker compose up -d --no-deps --force-recreate nginx \
+      || fail "could not publish HTTPS/443; admin remains reachable at localhost:8000"
+  fi
+fi
 docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || {
   docker compose restart nginx >/dev/null
 }
 wait_http http://127.0.0.1:29148/admin/login 20 || fail "admin proxy on :29148 is not healthy"
+if [[ -n "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
+  curl -q -kfsS --max-time 8 https://127.0.0.1/admin/login >/dev/null \
+    || fail "public HTTPS/443 admin route is not healthy"
+  echo "PASS: HTTPS/443 published and admin route responds"
+fi
 
 docker compose ps db admin bot nginx
 echo "RECOVERY PASS: DB + admin + bot + nginx are healthy."
