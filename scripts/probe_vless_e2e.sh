@@ -221,6 +221,57 @@ probe "Cloudflare HTTP (IP)" "http://1.1.1.1/cdn-cgi/trace"
 probe "Google HTTP" "http://connectivitycheck.gstatic.com/generate_204"
 
 echo "RESULT: $SUCCESS/5 destinations returned HTTP responses through the VPN."
+if [[ "$SUB_ID" == "--telegram-url" ]]; then
+    # Windows sing-box clients may use Google DNS-over-TLS. HTTPS egress alone
+    # does not prove that their resolver can connect on TCP/853.
+    python3 - "$SOCKS_PORT" <<'PY'
+import socket, ssl, struct, sys
+def read_exact(stream, count):
+    data = b""
+    while len(data) < count:
+        chunk = stream.recv(count - len(data))
+        if not chunk:
+            raise OSError("Connection closed during DNS probe")
+        data += chunk
+    return data
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=7) as sock:
+        sock.settimeout(8)
+        sock.sendall(b"\x05\x01\x00")
+        if read_exact(sock, 2) != b"\x05\x00":
+            raise OSError("SOCKS negotiation failed")
+        sock.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("8.8.8.8") + struct.pack("!H", 853))
+        reply = read_exact(sock, 4)
+        if len(reply) != 4 or reply[1] != 0:
+            raise OSError("TCP/853 via tunnel refused")
+        address_len = {1: 4, 4: 16}.get(reply[3])
+        if reply[3] == 3:
+            address_len = read_exact(sock, 1)[0]
+        if address_len is None:
+            raise OSError("Unexpected SOCKS address")
+        read_exact(sock, address_len + 2)
+        with ssl.create_default_context().wrap_socket(sock, server_hostname="dns.google") as tls:
+            # Standard DNS-over-TLS wire query for example.com A.
+            query = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01"
+            tls.sendall(struct.pack("!H", len(query)) + query)
+            length = read_exact(tls, 2)
+            response = read_exact(tls, struct.unpack("!H", length)[0])
+            if len(response) < 12 or response[:2] != b"\x12\x34" or response[3] & 15:
+                raise OSError("DNS-over-TLS response invalid")
+    print("PASS: Google DNS-over-TLS 8.8.8.8:853 via the paid VLESS tunnel")
+except (OSError, ssl.SSLError, ValueError) as exc:
+    print("WARN: Google DNS-over-TLS 8.8.8.8:853 via tunnel failed (%s)" % type(exc).__name__)
+PY
+    dot_code="$(curl -q -4 -sS -o "$WORKDIR/egress.txt" -w '%{http_code}' \
+        --noproxy '' --proxy "socks5h://127.0.0.1:$SOCKS_PORT" \
+        -H 'Accept: application/dns-json' --connect-timeout 7 --max-time 16 \
+        'https://1.1.1.1/dns-query?name=example.com&type=A' 2>"$WORKDIR/curl.log" || true)"
+    if [[ "$dot_code" == "200" ]]; then
+        echo "PASS: Cloudflare DNS-over-HTTPS 1.1.1.1:443 via the paid VLESS tunnel"
+    else
+        echo "WARN: Cloudflare DNS-over-HTTPS 1.1.1.1:443 via tunnel failed (HTTP ${dot_code:-none})"
+    fi
+fi
 if [[ "$SUB_ID" == "--telegram-url" && "$EXIT_IP" != "$EXPECTED_NODE_IP" ]]; then
     echo "FAIL: exact-key test could not verify node egress IP (expected $EXPECTED_NODE_IP)."
     exit 1
