@@ -113,6 +113,7 @@ done
 echo "=== VPN REGRESSION GATE ==="
 docker compose exec -T admin python -m unittest \
     tests.test_vpn_link \
+    tests.test_sub_token \
     tests.test_vless_probe_config \
     tests.test_standalone_xray \
     || fail "standalone Xray regression suite failed; nodes were not modified"

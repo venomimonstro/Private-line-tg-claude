@@ -34,7 +34,7 @@ def verify_sub_token(token: str, secret: str) -> int | None:
         pad = (-len(tid_b64)) % 4
         if pad:
             tid_b64 += "=" * pad
-        tid = base64.urlsafe_b64decode(tid_b64, validate=True)
+        tid = base64.b64decode(tid_b64, altchars=b"-_", validate=True)
         telegram_id = int(tid.decode())
         if str(telegram_id).encode() != tid:
             return None

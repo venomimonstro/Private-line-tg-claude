@@ -93,15 +93,17 @@ async def verify(subscription_id: int) -> int:
         token = make_sub_token(user.telegram_id, settings.SECRET_KEY)
         async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
             try:
-                # Validate the actual published Nginx -> FastAPI -> DB route.
+                # Port 80 redirects to HTTPS and cannot validate the app route.
+                # The container's local diagnostic ingress reaches the same
+                # Nginx /sub/ location without sending a bearer URL over WAN.
                 response = await client.get(
-                    f"http://nginx/sub/{token}", follow_redirects=False
+                    f"http://nginx:29148/sub/{token}", follow_redirects=False
                 )
             except httpx.RequestError as exc:
                 print(f"FAIL: Nginx subscription unreachable ({type(exc).__name__})")
                 return 2
         if response.status_code != 200:
-            print(f"FAIL: public subscription route HTTP {response.status_code}")
+            print(f"FAIL: Nginx subscription route HTTP {response.status_code}")
             return 2
         try:
             lines = base64.b64decode(response.text, validate=True).decode("utf-8").splitlines()
