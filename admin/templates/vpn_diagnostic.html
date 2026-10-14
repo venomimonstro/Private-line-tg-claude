@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="alert alert-info">Проверка выполняется с основного сервера через временный VPN-клиент. Результат не измеряет доступность ноды из вашей сети. Ключ и журнал не сохраняются.</div>
+<div class="card p-4 mb-4">
+  <form method="post" action="/admin/vpn-diagnostic" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="mb-3">
+      <label class="form-label" for="vless_url">Ключ из Telegram</label>
+      <input class="form-control" id="vless_url" name="vless_url" type="password" placeholder="vless://…" required maxlength="4096" autocomplete="off" spellcheck="false">
+      <div class="form-text">Вставьте полную строку из /mykey. После проверки поле очистится.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="site_url">HTTPS-сайт для проверки</label>
+      <input class="form-control" id="site_url" name="site_url" type="url" value="{{ site }}" required maxlength="1200" autocomplete="off">
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="client_log">Журнал клиента, если подключение на устройстве не работает (необязательно)</label>
+      <textarea class="form-control" id="client_log" name="client_log" rows="5" maxlength="12000" placeholder="Вставьте последние ошибки из приложения. Удалите из журнала ключ и персональные данные."></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Проверить подключение</button>
+  </form>
+</div>
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+{% if result %}
+<div class="card p-4 mb-3">
+  <h5>Отчёт по этапам</h5>
+  <table class="table table-sm align-middle"><thead><tr><th>Этап</th><th>Результат</th><th>Подробности</th><th>Время</th></tr></thead><tbody>
+    {% for row in result %}<tr><td>{{ row.stage }}</td><td><span class="badge {{ 'text-bg-success' if row.ok else 'text-bg-danger' }}">{{ 'PASS' if row.ok else 'FAIL' }}</span></td><td>{{ row.detail }}</td><td>{{ row.seconds }} с</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+<div class="card p-4 mb-4"><h5>Что означает результат</h5><ul class="mb-0">{% for item in analysis %}<li>{{ item }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% endblock %}
