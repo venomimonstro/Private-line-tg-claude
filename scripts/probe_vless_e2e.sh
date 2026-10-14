@@ -68,10 +68,33 @@ if [[ "$SUB_ID" == "--stdin-url" ]]; then
     docker compose exec -T admin python -m app.vless_e2e_probe_config         --stdin-url --socks-port "$SOCKS_PORT" > "$CONFIG" || exit 2
 elif [[ "$SUB_ID" == "--telegram-url" ]]; then
     [[ -n "$SERVER_ID" ]] || { echo "Server ID required" >&2; exit 2; }
-    printf 'Paste the EXACT vless:// link copied from Telegram (input hidden): ' > /dev/tty
+    [[ -r /dev/tty ]] || { echo "Interactive terminal required" >&2; exit 2; }
     VLESS_URL=""
-    IFS= read -r -s VLESS_URL < /dev/tty || { echo "No input received" >&2; exit 2; }
-    printf '\n' > /dev/tty
+    for attempt in 1 2 3; do
+        printf 'Paste ONLY the full vless:// link from Telegram, then Enter (hidden input, attempt %s/3): ' "$attempt" > /dev/tty
+        IFS= read -r -s VLESS_URL < /dev/tty || { echo "No input received" >&2; exit 2; }
+        printf '\n' > /dev/tty
+        if [[ -z "$VLESS_URL" ]]; then
+            echo "No text was pasted. In the SSH terminal use its paste command (often Ctrl+Shift+V or right-click), then Enter." >&2
+        elif [[ "$VLESS_URL" != vless://* ]]; then
+            echo "Input does not start with vless://. Copy the key from /mykey, not the subscription URL or terminal output." >&2
+        elif printf '%s\n' "$VLESS_URL" | python3 -c '
+import sys
+from urllib.parse import urlsplit
+try:
+    link = urlsplit(sys.stdin.readline().strip())
+    valid = bool(link.username and link.hostname and link.port and link.query)
+except ValueError:
+    valid = False
+sys.exit(0 if valid else 1)
+'; then
+            break
+        else
+            echo "Incomplete VLESS link. Copy the entire line from the bot message /mykey (including UUID, host, port and ?parameters)." >&2
+        fi
+        VLESS_URL=""
+    done
+    [[ -n "$VLESS_URL" ]] || { echo "No complete VLESS link received; nothing was changed." >&2; exit 2; }
     echo "[2/5] Comparing supplied Telegram key with node settings (read-only)..."
     # Run current host source with the existing application environment. No
     # image build, service restart, key repair or mutation is involved.
