@@ -71,15 +71,24 @@ PY
 fi
 
 mkdir -p nginx/ssl
+mkdir -p data/acme-webroot/.well-known/acme-challenge
 CERT=nginx/ssl/cert.pem
 KEY=nginx/ssl/key.pem
 
 VALID=false
 if [[ -s "$CERT" && -s "$KEY" ]]; then
-  if openssl x509 -in "$CERT" -noout -checkend 604800 >/dev/null 2>&1 \
+  if openssl x509 -in "$CERT" -noout -checkend 86400 >/dev/null 2>&1 \
      && openssl pkey -in "$KEY" -noout >/dev/null 2>&1; then
     VALID=true
   fi
+fi
+
+# A short-lived public IP certificate must never be replaced by a self-signed
+# one during a routine app deploy. The renewal timer handles its expiry.
+if [[ "$VALID" != true && -s "$CERT" ]] \
+   && openssl verify -purpose sslserver -CApath /etc/ssl/certs "$CERT" >/dev/null 2>&1; then
+  echo "FAIL: trusted control-plane certificate is near expiry; repair its renewal first" >&2
+  exit 2
 fi
 
 if [[ "$VALID" != true ]]; then

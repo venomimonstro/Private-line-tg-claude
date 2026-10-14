@@ -290,6 +290,9 @@ echo "PASS: Telegram bot process stable and authenticated, restart_count=$BOT_RE
 
 echo "[8/8] Nginx and public admin..."
 start_existing_or_create nginx
+# Reconcile bind mounts as well as port mappings: an existing container does
+# not acquire the ACME webroot mount merely because Compose was updated.
+docker compose up -d --no-deps nginx || fail "nginx configuration convergence failed"
 docker compose exec -T nginx nginx -t >/dev/null 2>&1 || fail "nginx config is invalid"
 if [[ -z "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
   # Docker cannot add a published port to an existing container. The old

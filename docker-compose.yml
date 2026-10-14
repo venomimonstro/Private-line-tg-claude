@@ -215,6 +215,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./data/acme-webroot
+        target: /var/www/acme
+        read_only: true
+        bind:
+          create_host_path: false
       - nginx_logs:/var/log/nginx
     restart: unless-stopped
     mem_limit: 48m
