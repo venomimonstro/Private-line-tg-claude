@@ -25,7 +25,9 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token
-from app.services.vpn_key import get_client_access_url, _server_protocol
+from app.services.vpn_key import get_access_url
+from app.services.vpn_link import canonical_client_link
+from app.services.vpn_eligibility import is_vless_node
 
 
 async def verify(subscription_id: int) -> int:
@@ -61,14 +63,17 @@ async def verify(subscription_id: int) -> int:
             )
             .order_by(VpnServer.id.asc(), VpnKey.id.asc())
         )).all()
-        active = [key for key, server in active if _server_protocol(server) == "marzban"]
+        active = [(key, server) for key, server in active if is_vless_node(server)]
         if not active:
             print("FAIL: no active VPN keys")
             return 2
         expected_links = set()
-        for key in active:
+        for key, server in active:
             try:
-                expected = get_client_access_url(key)
+                label = key.label or f"{server.flag_emoji or '🌍'} {server.country}"
+                if server.status == VpnServerStatus.unreachable:
+                    label = f"{label} • резерв"
+                expected = canonical_client_link(get_access_url(key), label)
                 parsed = urlsplit(expected)
                 if (
                     expected.count("#") != 1
@@ -78,7 +83,7 @@ async def verify(subscription_id: int) -> int:
                     or "security=reality" not in parsed.query
                     or "fp=chrome" not in parsed.query
                     or "flow=xtls-rprx-vision" not in parsed.query
-                    or parsed.fragment != "Private%20Line%20VPN"
+                    or not parsed.fragment
                 ):
                     raise ValueError("Invalid VLESS profile")
                 expected_links.add(expected)
@@ -107,7 +112,7 @@ async def verify(subscription_id: int) -> int:
             print("FAIL: downloaded subscription does not match all active client-ready keys")
             return 2
         print(f"PASS: user for subscription {subscription_id} has {len(active)} verified client-ready key(s)")
-        print("PASS: every profile name is Private Line VPN")
+        print("PASS: every published VLESS Reality profile has a display name")
         print("PASS: Nginx -> FastAPI subscription endpoint exactly matches verified active keys")
         print("NOTE: this does NOT prove connectivity from a remote user's ISP or client app")
         return 0

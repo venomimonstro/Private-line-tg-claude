@@ -10,6 +10,7 @@ from app.database import async_session_maker
 from app.models.vpn_server import VpnServer
 from app.models.vpn_key import VpnKey
 from app.services.vpn_key import _make_client, _server_protocol, get_client_access_url
+from app.vpn.direct_xray import DirectXrayClient
 
 FIELDS = ('security', 'encryption', 'type', 'flow', 'fp', 'sni', 'pbk', 'sid', 'headerType')
 
@@ -37,9 +38,9 @@ async def check(raw, server_id):
     print('Supplied endpoint: %s:%s' % (supplied[1], supplied[2]))
     async with async_session_maker() as db:
         server = await db.get(VpnServer, server_id)
-        if server is None or _server_protocol(server) != 'marzban':
+        if server is None or _server_protocol(server) not in ('marzban', 'direct_xray'):
             raise ValueError('Requested node does not exist')
-        if supplied[1] != urlsplit(server.api_url).hostname:
+        if _server_protocol(server) == 'marzban' and supplied[1] != urlsplit(server.api_url).hostname:
             raise ValueError('Link points to a different host than the selected node')
         rows = (await db.execute(select(VpnKey).where(VpnKey.server_id == server_id))).scalars().all()
         matches = []
@@ -57,6 +58,25 @@ async def check(raw, server_id):
             print('WARN: UUID is absent from local subscription keys on this node')
         client = _make_client(server)
         try:
+            if isinstance(client, DirectXrayClient):
+                if len(matches) != 1:
+                    raise ValueError('Supplied UUID must match exactly one stored key on this node')
+                row = matches[0]
+                status = await client.status()
+                remote = await client.get_key(row.outline_key_id)
+                actual = signature(remote.access_url)
+                checks = {
+                    'node service and listener': bool(status.get('service_active') and status.get('listener')),
+                    'Telegram URI matches node state': supplied == actual,
+                    'Telegram URI matches stored key': supplied == signature(get_client_access_url(row)),
+                    'node endpoint': supplied[1] == str(status.get('host', '')).lower() and supplied[2] == status.get('port'),
+                }
+                for name, ok in checks.items():
+                    print(('PASS: ' if ok else 'FAIL: ') + name)
+                if not all(checks.values()):
+                    raise ValueError('Supplied Telegram key does not match the direct Xray node')
+                print('Key/node configuration matches. Live authentication is proved by the tunnel test next.')
+                return
             config = await client._get_core_config()
             inbounds = [x for x in (config or {}).get('inbounds', [])
                         if x.get('protocol') == 'vless' and x.get('streamSettings', {}).get('security') == 'reality']

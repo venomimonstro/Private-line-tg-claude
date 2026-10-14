@@ -1,4 +1,4 @@
-"""Print recoverable dedicated Marzban node IDs for operator acceptance gates.
+"""Print recoverable dedicated VLESS node IDs for operator acceptance gates.
 
 Quarantined/unreachable nodes are intentionally included so a successful real
 E2E gate can recover them. Explicitly disabled nodes remain excluded.
@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.database import async_session_maker
 from app.enums import VpnServerStatus
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import _server_protocol
+from app.services.vpn_eligibility import is_vless_node
 
 
 async def main() -> int:
@@ -24,7 +24,7 @@ async def main() -> int:
             )
             .order_by(VpnServer.id.asc())
         )).scalars().all()
-        rows = [r for r in rows if _server_protocol(r) == "marzban"]
+        rows = [r for r in rows if is_vless_node(r)]
         if not rows:
             return 2
         for row in rows:

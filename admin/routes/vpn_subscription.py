@@ -1,9 +1,8 @@
 """Public subscription endpoint — no admin auth required.
 
 VPN apps (Hiddify, V2RayNG, V2Box, Streisand) periodically GET this URL and
-auto-apply the latest config.  When repair_marzban_keys() updates the stored
-access_url in the DB the next app refresh picks it up automatically — the user
-never needs to touch their client manually.
+auto-apply the latest config. Standalone Xray and legacy Marzban VLESS keys
+are both included while their paid subscription remains active.
 
 Token format: base64url(telegram_id) + "." + 128-bit HMAC-SHA256 signature
 - Stable: same user → same token always
@@ -27,7 +26,8 @@ from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.sub_token import make_sub_token, verify_sub_token as _verify_sub_token
-from app.services.vpn_key import get_access_url, _server_protocol
+from app.services.vpn_key import get_access_url
+from app.services.vpn_eligibility import is_vless_node
 from app.services.vpn_link import canonical_client_link
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ async def vpn_subscription(
     rows = [
         (key, server)
         for key, server in keys_result.all()
-        if _server_protocol(server) == "marzban"
+        if is_vless_node(server)
     ]
 
     links: list[str] = []

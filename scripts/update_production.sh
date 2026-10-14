@@ -346,6 +346,8 @@ PY
     if [[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
         bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
             || { quarantine_node "$SERVER_ID" "existing paid direct-Xray key E2E failed"; fail "paid key E2E failed for subscription $SUB_ID"; }
+        docker compose exec -T admin python -m app.verify_vpn_delivery --subscription "$SUB_ID" \
+            || { quarantine_node "$SERVER_ID" "published subscription differs from paid direct-Xray key"; fail "subscription profile delivery failed for subscription $SUB_ID"; }
     else
         echo "No paid key yet; disposable real tunnel already passed."
     fi

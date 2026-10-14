@@ -12,7 +12,7 @@ from app.enums import SubscriptionStatus, VpnKeyStatus, VpnServerStatus
 from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
-from app.services.vpn_key import _server_protocol
+from app.services.vpn_eligibility import is_vless_node
 
 
 async def main(subscription_id: int) -> int:
@@ -37,7 +37,7 @@ async def main(subscription_id: int) -> int:
         )).scalars().all()
         ids = sorted({
             server.id for server in rows
-            if _server_protocol(server) == "marzban"
+            if is_vless_node(server)
         })
         if not ids:
             return 2

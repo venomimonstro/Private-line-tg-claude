@@ -1,12 +1,29 @@
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
+import base64
+
+from admin.routes.vpn_subscription import vpn_subscription
+from app.enums import VpnServerStatus
+from app.services.vpn_eligibility import is_vless_node
+from app.services.vpn_link import canonical_client_link
 
 from app.services import vpn_key
 
 ROOT=Path("/app")
 
 class StandaloneXrayTests(unittest.TestCase):
+    def test_subscription_accepts_direct_xray_and_legacy_vless_only(self):
+        server = SimpleNamespace()
+        with patch('app.services.vpn_eligibility._server_protocol', return_value='direct_xray'):
+            self.assertTrue(is_vless_node(server))
+        with patch('app.services.vpn_eligibility._server_protocol', return_value='marzban'):
+            self.assertTrue(is_vless_node(server))
+        with patch('app.services.vpn_eligibility._server_protocol', return_value='outline'):
+            self.assertFalse(is_vless_node(server))
+
     def test_paid_provisioning_requires_direct_xray(self):
         source=inspect.getsource(vpn_key.create_vpn_key)
         self.assertIn('_server_protocol(server) != "direct_xray"', source)
@@ -54,6 +71,25 @@ class StandaloneXrayTests(unittest.TestCase):
         self.assertIn("get_node_ssh_access", client)
         self.assertIn("StrictHostKeyChecking=accept-new", client)
         self.assertIn("/opt/private-line-node/manage.py", client)
+
+
+class PublishedProfileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_xray_paid_key_is_in_subscription_response(self):
+        uri = ('vless://11111111-2222-4333-8444-555555555555@185.236.25.152:443'
+               '?security=reality&encryption=none&pbk=' + 'A' * 43 +
+               '&sni=dl.google.com&fp=chrome&type=tcp&flow=xtls-rprx-vision&sid=abcdef0123456789')
+        key = SimpleNamespace(id=1, label=None)
+        server = SimpleNamespace(status=VpnServerStatus.active, flag_emoji='🌍', country='NL')
+        result_user = SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id=7))
+        result_keys = SimpleNamespace(all=lambda: [(key, server)])
+        session = SimpleNamespace(execute=AsyncMock(side_effect=[result_user, result_keys]))
+        with patch('admin.routes.vpn_subscription._verify_sub_token', return_value=123), \
+             patch('admin.routes.vpn_subscription.get_access_url', return_value=uri), \
+             patch('app.services.vpn_eligibility._server_protocol', return_value='direct_xray'):
+            response = await vpn_subscription('valid-token', session=session)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(base64.b64decode(response.body).decode(),
+                         canonical_client_link(uri, '🌍 NL'))
 
 if __name__=="__main__":
     unittest.main()
