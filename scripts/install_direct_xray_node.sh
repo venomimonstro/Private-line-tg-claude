@@ -13,14 +13,22 @@ PORT=443
 CUTOVER=0
 SUCCESS=0
 MARZBAN_WAS_RUNNING=0
+DIRECT_AGENT_WAS_RUNNING=0
+LEGACY_STATE=""
 
 rollback() {
   rc=$?
-  if [[ "$SUCCESS" -ne 1 && "$CUTOVER" -eq 1 ]]; then
-    echo "ROLLBACK: standalone Xray failed; restoring previous Marzban runtime" >&2
+  if [[ "$SUCCESS" -ne 1 && ( "$CUTOVER" -eq 1 || -n "$LEGACY_STATE" ) ]]; then
+    echo "ROLLBACK: standalone Xray failed; restoring previous node state/runtime" >&2
     systemctl disable --now private-line-xray.service >/dev/null 2>&1 || true
+    if [[ -n "$LEGACY_STATE" && -s "$LEGACY_STATE" ]]; then
+      install -m 600 "$LEGACY_STATE" "$DATA/state.json"
+    fi
     if [[ "$MARZBAN_WAS_RUNNING" -eq 1 && -f /opt/marzban/docker-compose.yml ]]; then
       (cd /opt/marzban && docker compose up -d) >/dev/null 2>&1 || true
+    fi
+    if [[ "$DIRECT_AGENT_WAS_RUNNING" -eq 1 || ( -n "$LEGACY_STATE" && -f /etc/systemd/system/private-line-node.service ) ]]; then
+      systemctl enable --now private-line-node.service >/dev/null 2>&1 || true
     fi
   fi
   exit "$rc"
@@ -34,12 +42,29 @@ TARGET="${SNI}:443"
 mkdir -p "$ROOT" "$DATA"
 chmod 700 "$ROOT" "$DATA"
 
-# Stop the older experimental direct-agent service if it ever existed. Only one
-# process may own public TCP/443.
-systemctl disable --now private-line-node.service >/dev/null 2>&1 || true
+# Xray prints several version lines. A `version | head -1` check under
+# pipefail incorrectly reports a valid executable as broken on SIGPIPE.
+valid_xray() {
+  local output
+  output="$("$1" version 2>&1)" || return 1
+  [[ "$output" == "Xray "* ]]
+}
 
-# Its state schema is intentionally different. Preserve it for audit, then let
-# this installer rebuild the minimal state from the existing REALITY identity.
+# Prefer the currently installed executable. Do not replace it with a stale
+# Marzban copy, and validate candidates before touching the live service.
+if [[ -x "$XRAY" ]] && valid_xray "$XRAY"; then
+  :
+elif [[ -x /var/lib/marzban/xray-core/26.6.27/xray ]] && valid_xray /var/lib/marzban/xray-core/26.6.27/xray; then
+  install -m 755 /var/lib/marzban/xray-core/26.6.27/xray "$XRAY"
+elif command -v xray >/dev/null 2>&1 && valid_xray "$(command -v xray)"; then
+  install -m 755 "$(command -v xray)" "$XRAY"
+else
+  echo "FAIL: no executable Xray candidate passes the version check; existing service untouched" >&2
+  exit 2
+fi
+
+# Preserve the old agent's state and identity. Validate the executable first;
+# a failed preflight must not move a working service's state out of its path.
 if [[ -s "$DATA/state.json" ]] && ! python3 - "$DATA/state.json" <<'PY' >/dev/null 2>&1
 import json, sys
 s=json.load(open(sys.argv[1]))
@@ -47,20 +72,13 @@ required={"host","port","sni","target","private_key","public_key","short_id","us
 raise SystemExit(0 if required.issubset(s) and isinstance(s.get("users"),dict) else 1)
 PY
 then
-  mv "$DATA/state.json" "$DATA/state.legacy.$(date -u +%Y%m%dT%H%M%SZ).json"
+  LEGACY_STATE="$DATA/state.legacy.$(date -u +%Y%m%dT%H%M%SZ).json"
+  mv "$DATA/state.json" "$LEGACY_STATE"
   rm -f "$DATA/xray.json"
 fi
-
-# Reuse the already installed official Xray first. Avoid downloads during migration.
-if [[ -x /var/lib/marzban/xray-core/26.6.27/xray ]]; then
-  install -m 755 /var/lib/marzban/xray-core/26.6.27/xray "$XRAY"
-elif command -v xray >/dev/null 2>&1; then
-  install -m 755 "$(command -v xray)" "$XRAY"
-else
-  echo "FAIL: official Xray binary not found on node; run current updater once first" >&2
-  exit 2
+if [[ ! -s "$DATA/state.json" && -z "$LEGACY_STATE" ]]; then
+  LEGACY_STATE="$(find "$DATA" -maxdepth 1 -type f -name 'state.legacy.*.json' | sort -r | sed -n '1p')"
 fi
-"$XRAY" version | head -1 | grep -q '^Xray ' || { echo "FAIL: invalid Xray binary" >&2; exit 2; }
 
 # Preserve existing REALITY identity when migrating from Marzban.
 python3 - "$DATA/state.json" /var/lib/marzban/xray_config.json "$XRAY" "$HOST" "$PORT" "$SNI" "$TARGET" <<'PY'
@@ -71,9 +89,12 @@ host=sys.argv[4]; port=int(sys.argv[5]); sni=sys.argv[6]; target=sys.argv[7]
 if state_path.exists():
     raise SystemExit(0)
 private=public=sid=""
-if old_path.exists():
+legacy=sorted(state_path.parent.glob('state.legacy.*.json'),reverse=True)
+sources=legacy[:1]+([old_path] if old_path.exists() else [])
+for source in sources:
     try:
-        cfg=json.loads(old_path.read_text())
+        data=json.loads(source.read_text())
+        cfg=data.get('config',data)
         for inbound in cfg.get("inbounds",[]):
             ss=inbound.get("streamSettings",{})
             if inbound.get("protocol")=="vless" and ss.get("security")=="reality":
@@ -86,14 +107,12 @@ if old_path.exists():
                 if names: sni=str(names[0])
                 target=str(r.get("target") or r.get("dest") or target)
                 break
+        if re.fullmatch(r"[A-Za-z0-9_-]{43,44}",private):
+            break
     except Exception:
         pass
 if not re.fullmatch(r"[A-Za-z0-9_-]{43,44}",private):
-    p=subprocess.run([xray,"x25519"],text=True,capture_output=True,check=True)
-    for line in p.stdout.splitlines():
-        k,_,v=line.partition(":"); key=re.sub(r"\s+","",k).lower()
-        if key=="privatekey": private=v.strip()
-        if key in ("publickey","password","password(publickey)"): public=v.strip()
+    raise SystemExit("FAIL: previous REALITY private key unavailable; refusing to rotate paid keys")
 if private and not re.fullmatch(r"[A-Za-z0-9_-]{43,44}",public):
     p=subprocess.run([xray,"x25519","-i",private],text=True,capture_output=True,check=True)
     for line in p.stdout.splitlines():
@@ -129,11 +148,15 @@ EOF
 
 # Cut over only after all files/config inputs above are prepared. If the new
 # runtime fails, the EXIT trap brings the previous Marzban container back.
+if systemctl is-active --quiet private-line-node.service; then
+  DIRECT_AGENT_WAS_RUNNING=1
+fi
+CUTOVER=1
+systemctl disable --now private-line-node.service >/dev/null 2>&1 || true
 if [[ -f /opt/marzban/docker-compose.yml ]]; then
   if (cd /opt/marzban && docker compose ps --status running -q marzban 2>/dev/null | grep -q .); then
     MARZBAN_WAS_RUNNING=1
   fi
-  CUTOVER=1
   (cd /opt/marzban && docker compose down --remove-orphans) >/dev/null 2>&1 || true
 fi
 systemctl disable --now marzban-proxy.service >/dev/null 2>&1 || true

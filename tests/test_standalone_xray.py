@@ -37,6 +37,10 @@ class StandaloneXrayTests(unittest.TestCase):
         self.assertIn("ufw delete allow 2096/tcp", installer)
         self.assertNotIn("2096", manager)
         self.assertIn("PORT=443", installer)
+        self.assertIn('output="$("$1" version 2>&1)"', installer)
+        self.assertNotIn('"$XRAY" version | head', installer)
+        self.assertIn('state.legacy.*.json', installer)
+        self.assertIn('refusing to rotate paid keys', installer)
 
     def test_node_mutation_is_atomic_test_restart_rollback(self):
         manager=(ROOT/"scripts/direct_xray_node.py").read_text()
