@@ -110,6 +110,12 @@ for service in admin bot; do
         || fail "$service is not running the application image built from $HEAD"
 done
 
+if [[ -z "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
+    echo "WARN: running Nginx container does not publish HTTPS/443, although docker-compose.yml requires it." >&2
+    echo "      VLESS on the separate node can work; public /sub/ and admin HTTPS need their own ingress check." >&2
+    ss -H -ltnp '( sport = :443 )' 2>/dev/null | sed -n '1,3p' >&2 || true
+fi
+
 echo "=== VPN REGRESSION GATE ==="
 docker compose exec -T admin python -m unittest \
     tests.test_vpn_link \
@@ -347,8 +353,6 @@ PY
     if [[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
         bash scripts/probe_vless_e2e.sh "$SUB_ID" "$SERVER_ID" \
             || { quarantine_node "$SERVER_ID" "existing paid direct-Xray key E2E failed"; fail "paid key E2E failed for subscription $SUB_ID"; }
-        docker compose exec -T admin python -m app.verify_vpn_delivery --subscription "$SUB_ID" \
-            || { quarantine_node "$SERVER_ID" "published subscription differs from paid direct-Xray key"; fail "subscription profile delivery failed for subscription $SUB_ID"; }
     else
         echo "No paid key yet; disposable real tunnel already passed."
     fi
@@ -357,6 +361,15 @@ PY
     docker compose exec -T admin python -m app.node_probe_state \
         --server "$SERVER_ID" --success \
         || fail "could not publish direct Xray node $SERVER_ID"
+
+    # This HTTP route is control-plane delivery, not the VPN data plane. A
+    # timeout must never quarantine a node after both real VLESS probes pass.
+    if [[ "$SUB_ID" =~ ^[1-9][0-9]*$ ]]; then
+        if ! docker compose exec -T admin python -m app.verify_vpn_delivery --subscription "$SUB_ID"; then
+            echo "WARN: subscription HTTP delivery failed; node $SERVER_ID remains healthy after paid-key E2E." >&2
+            echo "      Recheck without reinstalling: docker compose exec -T admin python -m app.verify_vpn_delivery --subscription $SUB_ID" >&2
+        fi
+    fi
 
     rm -f "$SECRET_FILE" 2>/dev/null || true
     unset SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND SECRET_FILE

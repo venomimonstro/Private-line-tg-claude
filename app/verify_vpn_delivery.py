@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import base64
 from datetime import datetime
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -91,33 +92,55 @@ async def verify(subscription_id: int) -> int:
                 print(f"FAIL: client-ready link invalid ({type(exc).__name__})")
                 return 2
         token = make_sub_token(user.telegram_id, settings.SECRET_KEY)
-        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+        # Release the read transaction before making an HTTP request that also
+        # needs a DB connection. This avoids coupling availability to pool
+        # pressure during a low-memory deployment.
+        await db.rollback()
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(25.0, connect=3.0), trust_env=False
+    ) as client:
+        for stage, url in (
+            ("FastAPI", f"http://127.0.0.1:8000/sub/{token}"),
+            ("Nginx readiness", "http://nginx:29148/admin/login"),
+            ("Nginx subscription", f"http://nginx:29148/sub/{token}"),
+        ):
+            started = time.monotonic()
             try:
-                # Port 80 redirects to HTTPS and cannot validate the app route.
-                # The container's local diagnostic ingress reaches the same
-                # Nginx /sub/ location without sending a bearer URL over WAN.
-                response = await client.get(
-                    f"http://nginx:29148/sub/{token}", follow_redirects=False
-                )
+                response = await client.get(url, follow_redirects=False)
             except httpx.RequestError as exc:
-                print(f"FAIL: Nginx subscription unreachable ({type(exc).__name__})")
+                print(f"FAIL: {stage} request {type(exc).__name__} after {time.monotonic()-started:.1f}s")
                 return 2
-        if response.status_code != 200:
-            print(f"FAIL: Nginx subscription route HTTP {response.status_code}")
-            return 2
-        try:
-            lines = base64.b64decode(response.text, validate=True).decode("utf-8").splitlines()
-        except Exception:
-            print("FAIL: subscription endpoint did not return base64 VLESS links")
-            return 2
-        if set(lines) != expected_links:
-            print("FAIL: downloaded subscription does not match all active client-ready keys")
-            return 2
-        print(f"PASS: user for subscription {subscription_id} has {len(active)} verified client-ready key(s)")
-        print("PASS: every published VLESS Reality profile has a display name")
-        print("PASS: Nginx -> FastAPI subscription endpoint exactly matches verified active keys")
-        print("NOTE: this does NOT prove connectivity from a remote user's ISP or client app")
-        return 0
+            print(f"CHECK: {stage} HTTP {response.status_code} in {time.monotonic()-started:.1f}s")
+            if stage == "Nginx readiness":
+                if response.status_code != 200:
+                    print("FAIL: Nginx admin route is not ready")
+                    return 2
+                continue
+            if response.status_code != 200:
+                print(f"FAIL: {stage} subscription route HTTP {response.status_code}")
+                return 2
+            if stage == "FastAPI":
+                try:
+                    direct = base64.b64decode(response.text, validate=True).decode("utf-8").splitlines()
+                except Exception:
+                    print("FAIL: FastAPI subscription is not base64 VLESS")
+                    return 2
+                if set(direct) != expected_links:
+                    print("FAIL: FastAPI subscription differs from active client-ready keys")
+                    return 2
+    try:
+        lines = base64.b64decode(response.text, validate=True).decode("utf-8").splitlines()
+    except Exception:
+        print("FAIL: Nginx subscription endpoint is not base64 VLESS")
+        return 2
+    if set(lines) != expected_links:
+        print("FAIL: Nginx subscription differs from active client-ready keys")
+        return 2
+    print(f"PASS: user for subscription {subscription_id} has {len(active)} verified client-ready key(s)")
+    print("PASS: Nginx -> FastAPI subscription endpoint exactly matches verified active keys")
+    print("NOTE: this does NOT prove connectivity from a remote user's ISP or client app")
+    return 0
 
 
 if __name__ == "__main__":
