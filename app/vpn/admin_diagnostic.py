@@ -81,7 +81,7 @@ def _public_site_ips(host: str) -> list[str]:
     if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
         raise ValueError("Адрес сайта не является публичным")
     # Pin one resolved address for the actual request; no DNS rebind/redirect.
-    return ips
+    return sorted(ips, key=lambda ip: ipaddress.ip_address(ip).version != 4)
 
 
 def _dot(port: int) -> None:
