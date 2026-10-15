@@ -27,6 +27,7 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import _server_protocol, get_client_access_url
+from app.services.vpn_link import canonical_client_link
 from app.vpn.admin_diagnostic import _site
 from app.vpn.direct_xray import DirectXrayClient
 from app.vpn.probe_package import verified_xray_archive
@@ -199,7 +200,8 @@ async def receive_probe(request: Request, report: ProbeReport,
                 node_trace = {"status": "observed", "service_active": bool(live.get("service_active")),
                               "listener": bool(live.get("listener"))}
                 remote = await asyncio.wait_for(client.get_key(key.outline_key_id), timeout=12)
-                remote_hash = hashlib.sha256(remote.access_url.strip().split("#", 1)[0].encode()).hexdigest()
+                remote_uri = canonical_client_link(remote.access_url).split("#", 1)[0]
+                remote_hash = hashlib.sha256(remote_uri.encode()).hexdigest()
                 node_trace["key_on_node"] = hmac.compare_digest(remote_hash, report.profile_sha256)
             except Exception:
                 pass
