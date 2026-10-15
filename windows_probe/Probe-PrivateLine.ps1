@@ -155,8 +155,9 @@ try {
         $digestPath=Join-Path $Workspace 'digest.txt'; $zipPath=Join-Path $Workspace 'xray.zip'
         $expected=''
         try {
-            $package=Invoke-WebRequest -UseBasicParsing -Uri ($Base+'/api/vpn-probe/xray?test_id='+$TestId) -Headers @{Authorization=('Bearer '+$Token)} -OutFile $zipPath -PassThru -TimeoutSec 150
-            $expected=[string]$package.Headers['X-Xray-SHA256']
+            $packageUrl=$Base+'/api/vpn-probe/xray?test_id='+$TestId
+            $expected=([string](Invoke-WebRequest -UseBasicParsing -Uri ($packageUrl+'&digest_only=true') -Headers @{Authorization=('Bearer '+$Token)} -TimeoutSec 150).Content).Trim()
+            Invoke-WebRequest -UseBasicParsing -Uri $packageUrl -Headers @{Authorization=('Bearer '+$Token)} -OutFile $zipPath -TimeoutSec 150
         } catch {
             # The official release is a fallback when the primary host cannot
             # supply its verified cache. Never execute an unverified download.

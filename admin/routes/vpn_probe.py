@@ -221,7 +221,7 @@ async def receive_probe(request: Request, report: ProbeReport,
 
 
 @router.get("/api/vpn-probe/xray")
-async def get_probe_xray(request: Request, test_id: str,
+async def get_probe_xray(request: Request, test_id: str, digest_only: bool = False,
                          db: AsyncSession = Depends(get_async_session)):
     if not re.fullmatch(r"[a-f0-9]{24}", test_id):
         raise HTTPException(status_code=404)
@@ -242,5 +242,7 @@ async def get_probe_xray(request: Request, test_id: str,
         archive, digest = await asyncio.to_thread(verified_xray_archive)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Verified diagnostic Xray unavailable") from exc
+    if digest_only:
+        return PlainTextResponse(digest, headers={"Cache-Control": "no-store, private"})
     return FileResponse(archive, media_type="application/zip", filename="Xray-windows-64.zip",
                         headers={"X-Xray-SHA256": digest, "Cache-Control": "no-store, private"})

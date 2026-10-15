@@ -37,6 +37,7 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn("Get-FileHash -Algorithm SHA256", script)
         self.assertIn("Test-Dns853", script)
         self.assertIn("Remove-Item $Workspace -Recurse", script)
+        self.assertNotIn("-OutFile $zipPath -PassThru", script)
         self.assertNotIn("Set-ItemProperty -Path 'HKCU", script)
 
     def test_dns_failure_after_working_https_identifies_client_dns_path(self):
