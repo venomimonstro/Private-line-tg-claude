@@ -8,9 +8,22 @@ from pydantic import ValidationError
 
 from admin.routes.vpn_probe import ProbeReport, explain, safe_steps
 from app.vpn import probe_package
+from app.services.vpn_link import canonical_client_link
 
 
 class ProbeReportTests(unittest.TestCase):
+    def test_node_profile_parameter_order_does_not_look_like_missing_key(self):
+        raw = ("vless://11111111-1111-1111-1111-111111111111@185.236.25.152:443"
+               "?sid=aa&pbk=" + "A" * 43 + "&sni=example.com&security=reality"
+               "&flow=xtls-rprx-vision&type=tcp&fp=chrome")
+        node = ("vless://11111111-1111-1111-1111-111111111111@185.236.25.152:443"
+                "?security=reality&type=raw&sni=example.com&fp=chrome&pbk=" + "A" * 43
+                + "&sid=aa&flow=xtls-rprx-vision")
+        displayed = canonical_client_link(raw).split("#", 1)[0]
+        self.assertEqual(hashlib.sha256(displayed.encode()).hexdigest(),
+                         hashlib.sha256(canonical_client_link(node).split("#", 1)[0].encode()).hexdigest())
+        self.assertNotEqual(raw, displayed)
+
     def test_report_accepts_bounded_stage_codes(self):
         report = ProbeReport(test_id="a" * 24, profile_sha256="b" * 64,
                              windows="10.0.26100", steps=[{"stage": "vpn_dns_853",
