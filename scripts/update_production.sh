@@ -142,6 +142,7 @@ docker compose exec -T admin python -m unittest \
     tests.test_vless_probe_config \
     tests.test_standalone_xray \
     tests.test_vpn_admin_diagnostic \
+    tests.test_vpn_probe \
     || fail "standalone Xray regression suite failed; nodes were not modified"
 echo "PASS: VLESS regression suite"
 

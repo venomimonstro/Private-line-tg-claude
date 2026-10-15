@@ -38,6 +38,7 @@ from admin.routes import (
     users,
     vpn_keys,
     vpn_diagnostic,
+    vpn_probe,
     vpn_subscription,
     web_portal,
     withdrawals,
@@ -137,6 +138,7 @@ app.include_router(integrations.router)
 app.include_router(webhook_router)
 app.include_router(vpn_subscription.router)
 app.include_router(vpn_diagnostic.router)
+app.include_router(vpn_probe.router)
 app.include_router(web_portal.router)
 app.include_router(windows_diagnostics.router)
 
