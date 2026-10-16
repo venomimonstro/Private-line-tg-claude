@@ -46,7 +46,9 @@ function Test-Site([string]$url, [int]$port, [bool]$viaVpn) {
     $ErrorActionPreference = 'Continue'
     try {
         if ($viaVpn) {
-            $result = & curl.exe --silent --show-error --max-time 18 --connect-timeout 8 --socks5-hostname ("127.0.0.1:{0}" -f $port) --output NUL --write-out '%{http_code}' $url 2>$null
+            # Explicitly override NO_PROXY: on Windows it can silently bypass
+            # even a command-line SOCKS proxy for the selected destination.
+            $result = & curl.exe --silent --show-error --ipv4 --max-time 18 --connect-timeout 8 --noproxy '0.0.0.0' --socks5-hostname ("127.0.0.1:{0}" -f $port) --output NUL --write-out '%{http_code}' $url 2>$null
         } else {
             $result = & curl.exe --silent --show-error --max-time 18 --connect-timeout 8 --noproxy '*' --output NUL --write-out '%{http_code}' $url 2>$null
         }
@@ -138,7 +140,13 @@ try {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri ($Base + '/admin/login') -TimeoutSec 8
         Add-Step 'control_tls' 'OK' $watch.ElapsedMilliseconds ([int]$response.StatusCode)
-    } catch { Add-Step 'control_tls' 'TLS_FAIL' $watch.ElapsedMilliseconds }
+    } catch {
+        if ($_.Exception.Response) {
+            Add-Step 'control_tls' 'HTTP_FAIL' $watch.ElapsedMilliseconds ([int]$_.Exception.Response.StatusCode)
+        } else {
+            Add-Step 'control_tls' 'TLS_FAIL' $watch.ElapsedMilliseconds
+        }
+    }
 
     $CurrentStage='direct_site'
     if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
@@ -220,6 +228,10 @@ try {
         Add-Step 'socks' 'SOCKS_FAIL' $watch.ElapsedMilliseconds
         throw 'STOP_PROBE'
     } finally { $local.Close() }
+
+    $CurrentStage='vpn_ipv4'; $watch=Clock
+    $ipv4Result=Test-Site 'https://1.1.1.1/cdn-cgi/trace' $port $true
+    Add-Step 'vpn_ipv4' $ipv4Result.code $watch.ElapsedMilliseconds $ipv4Result.status
 
     $CurrentStage='vpn_site'; $watch=Clock
     $siteResult=Test-Site $site $port $true
