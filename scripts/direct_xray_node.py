@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, base64, fcntl, json, os, re, socket, subprocess, sys, tempfile, time
+import argparse, base64, fcntl, ipaddress, json, os, re, socket, subprocess, sys, tempfile, time
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -39,7 +39,9 @@ def render(s):
             raise ValueError("INVALID_USER_STATE")
         clients.append({"id":uid,"email":name,"flow":"xtls-rprx-vision"})
     return {
-      "log":{"loglevel":"warning"},
+      # Info records identify an accepted VLESS user and rejected REALITY
+      # handshakes. The diagnostic command below returns counts only.
+      "log":{"loglevel":"info"},
       "inbounds":[{
         "tag":"vless-reality","listen":"0.0.0.0","port":int(s["port"]),
         "protocol":"vless",
@@ -87,6 +89,11 @@ def validate_candidate(candidate):
 
 def apply_state(old, new):
     cfg=json.dumps(render(new),indent=2)+"\n"
+    # Reconciliation is frequent. A no-op must not cut off active tunnels.
+    if (new == old and CONFIG.is_file() and CONFIG.read_text() == cfg
+            and run(["systemctl","is-active","--quiet",SERVICE],check=False).returncode == 0
+            and port_ok(new["port"])):
+        return
     candidate=DATA/"xray.candidate.json"
     atomic(candidate,cfg)
     validate_candidate(candidate)
@@ -124,14 +131,42 @@ def info(s, name=None):
             d["url"]=f"vless://{uid}@{s['host']}:{s['port']}?{q}#"+quote("Private Line VPN")
     return d
 
+def trace_client(address, since, name):
+    """Return bounded, credential-free transport evidence from the node."""
+    ip=ipaddress.ip_address(address)
+    if not ip.is_global or not NAME_RE.fullmatch(name): die("INVALID_TRACE_ARGUMENT")
+    now=int(time.time())
+    if since < now-900 or since > now+60: die("TRACE_WINDOW_OUT_OF_RANGE")
+    result=run(["journalctl","-u",SERVICE+".service","--since",f"@{since}",
+                "--until",f"@{now+1}","--no-pager","-o","cat","-n","2000"],
+               check=False,timeout=12)
+    if result.returncode: die("TRACE_UNAVAILABLE")
+    # An IP may be shared by other subscribers behind CGNAT. Accepted
+    # sessions are counted only if Xray logs the exact matching user name.
+    source=re.compile(r"(?<![0-9.])"+re.escape(str(ip))+r":\d{1,5}\b")
+    user=re.compile(r"\bemail:\s*"+re.escape(name)+r"(?:\s|$)")
+    seen=invalid=accepted=0
+    lines=result.stdout.splitlines()
+    for line in lines:
+        if not source.search(line): continue
+        seen+=1
+        if "REALITY: processed invalid connection" in line: invalid+=1
+        if " accepted " in line and user.search(line): accepted+=1
+    # The Windows probe first opens and closes one bare TCP socket. REALITY
+    # correctly records that socket as an invalid ClientHello; subtract it.
+    return {"ok":True,"tcp_logged":seen,"reality_rejected":max(0,invalid-1),
+            "vless_accepted":accepted,"limited":len(lines) >= 2000}
+
 def main():
     ap=argparse.ArgumentParser()
     sp=ap.add_subparsers(dest="cmd",required=True)
-    for cmd in ("status","get","add","remove","sync"):
+    for cmd in ("status","get","add","remove","sync","trace"):
         p=sp.add_parser(cmd)
         if cmd in ("get","remove"): p.add_argument("name")
         if cmd=="add": p.add_argument("name"); p.add_argument("uuid")
         if cmd=="sync": p.add_argument("payload_b64")
+        if cmd=="trace":
+            p.add_argument("address"); p.add_argument("since",type=int); p.add_argument("name")
     a=ap.parse_args()
     DATA.mkdir(parents=True,exist_ok=True)
     with LOCK.open("a+") as lf:
@@ -144,6 +179,8 @@ def main():
         if a.cmd=="get":
             if not NAME_RE.fullmatch(a.name) or a.name not in s["users"]: die("USER_NOT_FOUND",3)
             print(json.dumps(info(s,a.name),separators=(",",":"))); return
+        if a.cmd=="trace":
+            print(json.dumps(trace_client(a.address,a.since,a.name),separators=(",",":"))); return
         new=json.loads(json.dumps(s))
         if a.cmd=="add":
             if not NAME_RE.fullmatch(a.name) or not UUID_RE.fullmatch(a.uuid): die("INVALID_USER")
