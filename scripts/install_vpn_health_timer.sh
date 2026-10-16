@@ -42,3 +42,34 @@ systemctl daemon-reload
 systemctl enable --now private-line-vpn-health.timer >/dev/null
 systemctl is-enabled private-line-vpn-health.timer >/dev/null
 echo "PASS: Private Line real VPN health timer enabled (5m)"
+
+cat >/etc/systemd/system/private-line-https-fallback.service <<'EOF'
+[Unit]
+Description=Reconcile paid HTTPS VPN fallback profiles
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/private-line
+ExecStart=/bin/bash /opt/private-line/scripts/https_fallback_watch.sh
+TimeoutStartSec=90
+EOF
+
+cat >/etc/systemd/system/private-line-https-fallback.timer <<'EOF'
+[Unit]
+Description=Synchronize HTTPS fallback within one minute of paid key changes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=private-line-https-fallback.service
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now private-line-https-fallback.timer >/dev/null
+systemctl is-enabled private-line-https-fallback.timer >/dev/null
+echo "PASS: paid HTTPS VPN relay synchronization timer enabled (1m)"

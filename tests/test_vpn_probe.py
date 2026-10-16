@@ -66,6 +66,9 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn("--noproxy '0.0.0.0' --socks5-hostname", script)
         self.assertIn("Add-Step 'vpn_ipv4'", script)
         self.assertIn("Add-Step 'socks_connect'", script)
+        self.assertIn("Add-Step 'fallback_ipv4'", script)
+        self.assertIn("Add-Step 'fallback_site'", script)
+        self.assertIn("path='/vpn-tunnel'", script)
         self.assertIn("xray.stdout.log", script)
 
     def test_download_is_a_single_double_clickable_cmd_with_embedded_probe(self):
@@ -85,6 +88,15 @@ class ProbeReportTests(unittest.TestCase):
         summary = explain(steps, {"status": "observed", "listener": True,
                                   "key_on_node": True}, True)
         self.assertIn("8.8.8.8:853", summary)
+
+    def test_accepted_https_fallback_overrides_direct_reality_rejection(self):
+        steps = [{"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"},
+                 {"stage": "fallback_ipv4", "code": "OK"},
+                 {"stage": "fallback_site", "code": "OK"}]
+        summary = explain(steps, {"status": "observed", "key_on_node": True,
+                                  "reality_rejected": 6}, True)
+        self.assertIn("Резервный HTTPS-маршрут", summary)
+        self.assertIn("работает", summary)
 
     def test_ip_probe_distinguishes_site_failure_from_tunnel_failure(self):
         site_only = [{"stage": "vpn_ipv4", "code": "OK"},

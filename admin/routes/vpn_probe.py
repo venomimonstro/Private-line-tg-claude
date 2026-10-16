@@ -56,6 +56,7 @@ CMD_LAUNCHER = (
 )
 STAGES = frozenset(("profile", "control_tls", "direct_site", "node_tcp", "binary",
                     "xray_start", "socks", "socks_connect", "vpn_ipv4", "vpn_site", "vpn_dns_853",
+                    "fallback_ipv4", "fallback_site",
                     "xray_log", "client_runtime"))
 CODES = frozenset(("OK", "INVALID_KEY", "INVALID_SITE", "BAD_REALITY_PARAMS", "TLS_FAIL", "HTTP_FAIL",
                    "DNS_FAIL", "TCP_TIMEOUT", "TCP_REFUSED", "TCP_FAIL", "DOWNLOAD_FAIL",
@@ -93,6 +94,10 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
     failures = {row["stage"]: row["code"] for row in steps if row["code"] not in ("OK", "SKIPPED")}
     if not key_match:
         return "Ссылка не совпадает с активным ключом в базе. Сравните ключ Telegram с текущей подпиской."
+    if outcomes.get("fallback_ipv4") == "OK":
+        if outcomes.get("fallback_site") == "OK":
+            return "Резервный HTTPS-маршрут с этого компьютера работает. Импортируйте резервный ключ из /mykey или обновите подписку в VPN-приложении."
+        return "Резервный HTTPS-маршрут передаёт трафик до IP; выбранный сайт не отвечает. Проверьте доступность самого сайта."
     if node_trace.get("status") == "observed" and not node_trace.get("key_on_node", False):
         return "Ключ есть в базе, но отсутствует или отличается на VPN-ноде. Требуется синхронизация ноды."
     if node_trace.get("vless_accepted", 0) > 0 and "vpn_ipv4" in failures:

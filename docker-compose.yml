@@ -231,6 +231,25 @@ services:
       admin:
         condition: service_healthy
 
+  vpn-relay:
+    image: ghcr.io/xtls/xray-core:26.6.27@sha256:c98160906f3fe1d9d16e950c2a7997dc0c542c71816aa92c21e510412f90e1a2
+    command: run -c /etc/private-line/config.json
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ./data/vpn_relay
+        target: /etc/private-line
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      - privateline
+
 volumes:
   pgdata:
   prometheus_data:

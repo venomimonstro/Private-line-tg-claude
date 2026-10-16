@@ -152,6 +152,7 @@ docker compose exec -T admin python -m unittest \
     tests.test_standalone_xray \
     tests.test_vpn_admin_diagnostic \
     tests.test_vpn_probe \
+    tests.test_https_fallback \
     || fail "standalone Xray regression suite failed; nodes were not modified"
 echo "PASS: VLESS regression suite"
 
@@ -405,6 +406,14 @@ PY
     unset SSH_HOST SSH_PORT SSH_USER SSH_AUTH REMOTE_COMMAND SECRET_FILE
     echo "PASS: standalone direct Xray node $SERVER_ID ($NODE_HOST)"
 done <<< "$NODE_ROWS"
+
+echo "=== TRUSTED HTTPS VPN FALLBACK ==="
+bash scripts/converge_https_fallback.sh \
+    || fail "HTTPS fallback tunnel did not pass real end-to-end acceptance"
+if [[ "${SUB_ID:-}" =~ ^[1-9][0-9]*$ ]]; then
+    docker compose exec -T admin python -m app.verify_vpn_delivery --subscription "$SUB_ID" \
+        || fail "public subscription did not deliver the verified HTTPS fallback profile"
+fi
 
 echo "=== RECOVER PAID ORDERS AFTER VPN ACCEPTANCE ==="
 docker compose exec -T admin python - <<'PYRECOVER'

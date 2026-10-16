@@ -8,9 +8,16 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton
 
 from app.models.user import User
 from app.services.vpn_key import get_client_access_url
+from app.config import settings
+from app.vpn.https_fallback import published_fallback
 from bot.handlers.access import _get_active_subscription
 
 router = Router(name="mykey")
+
+
+def _spare_text(primary: str) -> str:
+    spare = published_fallback(primary, settings.CONTROL_PLANE_PUBLIC_URL)
+    return f"\n\n🔁 <b>Резервный HTTPS-ключ:</b>\n<code>{escape(spare)}</code>" if spare else ""
 
 
 def _keys_keyboard(keys: list) -> InlineKeyboardMarkup:
@@ -79,6 +86,7 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
         await message.answer(
             f"🔑 <b>Ваш ключ доступа{label_part}:</b>\n\n"
             f"<code>{escape(url)}</code>\n\n"
+            f"{_spare_text(url)}\n\n"
             "Импортируйте в V2RayNG, Hiddify, Streisand или V2Box.\n"
             "Outline не поддерживает VLESS Reality.",
             parse_mode="HTML",
@@ -97,6 +105,8 @@ async def cmd_mykey(message: Message, db_user: User) -> None:
                 continue
             label = escape(key.label or "VPN")
             lines.append(f"<b>{label}:</b>\n<code>{escape(url)}</code>")
+            if spare := _spare_text(url):
+                lines.append(spare)
         lines.append(
             "\n📱 Скопируйте нужный ключ и добавьте в приложение:\n"
             "• <b>V2RayNG</b> (Android)\n• <b>Streisand / FoXray</b> (iPhone)\n"
@@ -130,6 +140,7 @@ async def on_resend_key(callback: CallbackQuery, db_user: User) -> None:
     await callback.message.answer(  # type: ignore[union-attr]
         f"📨 <b>Ключ доступа{label_part} повторно:</b>\n\n"
         f"<code>{escape(url)}</code>\n\n"
+        f"{_spare_text(url)}\n\n"
         f"Импортируйте ключ в V2RayNG, Hiddify, Streisand или V2Box (не Outline).",
         parse_mode="HTML",
     )
@@ -154,7 +165,7 @@ async def on_download_vless_file(callback: CallbackQuery, db_user: User) -> None
         await callback.answer("Ошибка формата ключа. Обратитесь в поддержку.", show_alert=True)
         return
     await callback.message.answer_document(
-        BufferedInputFile((url + "\n").encode("utf-8"), filename="private-line-vless.txt"),
-        caption="📄 Ключ VLESS Reality. Импортируйте файл в совместимое приложение либо скопируйте ссылку из сообщения /mykey. Не используйте Outline.",
+        BufferedInputFile((url + "\n" + ((published_fallback(url, settings.CONTROL_PLANE_PUBLIC_URL) or "") + "\n")).encode("utf-8"), filename="private-line-vless.txt"),
+        caption="📄 Прямой и резервный HTTPS-ключи VLESS. Импортируйте в совместимое приложение либо скопируйте ссылки из /mykey.",
     )
     await callback.answer("Файл отправлен.")

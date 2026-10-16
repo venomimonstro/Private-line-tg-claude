@@ -17,6 +17,8 @@ from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.vpn.direct_xray import DirectXrayClient
 from app.services.vpn_link import canonical_client_link
+from app.config import settings
+from app.vpn.https_fallback import relay_uuid
 
 
 def make_url(uuid: str, meta: dict) -> str:
@@ -65,6 +67,10 @@ async def migrate(server_id: int) -> int:
                 return 2
             name=(key.outline_key_id or f"k{key.id}")[:64]
             users[name]=uid
+
+        # The control-plane HTTPS relay has its own credential. Subscribers
+        # authenticate at its inbound with their existing paid UUIDs.
+        users[f"relay_s{server.id}"] = relay_uuid(settings.SECRET_KEY, server.id)
 
         client=DirectXrayClient(server)
         try:

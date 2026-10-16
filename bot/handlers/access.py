@@ -19,6 +19,8 @@ from app.models.user import User
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import get_client_access_url, _server_protocol
+from app.config import settings
+from app.vpn.https_fallback import published_fallback
 from app.services.sub_token import make_subscription_url
 from bot.handlers.onboarding import CONNECTION_INSTRUCTIONS
 from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_keyboard, reissue_confirm_keyboard
@@ -26,6 +28,11 @@ from bot.keyboards.main_menu import connection_platforms_keyboard, my_access_key
 logger = logging.getLogger(__name__)
 
 router = Router(name="access")
+
+
+def _fallback_text(primary: str) -> str:
+    spare = published_fallback(primary, settings.CONTROL_PLANE_PUBLIC_URL)
+    return f"\n\n🔁 <b>Резерв через HTTPS:</b>\n<code>{escape(spare)}</code>" if spare else ""
 
 _MAX_DAILY_REISSUES = 5
 
@@ -166,6 +173,7 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
             f"{subscription_block}"
             f"🔑 <b>Ручной ключ{label_part}:</b>\n\n"
             f"<code>{escape(access_url)}</code>\n\n"
+            f"{_fallback_text(access_url)}\n\n"
             f"📱 Приложения:\n"
             f"• <b>Android:</b> Hiddify, V2RayNG\n"
             f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"
@@ -186,6 +194,8 @@ async def on_get_key(callback: CallbackQuery, db_user: User) -> None:
                 continue
             label = key.label or "VPN"
             lines.append(f"<b>{label}:</b>\n<code>{escape(url)}</code>")
+            if spare := _fallback_text(url):
+                lines.append(spare)
         lines.append(
             "\n📱 Скопируйте любой ключ и добавьте в приложение:\n"
             "• <b>Android:</b> Hiddify, V2RayNG\n"
@@ -227,6 +237,7 @@ async def on_get_key_by_id(callback: CallbackQuery, db_user: User) -> None:
     await callback.message.answer(  # type: ignore[union-attr]
         f"🔑 <b>Ваш персональный ключ доступа{label_part}:</b>\n\n"
         f"<code>{escape(access_url)}</code>\n\n"
+        f"{_fallback_text(access_url)}\n\n"
         f"Скопируйте ключ и добавьте в приложение:\n"
         f"• <b>Android:</b> Hiddify, V2RayNG\n"
         f"• <b>iPhone:</b> Streisand, FoXray, V2Box\n"

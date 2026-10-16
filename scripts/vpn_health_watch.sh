@@ -95,6 +95,11 @@ PY
     fi
 done <<< "$NODE_ROWS"
 
+if ! bash scripts/converge_https_fallback.sh; then
+    FAILED=$((FAILED + 1))
+    echo "FAIL: HTTPS fallback is unavailable; primary node remains unchanged" >&2
+fi
+
 if (( FAILED > 0 )); then
     docker compose exec -T admin python - <<PY >/dev/null 2>&1 || true
 import asyncio

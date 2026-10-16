@@ -29,6 +29,7 @@ from app.services.sub_token import make_sub_token
 from app.services.vpn_key import get_access_url
 from app.services.vpn_link import canonical_client_link
 from app.services.vpn_eligibility import is_vless_node
+from app.vpn.https_fallback import published_fallback
 
 
 async def verify(subscription_id: int) -> int:
@@ -88,6 +89,9 @@ async def verify(subscription_id: int) -> int:
                 ):
                     raise ValueError("Invalid VLESS profile")
                 expected_links.add(expected)
+                spare = published_fallback(expected, settings.CONTROL_PLANE_PUBLIC_URL)
+                if spare:
+                    expected_links.add(spare)
             except Exception as exc:
                 print(f"FAIL: client-ready link invalid ({type(exc).__name__})")
                 return 2

@@ -70,7 +70,8 @@ function Test-SocksConnect([int]$port) {
         $reply=Read-Bytes $stream 2
         if ($reply[0] -ne 5 -or $reply[1] -ne 0) { return 'SOCKS_CONNECT_FAIL' }
         # 1.1.1.1:443 is an IP target, so DNS and the requested site cannot
-        # affect this test. SOCKS success requires Xray to finish outbound dial.
+        # affect this test. A local SOCKS success alone does not prove that
+        # the remote VLESS/REALITY handshake completed.
         $request=[byte[]](5,1,0,1,1,1,1,1,1,187)
         $stream.Write($request,0,$request.Length)
         $reply=Read-Bytes $stream 4
@@ -218,12 +219,22 @@ try {
 
     $CurrentStage='xray_start'
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
-    $listener.Start(); $port=$listener.LocalEndpoint.Port; $listener.Stop()
+    $listener.Start(); $port=$listener.LocalEndpoint.Port
+    $fallbackListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+    $fallbackListener.Start(); $fallbackPort=$fallbackListener.LocalEndpoint.Port
+    $fallbackListener.Stop(); $listener.Stop()
+    $publicHost=([Uri]$Base).Host
     $config = @{
         log=@{loglevel='info'}
-        inbounds=@(@{tag='local-test';listen='127.0.0.1';port=$port;protocol='socks';settings=@{auth='noauth';udp=$false}})
-        outbounds=@(@{tag='vpn';protocol='vless';settings=@{vnext=@(@{address=$uri.Host;port=$uri.Port;users=@(@{id=$uuid.ToString();encryption='none';flow='xtls-rprx-vision'})})};streamSettings=@{network='tcp';security='reality';realitySettings=@{serverName=$params.sni;fingerprint='chrome';password=$params.pbk;shortId=$params.sid;spiderX=''}}})
-        routing=@{domainStrategy='AsIs';rules=@()}
+        inbounds=@(
+            @{tag='local-test';listen='127.0.0.1';port=$port;protocol='socks';settings=@{auth='noauth';udp=$false}},
+            @{tag='local-fallback';listen='127.0.0.1';port=$fallbackPort;protocol='socks';settings=@{auth='noauth';udp=$false}}
+        )
+        outbounds=@(
+            @{tag='vpn';protocol='vless';settings=@{vnext=@(@{address=$uri.Host;port=$uri.Port;users=@(@{id=$uuid.ToString();encryption='none';flow='xtls-rprx-vision'})})};streamSettings=@{network='tcp';security='reality';realitySettings=@{serverName=$params.sni;fingerprint='chrome';password=$params.pbk;shortId=$params.sid;spiderX=''}}},
+            @{tag='https-fallback';protocol='vless';settings=@{vnext=@(@{address=$publicHost;port=443;users=@(@{id=$uuid.ToString();encryption='none'})})};streamSettings=@{network='ws';security='tls';tlsSettings=@{serverName=$publicHost};wsSettings=@{path='/vpn-tunnel';headers=@{Host=$publicHost}}}}
+        )
+        routing=@{domainStrategy='AsIs';rules=@(@{type='field';inboundTag=@('local-fallback');outboundTag='https-fallback'})}
     }
     $configPath=Join-Path $Workspace 'config.json'
     [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
@@ -279,6 +290,13 @@ try {
     $CurrentStage='vpn_dns_853'; $watch=Clock
     $dnsResult=Test-Dns853 $port
     Add-Step 'vpn_dns_853' $dnsResult $watch.ElapsedMilliseconds
+
+    $CurrentStage='fallback_ipv4'; $watch=Clock
+    $fallbackIp=Test-Site 'https://1.1.1.1/cdn-cgi/trace' $fallbackPort $true
+    Add-Step 'fallback_ipv4' $fallbackIp.code $watch.ElapsedMilliseconds $fallbackIp.status
+    $CurrentStage='fallback_site'; $watch=Clock
+    $fallbackSite=Test-Site $site $fallbackPort $true
+    Add-Step 'fallback_site' $fallbackSite.code $watch.ElapsedMilliseconds $fallbackSite.status
 } catch {
     if ($_.Exception.Message -ne 'STOP_PROBE') {
         Add-Step 'client_runtime' 'CLIENT_ERROR' 0
