@@ -7,10 +7,11 @@ import json
 import asyncio
 import re
 import secrets
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import require_super_admin
 from app.config import settings
-from app.database import get_async_session
+from app.database import async_session_maker, get_async_session
 from app.enums import SubscriptionStatus, VpnKeyStatus
 from app.models.app_setting import AppSetting
 from app.models.subscription import Subscription
@@ -33,6 +34,7 @@ from app.vpn.direct_xray import DirectXrayClient
 from app.vpn.probe_package import verified_xray_archive
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="admin/templates")
 PREFIX = "vpnprobe_"
 RESULT_PREFIX = "vpnprobe_result_"
@@ -51,12 +53,13 @@ CMD_LAUNCHER = (
     ':__PROBE_POWERSHELL__\r\n'
 )
 STAGES = frozenset(("profile", "control_tls", "direct_site", "node_tcp", "binary",
-                    "xray_start", "socks", "vpn_site", "vpn_dns_853", "xray_log"))
+                    "xray_start", "socks", "vpn_site", "vpn_dns_853", "xray_log", "client_runtime"))
 CODES = frozenset(("OK", "INVALID_KEY", "INVALID_SITE", "BAD_REALITY_PARAMS", "TLS_FAIL", "HTTP_FAIL",
                    "DNS_FAIL", "TCP_TIMEOUT", "TCP_REFUSED", "TCP_FAIL", "DOWNLOAD_FAIL",
                    "DIGEST_FAIL", "BINARY_FAIL", "XRAY_EXIT", "SOCKS_TIMEOUT", "SOCKS_FAIL",
                    "HTTPS_TIMEOUT", "HTTPS_TLS_FAIL", "HTTPS_FAIL", "DNS853_TIMEOUT",
-                   "DNS853_FAIL", "REALITY_FAIL", "AUTH_FAIL", "DIAL_FAIL", "NO_ERROR_LOG", "SKIPPED"))
+                   "DNS853_FAIL", "REALITY_FAIL", "AUTH_FAIL", "DIAL_FAIL", "NO_ERROR_LOG", "SKIPPED",
+                   "CLIENT_ERROR"))
 
 
 class TraceStep(BaseModel):
@@ -95,6 +98,8 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
         return "Соединение с нодой по TCP не прошло. Проверьте службу, порт и сетевой путь."
     if "binary" in failures:
         return "Не удалось получить или проверить временный Xray. VPN-тест ещё не выполнялся."
+    if "client_runtime" in failures:
+        return "Проверка прервалась на компьютере. Посмотрите последний успешный этап в отчёте и локальную копию результата."
     if "xray_start" in failures or "socks" in failures:
         return "Временный Xray не запустился или не открыл локальный SOCKS. Проверьте журнал защиты Windows."
     if "vpn_site" not in failures and "vpn_dns_853" in failures:
@@ -127,9 +132,23 @@ async def probe_page(request: Request, db: AsyncSession = Depends(get_async_sess
                             "at": row.updated_at, "data": json.loads(row.value or "{}")})
         except (ValueError, TypeError):
             continue
+    issued_rows = (await db.execute(select(AppSetting).where(
+        AppSetting.key.like(PREFIX + "%"), ~AppSetting.key.like(RESULT_PREFIX + "%"))
+        .order_by(AppSetting.updated_at.desc()).limit(30))).scalars().all()
+    pending = []
+    for row in issued_rows:
+        test_id = row.key.removeprefix(PREFIX)
+        if not re.fullmatch(r"[a-f0-9]{24}", test_id):
+            continue
+        try:
+            metadata = json.loads(row.value or "{}")
+            pending.append({"id": test_id, "at": row.updated_at, "site": metadata.get("site", ""),
+                            "expired": datetime.utcnow() >= datetime.fromisoformat(metadata["expires"])})
+        except (ValueError, TypeError, KeyError):
+            continue
     return templates.TemplateResponse("vpn_probe.html", {
         "request": request, "page_title": "Проверка VPN с компьютера", "csrf": _csrf(request),
-        "results": results,
+        "results": results, "pending": pending,
     }, headers={"Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer"})
 
 
@@ -166,8 +185,43 @@ async def download_probe(request: Request, site: str = Form("https://www.google.
                              "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer"})
 
 
+async def _enrich_node_trace(test_id: str, key_id: int, server_id: int, profile_sha256: str) -> None:
+    """Best-effort SSH details; the client report has already been committed."""
+    trace = {"status": "ssh_unavailable"}
+    client = None
+    try:
+        async with async_session_maker() as db:
+            server = await db.get(VpnServer, server_id)
+            key = await db.get(VpnKey, key_id)
+            if not server or not key:
+                return
+            client = DirectXrayClient(server)
+            live = await asyncio.wait_for(client.status(), timeout=12)
+            trace = {"status": "observed", "service_active": bool(live.get("service_active")),
+                     "listener": bool(live.get("listener"))}
+            remote = await asyncio.wait_for(client.get_key(key.outline_key_id), timeout=12)
+            remote_uri = canonical_client_link(remote.access_url).split("#", 1)[0]
+            remote_hash = hashlib.sha256(remote_uri.encode()).hexdigest()
+            trace["key_on_node"] = hmac.compare_digest(remote_hash, profile_sha256)
+    except Exception as exc:
+        logger.warning("VPN probe node inspection unavailable test_id=%s error_type=%s",
+                       test_id, type(exc).__name__)
+    finally:
+        if client:
+            await client.aclose()
+    async with async_session_maker() as db:
+        row = await db.get(AppSetting, RESULT_PREFIX + test_id)
+        if row:
+            result = json.loads(row.value or "{}")
+            result["node_trace"] = trace
+            result["analysis"] = explain(result["steps"], trace, result["key_match"])
+            row.value = json.dumps(result, separators=(",", ":"))
+            row.updated_at = datetime.utcnow()
+            await db.commit()
+
+
 @router.post("/api/vpn-probe/report")
-async def receive_probe(request: Request, report: ProbeReport,
+async def receive_probe(request: Request, report: ProbeReport, background_tasks: BackgroundTasks,
                         db: AsyncSession = Depends(get_async_session)):
     supplied = request.headers.get("authorization", "")
     if not supplied.startswith("Bearer ") or len(supplied) > 100:
@@ -204,26 +258,7 @@ async def receive_probe(request: Request, report: ProbeReport,
                 matches.append((key, server))
         except (ValueError, TypeError):
             continue
-    node_trace = {"status": "no_matching_key"}
-    if len(matches) == 1:
-        key, server = matches[0]
-        if _server_protocol(server) == "direct_xray":
-            node_trace = {"status": "ssh_unavailable"}
-            client = None
-            try:
-                client = DirectXrayClient(server)
-                live = await asyncio.wait_for(client.status(), timeout=12)
-                node_trace = {"status": "observed", "service_active": bool(live.get("service_active")),
-                              "listener": bool(live.get("listener"))}
-                remote = await asyncio.wait_for(client.get_key(key.outline_key_id), timeout=12)
-                remote_uri = canonical_client_link(remote.access_url).split("#", 1)[0]
-                remote_hash = hashlib.sha256(remote_uri.encode()).hexdigest()
-                node_trace["key_on_node"] = hmac.compare_digest(remote_hash, report.profile_sha256)
-            except Exception:
-                pass
-            finally:
-                if client:
-                    await client.aclose()
+    node_trace = {"status": "pending" if len(matches) == 1 else "no_matching_key"}
     result = {"site": record["site"], "windows": report.windows, "steps": steps,
               "key_id": matches[0][0].id if len(matches) == 1 else None,
               "server_id": matches[0][1].id if len(matches) == 1 else None,
@@ -235,6 +270,11 @@ async def receive_probe(request: Request, report: ProbeReport,
                       description="Structured Windows to VPN node probe"))
     await db.delete(row)
     await db.commit()
+    if len(matches) == 1 and _server_protocol(matches[0][1]) == "direct_xray":
+        background_tasks.add_task(_enrich_node_trace, report.test_id, matches[0][0].id,
+                                  matches[0][1].id, report.profile_sha256)
+    logger.info("VPN client report stored test_id=%s steps=%d matched=%s", report.test_id,
+                len(steps), len(matches) == 1)
     return {"ok": True, "test_id": report.test_id}
 
 
