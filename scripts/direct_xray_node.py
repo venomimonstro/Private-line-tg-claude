@@ -146,15 +146,32 @@ def trace_client(address, since, name):
     source=re.compile(r"(?<![0-9.])"+re.escape(str(ip))+r":\d{1,5}\b")
     user=re.compile(r"\bemail:\s*"+re.escape(name)+r"(?:\s|$)")
     seen=invalid=accepted=0
+    reasons={"hello_incomplete":0,"authentication_failed":0,
+             "target_handshake_failed":0,"other":0}
     lines=result.stdout.splitlines()
     for line in lines:
         if not source.search(line): continue
         seen+=1
-        if "REALITY: processed invalid connection" in line: invalid+=1
+        if "REALITY: processed invalid connection" in line:
+            invalid+=1
+            if "failed to read client hello" in line:
+                reasons["hello_incomplete"]+=1
+            elif "authentication failed or validation criteria not met" in line:
+                reasons["authentication_failed"]+=1
+            elif "target sent incorrect server hello or handshake incomplete" in line:
+                reasons["target_handshake_failed"]+=1
+            else:
+                reasons["other"]+=1
         if " accepted " in line and user.search(line): accepted+=1
     # The Windows probe first opens and closes one bare TCP socket. REALITY
     # correctly records that socket as an invalid ClientHello; subtract it.
-    return {"ok":True,"tcp_logged":seen,"reality_rejected":max(0,invalid-1),
+    # The intentional bare TCP connect contributes one incomplete ClientHello.
+    # Do not remove an authentication failure merely because a TCP probe ran.
+    if reasons["hello_incomplete"]:
+        reasons["hello_incomplete"]-=1
+        invalid-=1
+    return {"ok":True,"tcp_logged":seen,"reality_rejected":invalid,
+            "rejection_reasons":reasons,
             "vless_accepted":accepted,"limited":len(lines) >= 2000}
 
 def main():
