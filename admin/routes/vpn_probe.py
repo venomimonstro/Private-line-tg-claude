@@ -96,9 +96,9 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
     if node_trace.get("status") == "observed" and not node_trace.get("key_on_node", False):
         return "Ключ есть в базе, но отсутствует или отличается на VPN-ноде. Требуется синхронизация ноды."
     if node_trace.get("vless_accepted", 0) > 0 and "vpn_ipv4" in failures:
-        return "Нода приняла этот VLESS-ключ с компьютера, но HTTPS через туннель не ответил. Проверяйте выход ноды до назначения и TLS/маршрутизацию, а не сам ключ."
+        return "В интервале теста нода приняла этот VLESS-ключ с IP отправки отчёта, но клиентский HTTPS через туннель не ответил. Проверьте выход ноды и TLS/маршрутизацию; при общем внешнем IP это могло быть другое устройство."
     if node_trace.get("reality_rejected", 0) > 0 and "vpn_ipv4" in failures:
-        return "Нода получила соединение из сети компьютера и отклонила Reality handshake. Проверьте совместимость клиента, профиль и сетевую фильтрацию; TCP/443 сам по себе не подтверждает VPN."
+        return "В интервале теста нода зафиксировала отклонённый Reality handshake с IP отправки отчёта. Проверьте совместимость клиента, профиль и сетевую фильтрацию; при общем внешнем IP нужен дополнительный разбор."
     if "node_tcp" in failures and node_trace.get("listener"):
         return "Нода слушает порт, но соединение с компьютера не прошло: исследуйте маршрут или блокировку провайдера."
     if "node_tcp" in failures:
