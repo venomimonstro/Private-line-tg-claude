@@ -53,13 +53,15 @@ CMD_LAUNCHER = (
     ':__PROBE_POWERSHELL__\r\n'
 )
 STAGES = frozenset(("profile", "control_tls", "direct_site", "node_tcp", "binary",
-                    "xray_start", "socks", "vpn_ipv4", "vpn_site", "vpn_dns_853", "xray_log", "client_runtime"))
+                    "xray_start", "socks", "socks_connect", "vpn_ipv4", "vpn_site", "vpn_dns_853",
+                    "xray_log", "client_runtime"))
 CODES = frozenset(("OK", "INVALID_KEY", "INVALID_SITE", "BAD_REALITY_PARAMS", "TLS_FAIL", "HTTP_FAIL",
                    "DNS_FAIL", "TCP_TIMEOUT", "TCP_REFUSED", "TCP_FAIL", "DOWNLOAD_FAIL",
                    "DIGEST_FAIL", "BINARY_FAIL", "XRAY_EXIT", "SOCKS_TIMEOUT", "SOCKS_FAIL",
                    "HTTPS_TIMEOUT", "HTTPS_TLS_FAIL", "HTTPS_FAIL", "DNS853_TIMEOUT",
                    "DNS853_FAIL", "REALITY_FAIL", "AUTH_FAIL", "DIAL_FAIL", "NO_ERROR_LOG", "SKIPPED",
-                   "CLIENT_ERROR"))
+                   "CLIENT_ERROR", "SOCKS_CONNECT_FAIL", "SOCKS_CONNECT_TIMEOUT", "NODE_RESET",
+                   "HANDSHAKE_TIMEOUT"))
 
 
 class TraceStep(BaseModel):
@@ -101,6 +103,8 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
         return "Проверка прервалась на компьютере. Посмотрите последний успешный этап в отчёте и локальную копию результата."
     if "xray_start" in failures or "socks" in failures:
         return "Временный Xray не запустился или не открыл локальный SOCKS. Проверьте журнал защиты Windows."
+    if "socks_connect" in failures:
+        return "Локальный SOCKS открылся, но не смог установить соединение с 1.1.1.1:443 через VLESS. Проверьте рукопожатие Reality и журнал ноды; ключ и TCP/443 сами по себе туннель не подтверждают."
     if outcomes.get("vpn_ipv4") == "OK" and "vpn_site" in failures:
         return "VLESS передаёт HTTPS до 1.1.1.1, но выбранный сайт недоступен через ноду. Проверьте DNS и доступность этого сайта с ноды."
     if "vpn_site" not in failures and "vpn_dns_853" in failures:
