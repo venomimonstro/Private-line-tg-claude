@@ -293,6 +293,15 @@ start_existing_or_create nginx
 # Reconcile bind mounts as well as port mappings: an existing container does
 # not acquire the ACME webroot mount merely because Compose was updated.
 docker compose up -d --no-deps nginx || fail "nginx configuration convergence failed"
+HOST_NGINX_HASH="$(sha256sum nginx/nginx.conf | awk '{print $1}')"
+LIVE_NGINX_HASH="$(docker compose exec -T nginx sha256sum /etc/nginx/nginx.conf 2>/dev/null | awk '{print $1}' || true)"
+if [[ "$LIVE_NGINX_HASH" != "$HOST_NGINX_HASH" ]]; then
+  # Git replaces the host file's inode. Docker keeps the old bind-mounted inode
+  # even after nginx reload, so the running config can lack newly added routes.
+  echo "Recreating Nginx to mount current nginx.conf..."
+  docker compose up -d --no-deps --force-recreate nginx \
+    || fail "could not mount current Nginx configuration"
+fi
 docker compose exec -T nginx nginx -t >/dev/null 2>&1 || fail "nginx config is invalid"
 if [[ -z "$(docker compose port nginx 443 2>/dev/null || true)" ]]; then
   # Docker cannot add a published port to an existing container. The old
