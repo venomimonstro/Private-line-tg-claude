@@ -10,6 +10,7 @@ $Steps = New-Object System.Collections.ArrayList
 $Fingerprint = '0000000000000000000000000000000000000000000000000000000000000000'
 $Workspace = Join-Path $env:TEMP ('PrivateLine-Probe-' + [Guid]::NewGuid().ToString('N'))
 $Process = $null
+$CurrentStage = 'profile'
 
 function Add-Step([string]$name, [string]$code, [int]$ms, [int]$http = 0) {
     $entry = @{stage=$name; code=$code; elapsed_ms=[Math]::Min(120000,[Math]::Max(0,$ms))}
@@ -91,6 +92,8 @@ function Test-Dns853([int]$port) {
 
 try {
     Write-Host 'Private Line: test from this Windows PC, without an installed VPN.'
+    Write-Host ('Test ID: '+$TestId)
+    Write-Host 'Keep this window open until report delivery is confirmed.'
     Write-Host 'The key stays on this PC. Only stage codes and a SHA-256 fingerprint are sent.'
     $site = $DefaultSite
     Write-Host ('Website: '+$site)
@@ -131,25 +134,26 @@ try {
     Add-Step 'profile' 'OK' $watch.ElapsedMilliseconds
     $key = $null; $raw = $null
 
-    $watch = Clock
+    $CurrentStage='control_tls'; $watch = Clock
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri ($Base + '/admin/login') -TimeoutSec 8
         Add-Step 'control_tls' 'OK' $watch.ElapsedMilliseconds ([int]$response.StatusCode)
     } catch { Add-Step 'control_tls' 'TLS_FAIL' $watch.ElapsedMilliseconds }
 
+    $CurrentStage='direct_site'
     if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
         Add-Step 'direct_site' 'HTTPS_FAIL' 0
     } else {
         $watch=Clock; $direct=Test-Site $site 0 $false
         Add-Step 'direct_site' $direct.code $watch.ElapsedMilliseconds $direct.status
     }
-    $watch=Clock; $tcpStatus=Test-Tcp $uri.Host $uri.Port 7000
+    $CurrentStage='node_tcp'; $watch=Clock; $tcpStatus=Test-Tcp $uri.Host $uri.Port 7000
     Add-Step 'node_tcp' $tcpStatus $watch.ElapsedMilliseconds
     if ($tcpStatus -ne 'OK') { throw 'STOP_PROBE' }
 
     New-Item -ItemType Directory -Path $Workspace -Force | Out-Null
     $binary = Join-Path $Workspace 'xray.exe'
-    $watch = Clock
+    $CurrentStage='binary'; $watch = Clock
     try {
         $release = 'https://github.com/XTLS/Xray-core/releases/download/v26.6.27/'
         $digestPath=Join-Path $Workspace 'digest.txt'; $zipPath=Join-Path $Workspace 'xray.zip'
@@ -181,6 +185,7 @@ try {
         throw 'STOP_PROBE'
     }
 
+    $CurrentStage='xray_start'
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
     $listener.Start(); $port=$listener.LocalEndpoint.Port; $listener.Stop()
     $config = @{
@@ -202,7 +207,7 @@ try {
     if (-not $ready) { Add-Step 'xray_start' 'XRAY_EXIT' $watch.ElapsedMilliseconds; throw 'STOP_PROBE' }
     Add-Step 'xray_start' 'OK' $watch.ElapsedMilliseconds
 
-    $watch=Clock
+    $CurrentStage='socks'; $watch=Clock
     $local=[Net.Sockets.TcpClient]::new()
     try {
         $local.Connect('127.0.0.1',$port)
@@ -216,7 +221,7 @@ try {
         throw 'STOP_PROBE'
     } finally { $local.Close() }
 
-    $watch=Clock
+    $CurrentStage='vpn_site'; $watch=Clock
     $siteResult=Test-Site $site $port $true
     Add-Step 'vpn_site' $siteResult.code $watch.ElapsedMilliseconds $siteResult.status
     if ($siteResult.code -ne 'OK') {
@@ -229,11 +234,14 @@ try {
         } catch { }
         Add-Step 'xray_log' $logCode 0
     }
-    $watch=Clock
+    $CurrentStage='vpn_dns_853'; $watch=Clock
     $dnsResult=Test-Dns853 $port
     Add-Step 'vpn_dns_853' $dnsResult $watch.ElapsedMilliseconds
 } catch {
-    if ($_.Exception.Message -ne 'STOP_PROBE' -and $Steps.Count -eq 0) { Add-Step 'profile' 'INVALID_KEY' 0 }
+    if ($_.Exception.Message -ne 'STOP_PROBE') {
+        Add-Step 'client_runtime' 'CLIENT_ERROR' 0
+        Write-Host ('Unexpected interruption at stage: '+$CurrentStage)
+    }
 } finally {
     if ($Process -and -not $Process.HasExited) {
         Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
@@ -245,13 +253,30 @@ try {
     }
     $report=@{test_id=$TestId; profile_sha256=$Fingerprint; windows=[Environment]::OSVersion.Version.ToString(); steps=@($Steps.ToArray())}
     $payload=ConvertTo-Json -InputObject $report -Depth 8 -Compress
+    $reportDir=Join-Path $env:USERPROFILE 'Downloads'
+    if (-not (Test-Path $reportDir)) { $reportDir=$env:TEMP }
+    $localReport=Join-Path $reportDir ('PrivateLine-Probe-'+$TestId+'.json')
     try {
-        Invoke-RestMethod -Uri ($Base+'/api/vpn-probe/report') -Method Post -Headers @{Authorization=('Bearer '+$Token)} -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 55 | Out-Null
-        Write-Host ('Report delivered. Test ID: '+$TestId)
+        [IO.File]::WriteAllText($localReport,$payload,[Text.UTF8Encoding]::new($false))
+        Write-Host ('Local report: '+$localReport)
     } catch {
-        $localReport=Join-Path ([Environment]::GetFolderPath('Desktop')) ('PrivateLine-Probe-'+$TestId+'.json')
-        [IO.File]::WriteAllText($localReport,$payload,[Text.Encoding]::UTF8)
-        Write-Host ('Report upload failed. Safe local report: '+$localReport)
+        $localReport=Join-Path $env:TEMP ('PrivateLine-Probe-'+$TestId+'.json')
+        [IO.File]::WriteAllText($localReport,$payload,[Text.UTF8Encoding]::new($false))
+        Write-Host ('Local report: '+$localReport)
+    }
+    try {
+        $reply=Invoke-RestMethod -Uri ($Base+'/api/vpn-probe/report') -Method Post -Headers @{Authorization=('Bearer '+$Token)} -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 55
+        if ($reply.ok -ne $true -or $reply.test_id -ne $TestId) { throw 'UNCONFIRMED_REPORT' }
+        Write-Host ('REPORT STORED ON SERVER. Test ID: '+$TestId)
+    } catch {
+        $uploadCode='NETWORK_OR_TLS_FAILURE'
+        try {
+            if ($_.Exception.Response) {
+                $uploadCode='HTTP_'+[int]$_.Exception.Response.StatusCode
+            }
+        } catch { }
+        Write-Host ('REPORT NOT RECEIVED BY SERVER: '+$uploadCode)
+        Write-Host ('Send the local report file: '+$localReport)
     }
     $Token=$null
     Write-Host 'Press Enter to close.'
