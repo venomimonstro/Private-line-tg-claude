@@ -235,6 +235,7 @@ async def _enrich_node_trace(test_id: str, key_id: int, server_id: int,
                     trace["reality_rejected"] = observed["reality_rejected"]
                     trace["vless_accepted"] = observed["vless_accepted"]
                     trace["limited"] = bool(observed.get("limited"))
+                    trace["rejection_reasons"] = observed.get("rejection_reasons", {})
                 except Exception as exc:
                     logger.warning("VPN probe transport trace unavailable test_id=%s error_type=%s",
                                    test_id, type(exc).__name__)
