@@ -4,11 +4,13 @@ import hashlib
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 from pydantic import ValidationError
 
 from admin.routes.vpn_probe import CMD_LAUNCHER, ProbeReport, explain, safe_steps
 from app.vpn import probe_package
 from app.services.vpn_link import canonical_client_link
+from scripts import direct_xray_node as node
 
 
 class ProbeReportTests(unittest.TestCase):
@@ -106,6 +108,39 @@ class ProbeReportTests(unittest.TestCase):
         summary = explain(steps, {"status": "observed", "listener": True,
                                   "key_on_node": False}, True)
         self.assertIn("отличается на VPN-ноде", summary)
+
+    def test_node_trace_separates_rejected_reality_from_accepted_key(self):
+        lines = ("2026/10/16 [Info] transport/internet/tcp: REALITY: processed invalid connection "
+                 "from 8.8.4.4:50210: failed to read client hello\n"
+                 "2026/10/16 [Info] transport/internet/tcp: REALITY: processed invalid connection "
+                 "from 8.8.4.4:50213: authentication failed\n"
+                 "2026/10/16 from 8.8.4.4:50211 accepted tcp:1.1.1.1:443 "
+                 "[vless-reality >> direct] email: u1s3\n"
+                 "2026/10/16 from 8.8.4.4:50212 accepted tcp:1.1.1.1:443 "
+                 "[vless-reality >> direct] email: other\n")
+        with patch.object(node, "run", return_value=SimpleNamespace(returncode=0, stdout=lines)), \
+             patch.object(node.time, "time", return_value=1_800_000_000):
+            trace = node.trace_client("8.8.4.4", 1_799_999_900, "u1s3")
+        self.assertEqual(trace["reality_rejected"], 1)
+        self.assertEqual(trace["vless_accepted"], 1)
+        diagnosis = explain([{"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"}],
+                            {"status": "observed", "key_on_node": True, **trace}, True)
+        self.assertIn("Нода приняла", diagnosis)
+
+    def test_unchanged_node_state_does_not_restart_active_service(self):
+        state = {"host": "185.236.25.152", "port": 443, "sni": "dl.google.com",
+                 "target": "dl.google.com:443", "private_key": "A" * 43,
+                 "public_key": "B" * 43, "short_id": "12345678",
+                 "users": {"u1s3": "11111111-1111-4111-8111-111111111111"}}
+        config = __import__("json").dumps(node.render(state), indent=2) + "\n"
+        fake_config = SimpleNamespace(is_file=lambda: True, read_text=lambda: config)
+        with patch.object(node, "CONFIG", fake_config), \
+             patch.object(node, "run", return_value=SimpleNamespace(returncode=0)) as run, \
+             patch.object(node, "port_ok", return_value=True), \
+             patch.object(node, "atomic", side_effect=AssertionError("unexpected write")):
+            node.apply_state(state, dict(state))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][:2], ["systemctl", "is-active"])
 
     def test_cached_windows_binary_is_never_served_after_digest_mismatch(self):
         with tempfile.TemporaryDirectory() as folder:
