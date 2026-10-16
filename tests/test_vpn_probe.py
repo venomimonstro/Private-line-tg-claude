@@ -30,6 +30,13 @@ class ProbeReportTests(unittest.TestCase):
                              "code": "DNS853_TIMEOUT", "elapsed_ms": 7000}])
         self.assertEqual(safe_steps(report)[0]["code"], "DNS853_TIMEOUT")
 
+    def test_unexpected_client_failure_can_be_uploaded_without_raw_error(self):
+        report = ProbeReport(test_id="a" * 24, profile_sha256="b" * 64,
+                             windows="10.0.26100", steps=[{"stage": "client_runtime",
+                             "code": "CLIENT_ERROR", "elapsed_ms": 0}])
+        self.assertEqual(safe_steps(report)[0]["code"], "CLIENT_ERROR")
+        self.assertIn("прервалась", explain(safe_steps(report), {"status": "pending"}, True))
+
     def test_raw_log_and_vless_credential_rejected(self):
         base = dict(test_id="a" * 24, profile_sha256="b" * 64, windows="10.0")
         with self.assertRaises(ValidationError):
@@ -52,6 +59,8 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn("Remove-Item $Workspace -Recurse", script)
         self.assertNotIn("-OutFile $zipPath -PassThru", script)
         self.assertNotIn("Set-ItemProperty -Path 'HKCU", script)
+        self.assertIn('REPORT STORED ON SERVER', script)
+        self.assertIn('Local report:', script)
 
     def test_download_is_a_single_double_clickable_cmd_with_embedded_probe(self):
         self.assertTrue(CMD_LAUNCHER.startswith('@echo off\r\n'))
