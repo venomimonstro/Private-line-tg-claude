@@ -132,7 +132,16 @@ PY
 )"
 if [[ -n "$PUBLIC_IP" ]] && ! curl -q --noproxy '*' -fsS --max-time 8 \
     --resolve "$PUBLIC_IP:443:127.0.0.1" "$PUBLIC_URL/admin/login" >/dev/null 2>&1; then
-    fail "public admin certificate is not trusted; run bash scripts/admin_public_tls.sh install"
+    if [[ -t 0 && -t 1 ]]; then
+        echo "Public admin HTTPS is untrusted. Requesting an IP certificate before VPN rollout..." >&2
+        bash scripts/admin_public_tls.sh install \
+            || fail "trusted admin certificate installation failed; repair port 80 or ACME and rerun update.sh"
+        curl -q --noproxy '*' -fsS --max-time 8 \
+            --resolve "$PUBLIC_IP:443:127.0.0.1" "$PUBLIC_URL/admin/login" >/dev/null \
+            || fail "admin HTTPS is still untrusted after certificate installation"
+    else
+        fail "public admin certificate is not trusted; run bash scripts/admin_public_tls.sh install interactively"
+    fi
 fi
 
 echo "=== VPN REGRESSION GATE ==="
