@@ -32,12 +32,32 @@ KEY="data/letsencrypt/live/$IP/privkey.pem"
 WEBROOT="$PWD/data/acme-webroot"
 CONFIG="$PWD/data/letsencrypt"
 
+challenge_response() {
+  local attempt answer
+  for attempt in 1 2 3 4 5; do
+    answer="$(curl -q --noproxy '*' --resolve "$IP:80:127.0.0.1" \
+        --max-time 3 -fsS "$challenge_url" 2>/dev/null || true)"
+    if [[ "$answer" == "$probe" ]]; then printf '%s' "$answer"; return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 if [[ "$MODE" == install ]]; then
   docker compose up -d --no-deps nginx
   probe="admin-$(openssl rand -hex 12)"
   printf '%s' "$probe" >"$WEBROOT/.well-known/acme-challenge/$probe"
-  response="$(curl -q --noproxy '*' --resolve "$IP:80:127.0.0.1" \
-      --max-time 5 -fsS "http://$IP/.well-known/acme-challenge/$probe" || true)"
+  challenge_url="http://$IP/.well-known/acme-challenge/$probe"
+  response="$(challenge_response || true)"
+  if [[ "$response" != "$probe" ]]; then
+    # A git pull can replace nginx.conf's inode while a long-running Docker
+    # container still has the previous file mounted. `up` and `nginx -s reload`
+    # cannot see the new ACME location in that case.
+    echo "Refreshing Nginx config and ACME webroot mount after failed challenge check..."
+    docker compose up -d --no-deps --force-recreate nginx
+    docker compose exec -T nginx nginx -t
+    response="$(challenge_response || true)"
+  fi
   rm -f "$WEBROOT/.well-known/acme-challenge/$probe"
   [[ "$response" == "$probe" ]] || {
     echo "HTTP-01 challenge is unreachable on port 80; existing admin unchanged" >&2; exit 2;
