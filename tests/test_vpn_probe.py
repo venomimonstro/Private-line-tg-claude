@@ -122,10 +122,21 @@ class ProbeReportTests(unittest.TestCase):
              patch.object(node.time, "time", return_value=1_800_000_000):
             trace = node.trace_client("8.8.4.4", 1_799_999_900, "u1s3")
         self.assertEqual(trace["reality_rejected"], 1)
+        self.assertEqual(trace["rejection_reasons"]["hello_incomplete"], 0)
+        self.assertEqual(trace["rejection_reasons"]["authentication_failed"], 1)
         self.assertEqual(trace["vless_accepted"], 1)
         diagnosis = explain([{"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"}],
                             {"status": "observed", "key_on_node": True, **trace}, True)
         self.assertIn("нода приняла", diagnosis)
+
+    def test_reality_trace_does_not_hide_auth_failure_without_bare_tcp(self):
+        lines = ("2026/10/16 REALITY: processed invalid connection from "
+                 "8.8.4.4:50111: authentication failed or validation criteria not met\n")
+        with patch.object(node, "run", return_value=SimpleNamespace(returncode=0, stdout=lines)), \
+             patch.object(node.time, "time", return_value=1_800_000_000):
+            trace = node.trace_client("8.8.4.4", 1_799_999_900, "u1s3")
+        self.assertEqual(trace["reality_rejected"], 1)
+        self.assertEqual(trace["rejection_reasons"]["authentication_failed"], 1)
 
     def test_unchanged_node_state_does_not_restart_active_service(self):
         state = {"host": "185.236.25.152", "port": 443, "sni": "dl.google.com",
