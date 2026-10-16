@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
@@ -36,6 +36,20 @@ router = APIRouter()
 templates = Jinja2Templates(directory="admin/templates")
 PREFIX = "vpnprobe_"
 RESULT_PREFIX = "vpnprobe_result_"
+CMD_LAUNCHER = (
+    '@echo off\r\n'
+    'setlocal\r\n'
+    'set "PL_PROBE_FILE=%~f0"\r\n'
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+    '"$text=[IO.File]::ReadAllText($env:PL_PROBE_FILE,[Text.Encoding]::UTF8);'
+    "$marker=':__PROBE_POWERSHELL__';"
+    '$i=$text.LastIndexOf($marker);'
+    'if($i -lt 0){throw \'Probe payload missing\'};'
+    '$code=$text.Substring($i+$marker.Length);Invoke-Expression $code"\r\n'
+    'if errorlevel 1 pause\r\n'
+    'exit /b %errorlevel%\r\n'
+    ':__PROBE_POWERSHELL__\r\n'
+)
 STAGES = frozenset(("profile", "control_tls", "direct_site", "node_tcp", "binary",
                     "xray_start", "socks", "vpn_site", "vpn_dns_853", "xray_log"))
 CODES = frozenset(("OK", "INVALID_KEY", "INVALID_SITE", "BAD_REALITY_PARAMS", "TLS_FAIL", "HTTP_FAIL",
@@ -145,9 +159,11 @@ async def download_probe(request: Request, site: str = Form("https://www.google.
     source = Path("windows_probe/Probe-PrivateLine.ps1").read_text(encoding="utf-8-sig")
     for name, value in (("BASE", base), ("TOKEN", token), ("TEST_ID", test_id), ("SITE", site)):
         source = source.replace("__" + name + "__", value.replace("'", "''"))
-    return PlainTextResponse("\ufeff" + source, media_type="text/plain; charset=utf-8",
-                             headers={"Content-Disposition": 'attachment; filename="Probe-PrivateLine.ps1"',
-                                      "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer"})
+    # A single .cmd launches on double click, regardless of the Windows .ps1
+    # file association. The PowerShell payload stays in the same downloaded file.
+    return Response((CMD_LAUNCHER + source).encode("utf-8"), media_type="application/octet-stream",
+                    headers={"Content-Disposition": 'attachment; filename="Probe-PrivateLine.cmd"',
+                             "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer"})
 
 
 @router.post("/api/vpn-probe/report")
