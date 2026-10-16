@@ -26,6 +26,10 @@ except (ValueError, AssertionError):
 PY
 )"
 mkdir -p data/acme-webroot/.well-known/acme-challenge data/letsencrypt nginx/ssl
+# Only this webroot contains public ACME tokens. The script's umask 077 is
+# retained for certificates and private keys, but Nginx workers must traverse
+# the challenge directories and read the individual token file.
+chmod 755 data/acme-webroot data/acme-webroot/.well-known data/acme-webroot/.well-known/acme-challenge
 IMAGE=certbot/certbot:v5.4.0
 CERT="data/letsencrypt/live/$IP/fullchain.pem"
 KEY="data/letsencrypt/live/$IP/privkey.pem"
@@ -47,6 +51,7 @@ if [[ "$MODE" == install ]]; then
   docker compose up -d --no-deps nginx
   probe="admin-$(openssl rand -hex 12)"
   printf '%s' "$probe" >"$WEBROOT/.well-known/acme-challenge/$probe"
+  chmod 644 "$WEBROOT/.well-known/acme-challenge/$probe"
   challenge_url="http://$IP/.well-known/acme-challenge/$probe"
   response="$(challenge_response || true)"
   if [[ "$response" != "$probe" ]]; then
