@@ -61,6 +61,29 @@ function Test-Site([string]$url, [int]$port, [bool]$viaVpn) {
     if (-not [int]::TryParse(($result | Select-Object -Last 1),[ref]$number) -or $number -lt 100 -or $number -gt 599) { return @{code='HTTPS_FAIL'; status=0} }
     return @{code='OK'; status=$number}
 }
+function Test-SocksConnect([int]$port) {
+    $tcp = [Net.Sockets.TcpClient]::new()
+    try {
+        $tcp.Connect('127.0.0.1',$port)
+        $stream=$tcp.GetStream(); $stream.ReadTimeout=10000; $stream.WriteTimeout=10000
+        $stream.Write([byte[]](5,1,0),0,3)
+        $reply=Read-Bytes $stream 2
+        if ($reply[0] -ne 5 -or $reply[1] -ne 0) { return 'SOCKS_CONNECT_FAIL' }
+        # 1.1.1.1:443 is an IP target, so DNS and the requested site cannot
+        # affect this test. SOCKS success requires Xray to finish outbound dial.
+        $request=[byte[]](5,1,0,1,1,1,1,1,1,187)
+        $stream.Write($request,0,$request.Length)
+        $reply=Read-Bytes $stream 4
+        if ($reply[0] -ne 5 -or $reply[1] -ne 0) { return 'SOCKS_CONNECT_FAIL' }
+        $length=4
+        if ($reply[3] -eq 4) { $length=16 }
+        if ($reply[3] -eq 3) { $length=(Read-Bytes $stream 1)[0] }
+        [void](Read-Bytes $stream ($length+2))
+        return 'OK'
+    } catch [IO.IOException] { return 'SOCKS_CONNECT_TIMEOUT' }
+      catch { return 'SOCKS_CONNECT_FAIL' }
+    finally { $tcp.Close() }
+}
 function Test-Dns853([int]$port) {
     $tcp = [Net.Sockets.TcpClient]::new()
     try {
@@ -197,7 +220,7 @@ try {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
     $listener.Start(); $port=$listener.LocalEndpoint.Port; $listener.Stop()
     $config = @{
-        log=@{loglevel='warning'}
+        log=@{loglevel='info'}
         inbounds=@(@{tag='local-test';listen='127.0.0.1';port=$port;protocol='socks';settings=@{auth='noauth';udp=$false}})
         outbounds=@(@{tag='vpn';protocol='vless';settings=@{vnext=@(@{address=$uri.Host;port=$uri.Port;users=@(@{id=$uuid.ToString();encryption='none';flow='xtls-rprx-vision'})})};streamSettings=@{network='tcp';security='reality';realitySettings=@{serverName=$params.sni;fingerprint='chrome';password=$params.pbk;shortId=$params.sid;spiderX=''}}})
         routing=@{domainStrategy='AsIs';rules=@()}
@@ -205,7 +228,7 @@ try {
     $configPath=Join-Path $Workspace 'config.json'
     [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
     $watch=Clock
-    $Process=Start-Process -FilePath $binary -ArgumentList @('run','-c',('"'+$configPath+'"')) -WindowStyle Hidden -PassThru -RedirectStandardError (Join-Path $Workspace 'xray.log')
+    $Process=Start-Process -FilePath $binary -ArgumentList @('run','-c',('"'+$configPath+'"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $Workspace 'xray.stdout.log') -RedirectStandardError (Join-Path $Workspace 'xray.log')
     $ready=$false
     for ($attempt=0;$attempt -lt 24;$attempt++) {
         Start-Sleep -Milliseconds 250
@@ -229,6 +252,10 @@ try {
         throw 'STOP_PROBE'
     } finally { $local.Close() }
 
+    $CurrentStage='socks_connect'; $watch=Clock
+    $connectResult=Test-SocksConnect $port
+    Add-Step 'socks_connect' $connectResult $watch.ElapsedMilliseconds
+
     $CurrentStage='vpn_ipv4'; $watch=Clock
     $ipv4Result=Test-Site 'https://1.1.1.1/cdn-cgi/trace' $port $true
     Add-Step 'vpn_ipv4' $ipv4Result.code $watch.ElapsedMilliseconds $ipv4Result.status
@@ -239,9 +266,12 @@ try {
     if ($siteResult.code -ne 'OK') {
         $logCode='NO_ERROR_LOG'
         try {
-            $logText=(Get-Content (Join-Path $Workspace 'xray.log') -Tail 80 -ErrorAction Stop) -join "`n"
+            $logText=((Get-Content (Join-Path $Workspace 'xray.log') -Tail 80 -ErrorAction SilentlyContinue) +
+                      (Get-Content (Join-Path $Workspace 'xray.stdout.log') -Tail 80 -ErrorAction SilentlyContinue)) -join "`n"
             if ($logText -match '(?i)reality.*(fail|invalid|reject)|handshake.*fail') { $logCode='REALITY_FAIL' }
             elseif ($logText -match '(?i)invalid user|invalid uuid|user not found') { $logCode='AUTH_FAIL' }
+            elseif ($logText -match '(?i)connection reset|connection closed|unexpected EOF') { $logCode='NODE_RESET' }
+            elseif ($logText -match '(?i)i/o timeout|deadline exceeded|handshake.*timeout') { $logCode='HANDSHAKE_TIMEOUT' }
             elseif ($logText -match '(?i)failed to dial|connection refused|network unreachable') { $logCode='DIAL_FAIL' }
         } catch { }
         Add-Step 'xray_log' $logCode 0
