@@ -53,7 +53,7 @@ CMD_LAUNCHER = (
     ':__PROBE_POWERSHELL__\r\n'
 )
 STAGES = frozenset(("profile", "control_tls", "direct_site", "node_tcp", "binary",
-                    "xray_start", "socks", "vpn_site", "vpn_dns_853", "xray_log", "client_runtime"))
+                    "xray_start", "socks", "vpn_ipv4", "vpn_site", "vpn_dns_853", "xray_log", "client_runtime"))
 CODES = frozenset(("OK", "INVALID_KEY", "INVALID_SITE", "BAD_REALITY_PARAMS", "TLS_FAIL", "HTTP_FAIL",
                    "DNS_FAIL", "TCP_TIMEOUT", "TCP_REFUSED", "TCP_FAIL", "DOWNLOAD_FAIL",
                    "DIGEST_FAIL", "BINARY_FAIL", "XRAY_EXIT", "SOCKS_TIMEOUT", "SOCKS_FAIL",
@@ -85,13 +85,12 @@ def safe_steps(report: ProbeReport) -> list[dict]:
 
 
 def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
+    outcomes = {row["stage"]: row["code"] for row in steps}
     failures = {row["stage"]: row["code"] for row in steps if row["code"] not in ("OK", "SKIPPED")}
     if not key_match:
         return "Ссылка не совпадает с активным ключом в базе. Сравните ключ Telegram с текущей подпиской."
     if node_trace.get("status") == "observed" and not node_trace.get("key_on_node", False):
         return "Ключ есть в базе, но отсутствует или отличается на VPN-ноде. Требуется синхронизация ноды."
-    if "control_tls" in failures:
-        return "Компьютер не может проверить HTTPS основного сервера. Проверьте сертификат и доступность админки из этой сети."
     if "node_tcp" in failures and node_trace.get("listener"):
         return "Нода слушает порт, но соединение с компьютера не прошло: исследуйте маршрут или блокировку провайдера."
     if "node_tcp" in failures:
@@ -102,8 +101,12 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
         return "Проверка прервалась на компьютере. Посмотрите последний успешный этап в отчёте и локальную копию результата."
     if "xray_start" in failures or "socks" in failures:
         return "Временный Xray не запустился или не открыл локальный SOCKS. Проверьте журнал защиты Windows."
+    if outcomes.get("vpn_ipv4") == "OK" and "vpn_site" in failures:
+        return "VLESS передаёт HTTPS до 1.1.1.1, но выбранный сайт недоступен через ноду. Проверьте DNS и доступность этого сайта с ноды."
     if "vpn_site" not in failures and "vpn_dns_853" in failures:
         return "VPN-туннель передаёт HTTPS, но DNS-over-TLS на 8.8.8.8:853 не отвечает. Это объясняет отсутствие интернета у клиента с таким DNS."
+    if "vpn_ipv4" in failures and "vpn_site" in failures:
+        return "TCP до ноды и локальный SOCKS работают, но ни HTTPS до IP, ни выбранный сайт через VLESS не отвечают. Проверяйте Reality/VLESS с этой сети и входящий журнал ноды."
     if "vpn_site" in failures:
         if failures.get("xray_log") == "REALITY_FAIL":
             return "Xray на компьютере сообщает об ошибке Reality handshake. Сравните SNI, public key, short ID и фильтрацию трафика по пути."
@@ -112,6 +115,8 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
         return "TCP до ноды есть, но HTTPS через VLESS не проходит: проверьте Reality handshake, авторизацию UUID и выход ноды."
     if "direct_site" in failures:
         return "Прямой HTTPS с компьютера не прошёл, хотя VPN-этапы доступны. Проверьте локальный DNS и сеть."
+    if "control_tls" in failures:
+        return "Основной HTTPS-адрес не прошёл проверку с компьютера; это не равно отказу VLESS. Проверьте код ответа и сертификат админки."
     return "Проверка VLESS с этого компьютера прошла. Если приложение по-прежнему не работает, исследуйте его DNS, системный прокси и правила маршрутизации."
 
 
