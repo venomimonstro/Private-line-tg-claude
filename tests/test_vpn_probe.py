@@ -63,6 +63,8 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn('Local report:', script)
         self.assertIn("--noproxy '0.0.0.0' --socks5-hostname", script)
         self.assertIn("Add-Step 'vpn_ipv4'", script)
+        self.assertIn("Add-Step 'socks_connect'", script)
+        self.assertIn("xray.stdout.log", script)
 
     def test_download_is_a_single_double_clickable_cmd_with_embedded_probe(self):
         self.assertTrue(CMD_LAUNCHER.startswith('@echo off\r\n'))
@@ -91,6 +93,13 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn("ни HTTPS до IP", explain(both, {"status": "pending"}, True))
         old_report = [{"stage": "vpn_site", "code": "HTTPS_TIMEOUT"}]
         self.assertNotIn("выбранный сайт", explain(old_report, {"status": "pending"}, True))
+
+    def test_socks_connect_timeout_is_not_reported_as_working_vpn(self):
+        steps = [{"stage": "socks", "code": "OK"},
+                 {"stage": "socks_connect", "code": "SOCKS_CONNECT_TIMEOUT"},
+                 {"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"}]
+        summary = explain(steps, {"status": "observed", "key_on_node": True}, True)
+        self.assertIn("не смог установить соединение", summary)
 
     def test_node_key_mismatch_takes_priority_over_client_errors(self):
         steps = [{"stage": "node_tcp", "code": "TCP_TIMEOUT"}]
