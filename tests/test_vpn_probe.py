@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from pydantic import ValidationError
 
-from admin.routes.vpn_probe import ProbeReport, explain, safe_steps
+from admin.routes.vpn_probe import CMD_LAUNCHER, ProbeReport, explain, safe_steps
 from app.vpn import probe_package
 from app.services.vpn_link import canonical_client_link
 
@@ -52,6 +52,17 @@ class ProbeReportTests(unittest.TestCase):
         self.assertIn("Remove-Item $Workspace -Recurse", script)
         self.assertNotIn("-OutFile $zipPath -PassThru", script)
         self.assertNotIn("Set-ItemProperty -Path 'HKCU", script)
+
+    def test_download_is_a_single_double_clickable_cmd_with_embedded_probe(self):
+        self.assertTrue(CMD_LAUNCHER.startswith('@echo off\r\n'))
+        self.assertIn('powershell.exe -NoProfile -ExecutionPolicy Bypass -Command', CMD_LAUNCHER)
+        self.assertIn('ReadAllText($env:PL_PROBE_FILE,[Text.Encoding]::UTF8)', CMD_LAUNCHER)
+        self.assertIn('$text.LastIndexOf($marker)', CMD_LAUNCHER)
+        self.assertTrue(CMD_LAUNCHER.endswith(':__PROBE_POWERSHELL__\r\n'))
+        combined = CMD_LAUNCHER + 'param()\nWrite-Host "probe"\n'
+        marker = ':__PROBE_POWERSHELL__'
+        self.assertEqual(combined[combined.rfind(marker) + len(marker):].strip(),
+                         'param()\nWrite-Host "probe"')
 
     def test_dns_failure_after_working_https_identifies_client_dns_path(self):
         steps = [{"stage": "vpn_site", "code": "OK"},
