@@ -104,6 +104,12 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
     if "xray_start" in failures or "socks" in failures:
         return "Временный Xray не запустился или не открыл локальный SOCKS. Проверьте журнал защиты Windows."
     if "socks_connect" in failures:
+        if failures.get("xray_log") == "REALITY_FAIL":
+            return "SOCKS CONNECT не прошёл: клиент Xray сообщает об ошибке рукопожатия Reality с нодой."
+        if failures.get("xray_log") == "AUTH_FAIL":
+            return "SOCKS CONNECT не прошёл: нода отклонила авторизацию VLESS. Проверьте UUID на ноде."
+        if failures.get("xray_log") in ("NODE_RESET", "HANDSHAKE_TIMEOUT"):
+            return "SOCKS CONNECT не прошёл: соединение с нодой сброшено или рукопожатие затянулось. Сопоставьте журнал ноды и маршрут от провайдера клиента."
         return "Локальный SOCKS открылся, но не смог установить соединение с 1.1.1.1:443 через VLESS. Проверьте рукопожатие Reality и журнал ноды; ключ и TCP/443 сами по себе туннель не подтверждают."
     if outcomes.get("vpn_ipv4") == "OK" and "vpn_site" in failures:
         return "VLESS передаёт HTTPS до 1.1.1.1, но выбранный сайт недоступен через ноду. Проверьте DNS и доступность этого сайта с ноды."
