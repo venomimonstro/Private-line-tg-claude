@@ -72,6 +72,7 @@ fi
 
 mkdir -p nginx/ssl
 mkdir -p data/acme-webroot/.well-known/acme-challenge
+chmod 755 data/acme-webroot data/acme-webroot/.well-known data/acme-webroot/.well-known/acme-challenge
 CERT=nginx/ssl/cert.pem
 KEY=nginx/ssl/key.pem
 
