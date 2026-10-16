@@ -61,6 +61,8 @@ class ProbeReportTests(unittest.TestCase):
         self.assertNotIn("Set-ItemProperty -Path 'HKCU", script)
         self.assertIn('REPORT STORED ON SERVER', script)
         self.assertIn('Local report:', script)
+        self.assertIn("--noproxy '0.0.0.0' --socks5-hostname", script)
+        self.assertIn("Add-Step 'vpn_ipv4'", script)
 
     def test_download_is_a_single_double_clickable_cmd_with_embedded_probe(self):
         self.assertTrue(CMD_LAUNCHER.startswith('@echo off\r\n'))
@@ -79,6 +81,16 @@ class ProbeReportTests(unittest.TestCase):
         summary = explain(steps, {"status": "observed", "listener": True,
                                   "key_on_node": True}, True)
         self.assertIn("8.8.8.8:853", summary)
+
+    def test_ip_probe_distinguishes_site_failure_from_tunnel_failure(self):
+        site_only = [{"stage": "vpn_ipv4", "code": "OK"},
+                     {"stage": "vpn_site", "code": "HTTPS_TIMEOUT"}]
+        both = [{"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"},
+                {"stage": "vpn_site", "code": "HTTPS_TIMEOUT"}]
+        self.assertIn("выбранный сайт", explain(site_only, {"status": "pending"}, True))
+        self.assertIn("ни HTTPS до IP", explain(both, {"status": "pending"}, True))
+        old_report = [{"stage": "vpn_site", "code": "HTTPS_TIMEOUT"}]
+        self.assertNotIn("выбранный сайт", explain(old_report, {"status": "pending"}, True))
 
     def test_node_key_mismatch_takes_priority_over_client_errors(self):
         steps = [{"stage": "node_tcp", "code": "TCP_TIMEOUT"}]
