@@ -15,6 +15,7 @@ SUCCESS=0
 MARZBAN_WAS_RUNNING=0
 DIRECT_AGENT_WAS_RUNNING=0
 LEGACY_STATE=""
+BINARY_CHANGED=0
 
 rollback() {
   rc=$?
@@ -56,8 +57,10 @@ if [[ -x "$XRAY" ]] && valid_xray "$XRAY"; then
   :
 elif [[ -x /var/lib/marzban/xray-core/26.6.27/xray ]] && valid_xray /var/lib/marzban/xray-core/26.6.27/xray; then
   install -m 755 /var/lib/marzban/xray-core/26.6.27/xray "$XRAY"
+  BINARY_CHANGED=1
 elif command -v xray >/dev/null 2>&1 && valid_xray "$(command -v xray)"; then
   install -m 755 "$(command -v xray)" "$XRAY"
+  BINARY_CHANGED=1
 else
   echo "FAIL: no executable Xray candidate passes the version check; existing service untouched" >&2
   exit 2
@@ -128,7 +131,9 @@ state_path.write_text(json.dumps(state,indent=2)+"\n")
 os.chmod(state_path,0o600)
 PY
 
-cat > /etc/systemd/system/private-line-xray.service <<EOF
+UNIT_FILE=/etc/systemd/system/private-line-xray.service
+OLD_UNIT="$(cat "$UNIT_FILE" 2>/dev/null || true)"
+cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=Private Line standalone Xray
 After=network-online.target
@@ -145,6 +150,8 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
+UNIT_CHANGED=0
+[[ "$(cat "$UNIT_FILE")" == "$OLD_UNIT" ]] || UNIT_CHANGED=1
 
 # Cut over only after all files/config inputs above are prepared. If the new
 # runtime fails, the EXIT trap brings the previous Marzban container back.
@@ -179,7 +186,12 @@ ufw allow 443/tcp comment "Private Line VLESS Reality" >/dev/null 2>&1 || true
 ufw delete allow 2096/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
-systemctl restart private-line-xray.service
+if [[ "$BINARY_CHANGED" -eq 1 || "$UNIT_CHANGED" -eq 1 ]]; then
+  systemctl restart private-line-xray.service
+else
+  # start is idempotent: repeated deploys keep established VPN sessions.
+  systemctl start private-line-xray.service
+fi
 sleep 1
 systemctl is-active --quiet private-line-xray.service || { journalctl -u private-line-xray -n 40 --no-pager >&2; exit 2; }
 "$MANAGER" status
