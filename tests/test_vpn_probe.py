@@ -125,7 +125,7 @@ class ProbeReportTests(unittest.TestCase):
         self.assertEqual(trace["vless_accepted"], 1)
         diagnosis = explain([{"stage": "vpn_ipv4", "code": "HTTPS_TIMEOUT"}],
                             {"status": "observed", "key_on_node": True, **trace}, True)
-        self.assertIn("Нода приняла", diagnosis)
+        self.assertIn("нода приняла", diagnosis)
 
     def test_unchanged_node_state_does_not_restart_active_service(self):
         state = {"host": "185.236.25.152", "port": 443, "sni": "dl.google.com",
