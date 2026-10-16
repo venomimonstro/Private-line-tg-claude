@@ -2,14 +2,14 @@
 {% block content %}
 <div class="card p-4 mb-4">
   <h5>Проверка с вашего Windows-компьютера</h5>
-  <p>Скачайте один диагностический PowerShell-файл, запустите его без VPN и вставьте ключ из Telegram в скрытый запрос. Скрипт проверит прямой интернет, доступность ноды, вход VLESS/REALITY, сайт через VPN и DNS на порту 853.</p>
+  <p>Скачайте один диагностический файл для Windows, запустите его без VPN двойным щелчком и вставьте ключ из Telegram в скрытый запрос. Скрипт проверит прямой интернет, доступность ноды, вход VLESS/REALITY, сайт через VPN и DNS на порту 853.</p>
   <form method="post" action="/admin/vpn-probe/download">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label for="site" class="form-label">Сайт для проверки</label>
     <input id="site" name="site" class="form-control mb-3" type="url" required value="https://www.google.com/" maxlength="1200">
-    <button type="submit" class="btn btn-primary">Скачать диагностический файл</button>
+    <button type="submit" class="btn btn-primary">Скачать Probe-PrivateLine.cmd</button>
   </form>
-  <p class="mt-3 mb-0 small text-muted">Откройте PowerShell в папке загрузок и выполните <code>powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Probe-PrivateLine.ps1</code>. Файл не устанавливает клиент и не меняет сетевые настройки. Xray загружается во временную папку с проверкой SHA-256. Ключ не передаётся на основной сервер; отправляются только коды этапов. Файл содержит одноразовый код отправки, действующий 1 час. Не пересылайте его другим.</p>
+  <p class="mt-3 mb-0 small text-muted">Откройте скачанный <code>Probe-PrivateLine.cmd</code> двойным щелчком. Файл не устанавливает клиент и не меняет сетевые настройки. Xray загружается во временную папку с проверкой SHA-256. Ключ не передаётся на основной сервер; отправляются только коды этапов. Файл содержит одноразовый код отправки, действующий 1 час. Не пересылайте его другим.</p>
 </div>
 <h5>Отчёты с компьютеров</h5>
 <p class="text-muted small">Обновите страницу после завершения теста. Если основной сервер недоступен из вашей сети, скрипт сохранит безопасный отчёт локально.</p>
