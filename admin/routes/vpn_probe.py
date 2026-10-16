@@ -8,6 +8,8 @@ import asyncio
 import re
 import secrets
 import logging
+import ipaddress
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -93,6 +95,10 @@ def explain(steps: list[dict], node_trace: dict, key_match: bool) -> str:
         return "Ссылка не совпадает с активным ключом в базе. Сравните ключ Telegram с текущей подпиской."
     if node_trace.get("status") == "observed" and not node_trace.get("key_on_node", False):
         return "Ключ есть в базе, но отсутствует или отличается на VPN-ноде. Требуется синхронизация ноды."
+    if node_trace.get("vless_accepted", 0) > 0 and "vpn_ipv4" in failures:
+        return "Нода приняла этот VLESS-ключ с компьютера, но HTTPS через туннель не ответил. Проверяйте выход ноды до назначения и TLS/маршрутизацию, а не сам ключ."
+    if node_trace.get("reality_rejected", 0) > 0 and "vpn_ipv4" in failures:
+        return "Нода получила соединение из сети компьютера и отклонила Reality handshake. Проверьте совместимость клиента, профиль и сетевую фильтрацию; TCP/443 сам по себе не подтверждает VPN."
     if "node_tcp" in failures and node_trace.get("listener"):
         return "Нода слушает порт, но соединение с компьютера не прошло: исследуйте маршрут или блокировку провайдера."
     if "node_tcp" in failures:
@@ -200,7 +206,9 @@ async def download_probe(request: Request, site: str = Form("https://www.google.
                              "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer"})
 
 
-async def _enrich_node_trace(test_id: str, key_id: int, server_id: int, profile_sha256: str) -> None:
+async def _enrich_node_trace(test_id: str, key_id: int, server_id: int,
+                             profile_sha256: str, client_ip: str | None,
+                             started_at: int) -> None:
     """Best-effort SSH details; the client report has already been committed."""
     trace = {"status": "ssh_unavailable"}
     client = None
@@ -218,6 +226,18 @@ async def _enrich_node_trace(test_id: str, key_id: int, server_id: int, profile_
             remote_uri = canonical_client_link(remote.access_url).split("#", 1)[0]
             remote_hash = hashlib.sha256(remote_uri.encode()).hexdigest()
             trace["key_on_node"] = hmac.compare_digest(remote_hash, profile_sha256)
+            if client_ip:
+                try:
+                    observed = await asyncio.wait_for(
+                        client._run("trace", client_ip, str(started_at), key.outline_key_id,
+                                    timeout=16), timeout=18)
+                    trace["tcp_logged"] = observed["tcp_logged"]
+                    trace["reality_rejected"] = observed["reality_rejected"]
+                    trace["vless_accepted"] = observed["vless_accepted"]
+                    trace["limited"] = bool(observed.get("limited"))
+                except Exception as exc:
+                    logger.warning("VPN probe transport trace unavailable test_id=%s error_type=%s",
+                                   test_id, type(exc).__name__)
     except Exception as exc:
         logger.warning("VPN probe node inspection unavailable test_id=%s error_type=%s",
                        test_id, type(exc).__name__)
@@ -285,9 +305,22 @@ async def receive_probe(request: Request, report: ProbeReport, background_tasks:
                       description="Structured Windows to VPN node probe"))
     await db.delete(row)
     await db.commit()
+    client_ip = None
+    try:
+        # Nginx replaces this header with the actual peer address. The address
+        # is used only in memory for a bounded node-side lookup, never stored.
+        candidate = ipaddress.ip_address(request.headers.get("x-real-ip", ""))
+        if isinstance(candidate, ipaddress.IPv4Address) and candidate.is_global:
+            client_ip = str(candidate)
+    except ValueError:
+        pass
     if len(matches) == 1 and _server_protocol(matches[0][1]) == "direct_xray":
+        # Client step timings bound the journal window. No clock sync with the
+        # Windows PC is required and an older issued test cannot scan history.
+        elapsed = min(600, sum(s.elapsed_ms for s in report.steps) // 1000 + 30)
         background_tasks.add_task(_enrich_node_trace, report.test_id, matches[0][0].id,
-                                  matches[0][1].id, report.profile_sha256)
+                                  matches[0][1].id, report.profile_sha256,
+                                  client_ip, int(time.time()) - elapsed)
     logger.info("VPN client report stored test_id=%s steps=%d matched=%s", report.test_id,
                 len(steps), len(matches) == 1)
     return {"ok": True, "test_id": report.test_id}
