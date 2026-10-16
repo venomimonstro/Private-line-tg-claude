@@ -12,7 +12,13 @@
   <p class="mt-3 mb-0 small text-muted">Откройте скачанный <code>Probe-PrivateLine.cmd</code> двойным щелчком. Файл не устанавливает клиент и не меняет сетевые настройки. Xray загружается во временную папку с проверкой SHA-256. Ключ не передаётся на основной сервер; отправляются только коды этапов. Файл содержит одноразовый код отправки, действующий 1 час. Не пересылайте его другим.</p>
 </div>
 <h5>Отчёты с компьютеров</h5>
-<p class="text-muted small">Обновите страницу после завершения теста. Если основной сервер недоступен из вашей сети, скрипт сохранит безопасный отчёт локально.</p>
+<p class="text-muted small">Обновите страницу после завершения теста. Файл сохранит копию отчёта на компьютере даже при ошибке отправки.</p>
+{% for item in pending %}
+<div class="card p-3 mb-2">
+  <div class="fw-semibold">Тест {{ item.id }} · {{ item.at }}</div>
+  <div>Сайт: {{ item.site }} · {{ 'Время отправки истекло — скачайте новый файл' if item.expired else 'Ожидается отчёт с компьютера' }}</div>
+</div>
+{% endfor %}
 {% for item in results %}
 <div class="card p-3 mb-3">
   <div class="fw-semibold">Тест {{ item.id }} · {{ item.at }} · Windows {{ item.data.windows }}</div>
@@ -23,5 +29,5 @@
     {% for step in item.data.steps %}<tr class="{{ 'table-danger' if step.code not in ('OK', 'SKIPPED') else '' }}"><td>{{ step.stage }}</td><td>{{ step.code }}</td><td>{{ step.elapsed_ms }} мс</td><td>{{ step.http_status or '' }}</td></tr>{% endfor %}
   </tbody></table>
 </div>
-{% else %}<p>Отчётов пока нет.</p>{% endfor %}
+{% else %}{% if not pending %}<p>Тестов пока нет.</p>{% endif %}{% endfor %}
 {% endblock %}
