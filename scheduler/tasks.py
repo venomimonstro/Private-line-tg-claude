@@ -217,7 +217,9 @@ async def _job_vpn_integrity_audit() -> None:
         if rc != 0:
             await notify_admin(
                 "🔴 VPN integrity audit failed. Automatic credential repair is disabled; "
-                "run the explicit stabilization command."
+                "run the explicit stabilization command.",
+                dedupe_key="vpn-integrity-audit-failure",
+                cooldown_seconds=21600,
             )
     except Exception as exc:
         logger.error("vpn_integrity_audit failed: %s", type(exc).__name__, exc_info=True)

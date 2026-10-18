@@ -65,10 +65,7 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
             VpnServer.provider != "private-line-primary",
         )
     )
-    vpn_servers = [
-        s for s in vpn_server_result.scalars().all()
-        if _server_protocol(s) == "marzban"
-    ]
+    vpn_servers = list(vpn_server_result.scalars().all())
     if vpn_servers:
         failures: list[str] = []
         from app.services.vpn_reconcile import reconcile_marzban_server
@@ -80,6 +77,15 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
                     or vpn_server.last_e2e_success_at < now - timedelta(minutes=10)
                 ):
                     failures.append(f"node#{vpn_server.id}: stale real-E2E proof")
+                    continue
+                protocol = _server_protocol(vpn_server)
+                if protocol == "direct_xray":
+                    # The five-minute external watchdog has already proved the
+                    # real data path. Direct Xray has no Marzban API or hot-add
+                    # endpoint to reconcile here.
+                    continue
+                if protocol != "marzban":
+                    failures.append(f"node#{vpn_server.id}: unsupported protocol")
                     continue
                 if (
                     vpn_server.last_hot_add_success_at is None
@@ -195,12 +201,17 @@ async def run_health_check(session: AsyncSession) -> SystemHealthCheck:
         await notify_admin(
             f"🚨 Health-check CRITICAL\n"
             f"DB: {database_status} | Bot: {bot_status} | VPN: {vpn_api_status}\n"
-            f"Backup: {backup_status} | Disk: {disk_used_pct:.0f}% | CPU: {cpu_pct:.0f}%"
+            f"Backup: {backup_status} | Disk: {disk_used_pct:.0f}% | CPU: {cpu_pct:.0f}%",
+            dedupe_key=(f"health:critical:{database_status}:{bot_status}:"
+                        f"{vpn_api_status}:{backup_status}"),
+            cooldown_seconds=43200,
         )
     elif overall == HealthStatus.warning:
         await notify_admin(
             f"⚠️ Health-check WARNING\n"
-            f"CPU: {cpu_pct:.0f}% | RAM: {ram.percent:.0f}% | Disk: {disk_used_pct:.0f}%"
+            f"CPU: {cpu_pct:.0f}% | RAM: {ram.percent:.0f}% | Disk: {disk_used_pct:.0f}%",
+            dedupe_key="health:warning",
+            cooldown_seconds=43200,
         )
 
     return record

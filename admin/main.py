@@ -231,18 +231,36 @@ async def export_users_csv(
 
 @app.post("/alertmanager-webhook")
 async def alertmanager_webhook(request: Request) -> dict:
-    """Receive Alertmanager alerts and forward to admin Telegram chat."""
+    """Aggregate an Alertmanager batch into one deduplicated Telegram message."""
+    import hashlib
+    from html import escape
     from app.services.notification import notify_admin
 
     try:
         data = await request.json()
         alerts = data.get("alerts", [])
-        for alert in alerts:
+        rows: list[str] = []
+        identities: list[str] = []
+        for alert in alerts[:50]:
             alert_status = alert.get("status", "firing")
             name = alert.get("labels", {}).get("alertname", "Unknown")
             summary = alert.get("annotations", {}).get("summary", "")
             emoji = "🔴" if alert_status == "firing" else "✅"
-            await notify_admin(f"{emoji} Alert {alert_status.upper()}: {name}\n{summary}")
+            rows.append(f"{emoji} {escape(str(name)[:120])}: {escape(str(summary)[:300])}")
+            identities.append(str(alert.get("fingerprint") or f"{alert_status}:{name}"))
+        if rows:
+            hidden = max(0, len(alerts) - len(rows))
+            if hidden:
+                rows.append(f"…и ещё {hidden} событий в этом пакете")
+            group_status = str(data.get("status", "firing"))
+            identity = hashlib.sha256(
+                (group_status + "|" + "|".join(sorted(identities))).encode()
+            ).hexdigest()
+            await notify_admin(
+                f"Мониторинг: {escape(group_status.upper())}\n" + "\n".join(rows),
+                dedupe_key="alertmanager:" + identity,
+                cooldown_seconds=14400,
+            )
     except Exception:
         pass
     return {"status": "ok"}

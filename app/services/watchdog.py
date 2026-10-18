@@ -132,7 +132,12 @@ async def run_subscription_watchdog(session: AsyncSession) -> dict:
             f"recovered={results['recovered']}, failed={results['recovery_failed']}.\n"
             f"Sub IDs: {ids}{'...' if len(missing) > 20 else ''}"
         )
-        await notify_admin(message)
+        await notify_admin(
+            message,
+            dedupe_key=(f"subscription-watchdog:{len(missing)}:"
+                        f"{results['recovery_failed']}"),
+            cooldown_seconds=21600,
+        )
         results["ok"] += results["recovered"]
     else:
         logger.info("watchdog: all %d active subscriptions have verified keys", len(subs))

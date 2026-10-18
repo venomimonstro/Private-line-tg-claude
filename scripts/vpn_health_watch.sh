@@ -106,7 +106,9 @@ import asyncio
 from app.services.notification import notify_admin
 asyncio.run(notify_admin(
     "🔴 Direct Xray health-watch: failed nodes: $FAILED. "
-    "New assignments stopped; existing keys preserved."
+    "New assignments stopped; existing keys preserved.",
+    dedupe_key="direct-xray-health-watch-failure",
+    cooldown_seconds=21600,
 ))
 PY
     exit 1
