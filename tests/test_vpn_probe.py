@@ -150,6 +150,15 @@ class ProbeReportTests(unittest.TestCase):
         self.assertEqual(trace["reality_rejected"], 1)
         self.assertEqual(trace["rejection_reasons"]["authentication_failed"], 1)
 
+    def test_reality_trace_accepts_validation_only_wording(self):
+        lines = ("2026/10/16 REALITY: processed invalid connection from "
+                 "8.8.4.4:50111: validation criteria not met\n")
+        with patch.object(node, "run", return_value=SimpleNamespace(returncode=0, stdout=lines)), \
+             patch.object(node.time, "time", return_value=1_800_000_000):
+            trace = node.trace_client("8.8.4.4", 1_799_999_900, "u1s3")
+        self.assertEqual(trace["reality_rejected"], 1)
+        self.assertEqual(trace["rejection_reasons"]["authentication_failed"], 1)
+
     def test_unchanged_node_state_does_not_restart_active_service(self):
         state = {"host": "185.236.25.152", "port": 443, "sni": "dl.google.com",
                  "target": "dl.google.com:443", "private_key": "A" * 43,

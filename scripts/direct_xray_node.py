@@ -154,11 +154,15 @@ def trace_client(address, since, name):
         seen+=1
         if "REALITY: processed invalid connection" in line:
             invalid+=1
-            if "failed to read client hello" in line:
+            detail=line.lower()
+            if "failed to read client hello" in detail:
                 reasons["hello_incomplete"]+=1
-            elif "authentication failed or validation criteria not met" in line:
+            # Xray versions use both the short "authentication failed" text
+            # and the longer "authentication failed or validation criteria
+            # not met" variant for the same REALITY rejection class.
+            elif "authentication failed" in detail or "validation criteria not met" in detail:
                 reasons["authentication_failed"]+=1
-            elif "target sent incorrect server hello or handshake incomplete" in line:
+            elif "target sent incorrect server hello" in detail or "handshake incomplete" in detail:
                 reasons["target_handshake_failed"]+=1
             else:
                 reasons["other"]+=1
