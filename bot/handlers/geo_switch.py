@@ -16,7 +16,7 @@ from app.models.user import User
 from app.services.node_selection import node_is_ready, rank_nodes
 from app.services.server_access import ServerSelectionError, add_subscription_server_key
 from app.services.vpn_key import get_client_access_url, _server_protocol
-from bot.handlers.access import _get_active_subscription
+from bot.handlers.access import _client_url, _get_active_subscription
 
 logger = logging.getLogger(__name__)
 router = Router(name="geo_switch")
@@ -147,7 +147,7 @@ async def on_choose_server(callback: CallbackQuery, db_user: User) -> None:
             key, created = await add_subscription_server_key(
                 session, user_id=db_user.id, subscription_id=sub.id, server_id=server_id
             )
-            link = get_client_access_url(key)
+            link = _client_url(get_client_access_url(key))
             server = await session.get(VpnServer, key.server_id)
             display = escape(server.name if server else "VPN")
             await session.commit()
@@ -181,7 +181,7 @@ async def on_geo_view_key(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Ключ не найден.", show_alert=True)
         return
     try:
-        link = get_client_access_url(key)
+        link = _client_url(get_client_access_url(key))
     except Exception:
         await callback.answer("Некорректный VPN-ключ.", show_alert=True)
         return

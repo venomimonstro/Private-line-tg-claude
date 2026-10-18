@@ -81,7 +81,11 @@ async def retry_failed_activations(
             if send_key_callback is None and bot is not None:
                 try:
                     from app.services.vpn_key import get_client_access_url
-                    url = get_client_access_url(vpn_key)
+                    from app.config import settings
+                    from app.vpn.https_fallback import preferred_client_link
+                    url = preferred_client_link(
+                        get_client_access_url(vpn_key), settings.CONTROL_PLANE_PUBLIC_URL
+                    )
                     from app.models.user import User
                     user = await session.get(User, sub.user_id)
                     if user is None or not user.telegram_id:

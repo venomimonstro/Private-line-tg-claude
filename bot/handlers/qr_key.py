@@ -8,7 +8,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 
 from app.models.user import User
 from app.services.vpn_key import get_client_access_url
-from bot.handlers.access import _get_active_subscription
+from bot.handlers.access import _client_url, _get_active_subscription
 
 router = Router(name="qr_key")
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ async def on_get_key_qr(callback: CallbackQuery, db_user: User) -> None:
     # lets a multi-node user choose another key explicitly.
     active_key = active_keys[0]
     try:
-        access_url = get_client_access_url(active_key)
+        access_url = _client_url(get_client_access_url(active_key))
     except Exception:
         await callback.answer("Ошибка проверки VPN-профиля.", show_alert=True)
         return
@@ -47,7 +47,7 @@ async def on_get_key_qr(callback: CallbackQuery, db_user: User) -> None:
             photo=BufferedInputFile(buf.read(), filename="private-line-vpn.png"),
             caption=(
                 "📷 <b>Private Line VPN</b>\n\n"
-                "VLESS Reality: V2RayNG, Hiddify, Streisand или V2Box."
+                "VLESS через HTTPS: V2RayNG, Hiddify, Streisand или V2Box."
             ),
             parse_mode="HTML",
         )

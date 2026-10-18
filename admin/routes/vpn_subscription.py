@@ -29,7 +29,7 @@ from app.services.sub_token import make_sub_token, verify_sub_token as _verify_s
 from app.services.vpn_key import get_access_url
 from app.services.vpn_eligibility import is_vless_node
 from app.services.vpn_link import canonical_client_link
-from app.vpn.https_fallback import published_fallback
+from app.vpn.https_fallback import preferred_client_link
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +90,12 @@ async def vpn_subscription(
             if server.status == VpnServerStatus.unreachable:
                 label = f"{label} • резерв"
             url = canonical_client_link(get_access_url(key), label)
+            # Publish one unambiguous profile per paid key. The ordinary
+            # HTTPS route is preferred after its real E2E gate; direct
+            # REALITY is retained only as an automatic emergency fallback.
+            url = preferred_client_link(url, settings.CONTROL_PLANE_PUBLIC_URL)
             if url and url not in links:
                 links.append(url)
-            spare = published_fallback(url, settings.CONTROL_PLANE_PUBLIC_URL)
-            if spare and spare not in links:
-                links.append(spare)
         except Exception as exc:
             logger.warning("sub: cannot format key %d: %s", key.id, exc)
 

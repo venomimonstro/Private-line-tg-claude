@@ -23,6 +23,7 @@ from app.models.subscription import Subscription
 from app.models.vpn_key import VpnKey
 from app.models.vpn_server import VpnServer
 from app.services.vpn_key import get_client_access_url, _server_protocol
+from app.vpn.https_fallback import preferred_client_link
 
 
 PAIR_TTL = timedelta(hours=24)
@@ -73,7 +74,9 @@ async def active_user_servers(session: AsyncSession, user_id: int) -> list[dict]
         if server.id in found or _server_protocol(server) != "direct_xray":
             continue
         try:
-            link = get_client_access_url(key)
+            link = preferred_client_link(
+                get_client_access_url(key), settings.CONTROL_PLANE_PUBLIC_URL
+            )
             if not link.startswith("vless://"):
                 continue
         except (ValueError, TypeError):

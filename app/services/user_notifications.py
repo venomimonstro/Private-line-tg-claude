@@ -11,6 +11,13 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
     from app.bot_instance import get_bot
     from app.services.vpn_key import get_client_access_url
     from app.services.sub_token import make_subscription_url
+    from app.config import settings
+    from app.vpn.https_fallback import preferred_client_link
+
+    def client_url(key: object) -> str:
+        return preferred_client_link(
+            get_client_access_url(key), settings.CONTROL_PLANE_PUBLIC_URL  # type: ignore[arg-type]
+        )
 
     bot = get_bot()
     temporary_bot = False
@@ -59,7 +66,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
         )
 
         if len(vpn_keys) == 1:
-            url = get_client_access_url(vpn_keys[0])  # type: ignore[arg-type]
+            url = client_url(vpn_keys[0])
             first_url = url
             text = (
                 "✅ <b>Ваш VPN-ключ готов!</b>\n\n"
@@ -75,7 +82,7 @@ async def send_key_to_user(user_id: int, vpn_keys: object) -> None:
                 "🔑 <b>Ручные ключи (резервный способ):</b>\n",
             ]
             for key in vpn_keys:
-                url = get_client_access_url(key)  # type: ignore[arg-type]
+                url = client_url(key)
                 if not first_url:
                     first_url = url
                 label = getattr(key, "label", None) or "VPN"

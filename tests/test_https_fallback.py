@@ -19,13 +19,28 @@ class HttpsFallbackTests(unittest.TestCase):
             (Path(folder) / "healthy").touch()
             link = fallback.published_fallback(primary, "https://194.146.223.104")
             self.assertIn("@194.146.223.104:443", link)
-            self.assertIn("security=tls&type=ws", link)
+            self.assertIn("security=tls", link)
+            self.assertIn("type=ws", link)
+            self.assertIn("sni=194.146.223.104", link)
+            self.assertIn("alpn=http%2F1.1", link)
             self.assertIn("path=%2Fvpn-tunnel", link)
             self.assertNotIn("flow=xtls-rprx-vision", link)
             self.assertIsNone(fallback.published_fallback(
                 primary.replace("11111111", "99999999"), "https://194.146.223.104"))
             (Path(folder) / "healthy").unlink()
             self.assertIsNone(fallback.published_fallback(primary, "https://194.146.223.104"))
+
+    def test_preferred_link_never_publishes_two_competing_profiles(self):
+        primary = "vless://11111111-2222-4333-8444-555555555555@185.236.25.152:443"
+        with tempfile.TemporaryDirectory() as folder, patch.object(fallback, "RELAY_DIR", Path(folder)):
+            self.assertEqual(fallback.preferred_client_link(primary, "https://194.146.223.104"), primary)
+            config = {"inbounds": [{"settings": {"clients": [{
+                "id": "11111111-2222-4333-8444-555555555555"}]}}]}
+            (Path(folder) / "config.json").write_text(json.dumps(config))
+            (Path(folder) / "healthy").touch()
+            preferred = fallback.preferred_client_link(primary, "https://194.146.223.104")
+            self.assertIn("@194.146.223.104:443", preferred)
+            self.assertNotEqual(preferred, primary)
 
     def test_relay_credential_stable_and_separate_per_node(self):
         a = fallback.relay_uuid("test-secret", 1)

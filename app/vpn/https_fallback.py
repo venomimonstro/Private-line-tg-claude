@@ -32,7 +32,10 @@ def fallback_link(primary: str, public_url: str, label: str = "Private Line HTTP
         raise ValueError("HTTPS fallback requires VLESS and public HTTPS/443")
     if not ipaddress.ip_address(host).is_global:
         raise ValueError("HTTPS fallback requires a public control-plane IP")
-    query = urlencode({"encryption": "none", "security": "tls", "type": "ws",
+    # Include every interoperability field explicitly. Some mobile clients do
+    # not infer SNI/ALPN correctly when the endpoint is an IP certificate.
+    query = urlencode({"encryption": "none", "security": "tls", "sni": host,
+                       "fp": "chrome", "alpn": "http/1.1", "type": "ws",
                        "host": host, "path": RELAY_PATH})
     return f"vless://{uid}@{host}:443?{query}#{quote(label[:64], safe='-._~')}"
 
@@ -50,3 +53,8 @@ def published_fallback(primary: str, public_url: str) -> str | None:
         return fallback_link(primary, public_url)
     except (OSError, ValueError, KeyError, IndexError, TypeError):
         return None
+
+
+def preferred_client_link(primary: str, public_url: str) -> str:
+    """Return the gated HTTPS profile, falling back to the direct profile."""
+    return published_fallback(primary, public_url) or primary
